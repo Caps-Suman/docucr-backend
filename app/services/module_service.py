@@ -1,32 +1,38 @@
-from flask import Blueprint, request, jsonify
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from typing import List, Dict
 
-from app.core.database import SessionLocal
 from app.models.user import User
-from app.models.role import Role
 from app.models.module import Module
 from app.models.privilege import Privilege
 from app.models.role_module import RoleModule
 from app.models.user_role import UserRole
-from app.models.user_role_module import UserRoleModule
-from app.core.security import verify_password, create_access_token, get_password_hash
 
-modules_bp = Blueprint('modules', __name__)
 
-def get_db():
-    return SessionLocal()
-
-@modules_bp.route('/user-modules/<user_email>', methods=['GET'])
-def get_user_modules(user_email):
-    db = get_db()
-    try:
-        # Get user
-        user = db.query(User).filter(User.email == user_email).first()
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
+class ModuleService:
+    @staticmethod
+    def get_all_modules(db: Session) -> List[Dict]:
+        modules = db.query(Module).filter(Module.is_active == True).order_by(Module.display_order).all()
         
-        # Get user's accessible modules with privileges
+        return [{
+            'id': m.id,
+            'name': m.name,
+            'label': m.label,
+            'description': m.description or '',
+            'route': m.route,
+            'icon': m.icon or '',
+            'category': m.category,
+            'display_order': m.display_order,
+            'color_from': m.color_from or '',
+            'color_to': m.color_to or '',
+            'privileges': []
+        } for m in modules]
+
+    @staticmethod
+    def get_user_modules(email: str, db: Session) -> List[Dict]:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            return []
+        
         query = db.query(
             Module.id,
             Module.name,
@@ -51,7 +57,6 @@ def get_user_modules(user_email):
         
         results = query.all()
         
-        # Group modules with their privileges
         modules_dict = {}
         for result in results:
             module_id = result.id
@@ -71,23 +76,7 @@ def get_user_modules(user_email):
                 }
             modules_dict[module_id]['privileges'].append(result.privilege_name)
         
-        # Convert to list and sort by display_order
         modules_list = list(modules_dict.values())
         modules_list.sort(key=lambda x: x['display_order'])
         
-        return jsonify({'modules': modules_list}), 200
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        db.close()
-
-@modules_bp.route('/user-modules', methods=['GET'])
-def get_current_user_modules():
-    # This would typically get user from JWT token
-    # For now, using query parameter
-    user_email = request.args.get('email')
-    if not user_email:
-        return jsonify({'error': 'Email parameter required'}), 400
-    
-    return get_user_modules(user_email)
+        return modules_list

@@ -1,15 +1,14 @@
-from sqlalchemy import Column, String, Boolean, Text, DateTime, ForeignKey
+from sqlalchemy import Column, String, Text, DateTime
 from sqlalchemy.sql import func
 from .module import Base
 
-class Role(Base):
-    __tablename__ = "role"
+class Status(Base):
+    __tablename__ = "status"
     __table_args__ = {'schema': 'docucr'}
     
     id = Column(String, primary_key=True, index=True)
-    name = Column(String(50), unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
-    status_id = Column(String, ForeignKey('docucr.status.id'), nullable=True)
-    can_edit = Column(Boolean, default=True)
+    type = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
