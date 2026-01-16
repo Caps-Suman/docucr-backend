@@ -83,6 +83,7 @@ async def get_form(
         raise HTTPException(status_code=404, detail="Form not found")
     return form
 
+@router.post("", response_model=FormDetailResponse)
 @router.post("/", response_model=FormDetailResponse)
 async def create_form(
     form: FormCreate,
@@ -94,7 +95,7 @@ async def create_form(
     
     try:
         form_data = form.model_dump()
-        created_form = FormService.create_form(form_data, current_user['id'], db)
+        created_form = FormService.create_form(form_data, current_user.id, db)
         return created_form
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
