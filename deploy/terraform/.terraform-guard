@@ -1,0 +1,30 @@
+#!/bin/bash
+# Terraform Safety Guard for Docu-CR Infrastructure
+# This script prevents accidental modification of IVR resources
+
+echo "🔒 Terraform Safety Check..."
+
+# Check if we're in the right directory
+if [[ ! -f "terraform.tfvars" ]]; then
+    echo "❌ ERROR: Not in terraform directory"
+    exit 1
+fi
+
+# Verify project name is docu-cr
+PROJECT_NAME=$(grep "project_name" terraform.tfvars | cut -d'"' -f2)
+if [[ "$PROJECT_NAME" != "docu-cr-backend" ]]; then
+    echo "❌ ERROR: project_name is not 'docu-cr-backend'"
+    echo "   Current: $PROJECT_NAME"
+    exit 1
+fi
+
+# Check state file doesn't contain IVR resources
+if [[ -f "terraform.tfstate" ]]; then
+    if grep -q "ivr-backend-cluster" terraform.tfstate; then
+        echo "⚠️  WARNING: IVR resources detected in state file!"
+        echo "   This state should only manage docu-cr resources"
+        exit 1
+    fi
+fi
+
+echo "✅ Safety check passed - managing docu-cr-backend only"

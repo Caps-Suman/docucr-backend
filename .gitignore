@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads & Exports
+uploads/*
+!uploads/.gitkeep
+exports/*
+!exports/.gitkeep
+models/*
+!models/.gitkeep
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Alembic
+alembic/versions/*.pyc
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl

@@ -1,0 +1,22 @@
+#!/bin/bash
+# Install AWS Session Manager Plugin for macOS
+
+echo "📦 Installing AWS Session Manager Plugin..."
+echo ""
+echo "Please run these commands manually:"
+echo ""
+echo "1. Download the plugin:"
+echo "   curl 'https://s3.amazonaws.com/session-manager-downloads/plugin/latest/mac_arm64/sessionmanager-bundle.zip' -o 'sessionmanager-bundle.zip'"
+echo ""
+echo "2. Unzip:"
+echo "   unzip sessionmanager-bundle.zip"
+echo ""
+echo "3. Install (requires sudo password):"
+echo "   sudo ./sessionmanager-bundle/install -i /usr/local/sessionmanagerplugin -b /usr/local/bin/session-manager-plugin"
+echo ""
+echo "4. Verify installation:"
+echo "   session-manager-plugin"
+echo ""
+echo "5. Clean up:"
+echo "   rm -rf sessionmanager-bundle sessionmanager-bundle.zip"
+echo ""

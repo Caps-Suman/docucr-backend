@@ -1,0 +1,13 @@
+flask>=3.0.0
+flask-cors>=4.0.0
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.5.0
+python-dotenv>=1.0.0
+sqlalchemy>=2.0.23
+psycopg2-binary>=2.9.9
+passlib[bcrypt]<1.8
+bcrypt<4.0
+python-jose[cryptography]>=3.3.0
+requests>=2.31.0
+setuptools  # Required for some packages in Python 3.12 due to distutils removal
