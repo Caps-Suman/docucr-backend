@@ -40,7 +40,6 @@ class ClientService:
         active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
         
         new_client = Client(
-            id=str(uuid.uuid4()),
             status_id=active_status.id if active_status else None,
             **client_data
         )
@@ -127,7 +126,7 @@ class ClientService:
     @staticmethod
     def _format_client(client: Client) -> Dict:
         return {
-            "id": client.id,
+            "id": str(client.id),
             "business_name": client.business_name,
             "first_name": client.first_name,
             "middle_name": client.middle_name,
@@ -137,6 +136,6 @@ class ClientService:
             "type": client.type,
             "status_id": client.status_id,
             "description": client.description,
-            "created_at": client.created_at,
-            "updated_at": client.updated_at
+            "created_at": client.created_at.isoformat() if client.created_at else None,
+            "updated_at": client.updated_at.isoformat() if client.updated_at else None
         }

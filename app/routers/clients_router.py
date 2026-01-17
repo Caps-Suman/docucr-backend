@@ -42,8 +42,8 @@ class ClientResponse(BaseModel):
     type: Optional[str]
     status_id: Optional[str]
     description: Optional[str]
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
+    created_at: Optional[str]
+    updated_at: Optional[str]
     
     class Config:
         from_attributes = True

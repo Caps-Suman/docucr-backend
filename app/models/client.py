@@ -1,12 +1,14 @@
 from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey
 from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import UUID
 from .module import Base
+import uuid
 
 class Client(Base):
     __tablename__ = "client"
     __table_args__ = {'schema': 'docucr'}
     
-    id = Column(String, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     business_name = Column(String, nullable=True)
     first_name = Column(String, nullable=True)
     middle_name = Column(String, nullable=True)
