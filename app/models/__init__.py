@@ -8,5 +8,6 @@ from .user_role_module import UserRoleModule
 from .user_supervisor import UserSupervisor
 from .document_type import DocumentType
 from .template import Template
+from .document import Document
 
-__all__ = ['Base', 'Module', 'Privilege', 'Role', 'RoleModule', 'User', 'UserRole', 'UserRoleModule', 'UserSupervisor', 'DocumentType', 'Template']
+__all__ = ['Base', 'Module', 'Privilege', 'Role', 'RoleModule', 'User', 'UserRole', 'UserRoleModule', 'UserSupervisor', 'DocumentType', 'Template', 'Document']

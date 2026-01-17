@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from .module import Base
 
 class User(Base):
@@ -20,3 +21,5 @@ class User(Base):
     status_id = Column(String, ForeignKey('docucr.status.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    documents = relationship("Document", back_populates="user")

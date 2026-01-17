@@ -45,6 +45,7 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
         return {
             **tokens,
             "user": {
+                "id": user.id,
                 "email": user.email,
                 "first_name": user.first_name,
                 "last_name": user.last_name,
@@ -60,6 +61,7 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
         "temp_token": temp_token,
         "roles": roles,
         "user": {
+            "id": user.id,
             "email": user.email,
             "first_name": user.first_name,
             "last_name": user.last_name
@@ -83,6 +85,7 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
     return {
         **tokens,
         "user": {
+            "id": current_user.id,
             "email": current_user.email,
             "first_name": current_user.first_name,
             "last_name": current_user.last_name,
