@@ -15,6 +15,7 @@ class FormFieldSchema(BaseModel):
     required: bool = False
     options: Optional[List[str]] = None
     validation: Optional[Dict[str, Any]] = None
+    is_system: Optional[bool] = False
 
 class FormCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
@@ -71,6 +72,16 @@ async def get_form_stats(
     current_user: dict = Depends(get_current_user)
 ):
     return FormService.get_form_stats(db)
+
+@router.get("/active", response_model=FormDetailResponse)
+async def get_active_form(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    form = FormService.get_active_form(db)
+    if not form:
+        raise HTTPException(status_code=404, detail="No active form found")
+    return form
 
 @router.get("/{form_id}", response_model=FormDetailResponse)
 async def get_form(

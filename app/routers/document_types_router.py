@@ -37,6 +37,14 @@ async def get_document_types(
     service = DocumentTypeService(db)
     return service.get_all()
 
+@router.get("/active", response_model=List[DocumentTypeResponse])
+async def get_active_document_types(
+    db: Session = Depends(get_db)
+):
+    """Get all active document types"""
+    service = DocumentTypeService(db)
+    return service.get_active()
+
 @router.post("/", response_model=DocumentTypeResponse, status_code=status.HTTP_201_CREATED)
 async def create_document_type(
     document_type_data: DocumentTypeCreate,

@@ -11,19 +11,39 @@ class DocumentTypeService:
 
     def get_all(self) -> List[Dict]:
         """Get all document types"""
-        document_types = self.db.query(DocumentType).all()
+        document_types = self.db.query(DocumentType).join(Status).all()
         return [{
             "id": str(dt.id),
             "name": dt.name,
             "description": dt.description,
-            "status_id": dt.status_id,
+            "status_id": dt.status.name,
+            "created_at": dt.created_at.isoformat(),
+            "updated_at": dt.updated_at.isoformat()
+        } for dt in document_types]
+
+    def get_active(self) -> List[Dict]:
+        """Get all active document types"""
+        # Find active status by name and get its ID
+        active_status = self.db.query(Status).filter(Status.name == 'ACTIVE').first()
+        if not active_status:
+            # If no active status found, return all document types
+            document_types = self.db.query(DocumentType).join(Status).all()
+        else:
+            # Filter by status ID (foreign key)
+            document_types = self.db.query(DocumentType).join(Status).filter(DocumentType.status_id == active_status.id).all()
+            
+        return [{
+            "id": str(dt.id),
+            "name": dt.name,
+            "description": dt.description,
+            "status_id": dt.status.name,
             "created_at": dt.created_at.isoformat(),
             "updated_at": dt.updated_at.isoformat()
         } for dt in document_types]
 
     def get_by_id(self, document_type_id: str) -> Dict:
         """Get document type by ID"""
-        document_type = self.db.query(DocumentType).filter(DocumentType.id == document_type_id).first()
+        document_type = self.db.query(DocumentType).join(Status).filter(DocumentType.id == document_type_id).first()
         if not document_type:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -33,7 +53,7 @@ class DocumentTypeService:
             "id": str(document_type.id),
             "name": document_type.name,
             "description": document_type.description,
-            "status_id": document_type.status_id,
+            "status_id": document_type.status.name,
             "created_at": document_type.created_at.isoformat(),
             "updated_at": document_type.updated_at.isoformat()
         }
@@ -42,7 +62,7 @@ class DocumentTypeService:
         """Create a new document type"""
         # Get inactive status if not provided
         if status_id is None:
-            inactive_status = self.db.query(Status).filter(Status.id == 'INACTIVE').first()
+            inactive_status = self.db.query(Status).filter(Status.name == 'INACTIVE').first()
             if not inactive_status:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -125,7 +145,7 @@ class DocumentTypeService:
 
     def activate(self, document_type_id: str) -> Dict:
         """Activate a document type"""
-        active_status = self.db.query(Status).filter(Status.id == 'ACTIVE').first()
+        active_status = self.db.query(Status).filter(Status.name == 'ACTIVE').first()
         if not active_status:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -135,7 +155,7 @@ class DocumentTypeService:
 
     def deactivate(self, document_type_id: str) -> Dict:
         """Deactivate a document type"""
-        inactive_status = self.db.query(Status).filter(Status.id == 'INACTIVE').first()
+        inactive_status = self.db.query(Status).filter(Status.name == 'INACTIVE').first()
         if not inactive_status:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

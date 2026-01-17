@@ -27,4 +27,5 @@ class FormField(Base):
     options = Column(JSON, nullable=True)  # For select, checkbox, radio
     validation = Column(JSON, nullable=True)  # Validation rules
     order = Column(Integer, nullable=False)
+    is_system = Column(Boolean, default=False)  # System field flag
     created_at = Column(DateTime(timezone=True), server_default=func.now())

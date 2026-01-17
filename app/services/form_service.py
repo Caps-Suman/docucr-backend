@@ -63,9 +63,22 @@ class FormService:
                 "required": f.required,
                 "options": f.options,
                 "validation": f.validation,
-                "order": f.order
+                "order": f.order,
+                "is_system": f.is_system
             } for f in fields]
         }
+    
+    @staticmethod
+    def get_active_form(db: Session) -> Optional[Dict]:
+        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        if not active_status:
+            return None
+        
+        form = db.query(Form).filter(Form.status_id == active_status.id).first()
+        if not form:
+            return None
+        
+        return FormService.get_form_by_id(form.id, db)
     
     @staticmethod
     def create_form(data: Dict[str, Any], user_id: str, db: Session) -> Dict:
@@ -97,7 +110,8 @@ class FormService:
                 required=field_data.get('required', False),
                 options=field_data.get('options'),
                 validation=field_data.get('validation'),
-                order=idx
+                order=idx,
+                is_system=field_data.get('is_system', False)
             )
             db.add(field)
         
@@ -141,7 +155,8 @@ class FormService:
                     required=field_data.get('required', False),
                     options=field_data.get('options'),
                     validation=field_data.get('validation'),
-                    order=idx
+                    order=idx,
+                    is_system=field_data.get('is_system', False)
                 )
                 db.add(field)
         
