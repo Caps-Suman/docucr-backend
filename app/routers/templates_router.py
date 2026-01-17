@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, field_serializer
 from datetime import datetime
 from uuid import UUID
@@ -12,20 +12,22 @@ router = APIRouter(prefix="/api/templates", tags=["templates"])
 # Pydantic models
 class TemplateCreate(BaseModel):
     template_name: str
-    description: str = None
+    description: Optional[str] = None
     document_type_id: str
+    status_id: Optional[str] = None
     extraction_fields: List[Dict[str, Any]] = []
 
 class TemplateUpdate(BaseModel):
-    template_name: str = None
-    description: str = None
-    document_type_id: str = None
-    extraction_fields: List[Dict[str, Any]] = None
+    template_name: Optional[str] = None
+    description: Optional[str] = None
+    document_type_id: Optional[str] = None
+    status_id: Optional[str] = None
+    extraction_fields: Optional[List[Dict[str, Any]]] = None
 
 class DocumentTypeInfo(BaseModel):
     id: UUID
     name: str
-    description: str = None
+    description: Optional[str] = None
     
     @field_serializer('id')
     def serialize_id(self, value: UUID) -> str:
@@ -34,12 +36,13 @@ class DocumentTypeInfo(BaseModel):
 class TemplateResponse(BaseModel):
     id: UUID
     template_name: str
-    description: str = None
+    description: Optional[str] = None
     document_type_id: UUID
+    status_id: str
     extraction_fields: List[Dict[str, Any]]
     created_at: datetime
     updated_at: datetime
-    document_type: DocumentTypeInfo = None
+    document_type: Optional[DocumentTypeInfo] = None
 
     @field_serializer('id', 'document_type_id')
     def serialize_uuid(self, value: UUID) -> str:
@@ -71,7 +74,8 @@ async def create_template(
         template_data.template_name,
         template_data.document_type_id,
         template_data.description,
-        template_data.extraction_fields
+        template_data.extraction_fields,
+        template_data.status_id
     )
 
 @router.get("/{template_id}", response_model=TemplateResponse)
@@ -96,17 +100,27 @@ async def update_template(
         template_data.template_name,
         template_data.description,
         template_data.document_type_id,
-        template_data.extraction_fields
+        template_data.extraction_fields,
+        template_data.status_id
     )
 
-@router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_template(
+@router.patch("/{template_id}/activate")
+async def activate_template(
     template_id: str,
     db: Session = Depends(get_db)
 ):
-    """Delete a template"""
+    """Activate a template"""
     service = TemplateService(db)
-    service.delete(template_id)
+    return service.activate(template_id)
+
+@router.patch("/{template_id}/deactivate")
+async def deactivate_template(
+    template_id: str,
+    db: Session = Depends(get_db)
+):
+    """Deactivate a template"""
+    service = TemplateService(db)
+    return service.deactivate(template_id)
 
 @router.get("/by-document-type/{document_type_id}", response_model=List[TemplateResponse])
 async def get_templates_by_document_type(

@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/document-types", tags=["document-types"])
 class DocumentTypeCreate(BaseModel):
     name: str
     description: str = None
-    status_id: str = 'active'
+    status_id: str = 'inactive'
 
 class DocumentTypeUpdate(BaseModel):
     name: str = None

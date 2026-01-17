@@ -12,7 +12,7 @@ class Template(Base):
     template_name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
     document_type_id = Column(UUID(as_uuid=True), ForeignKey('docucr.document_types.id'), nullable=False)
-    status_id = Column(String, ForeignKey('docucr.status.id'), nullable=False, default='active')
+    status_id = Column(String, ForeignKey('docucr.status.id'), nullable=False)
     extraction_fields = Column(JSON, nullable=True, default=list)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

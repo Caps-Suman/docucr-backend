@@ -1,63 +1,44 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional, Dict, Any
 from app.models.template import Template
 from app.models.document_type import DocumentType
+from app.models.status import Status
 from fastapi import HTTPException, status
 
 class TemplateService:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_all(self) -> List[Dict]:
+    def get_all(self) -> List[Template]:
         """Get all templates with document type info"""
-        templates = self.db.query(Template).join(DocumentType).all()
-        return [{
-            "id": str(t.id),
-            "template_name": t.template_name,
-            "description": t.description,
-            "document_type_id": str(t.document_type_id),
-            "status_id": t.status_id,
-            "extraction_fields": t.extraction_fields,
-            "created_at": t.created_at.isoformat(),
-            "updated_at": t.updated_at.isoformat()
-        } for t in templates]
+        return self.db.query(Template).options(joinedload(Template.document_type)).all()
 
-    def get_by_id(self, template_id: str) -> Dict:
+    def get_by_id(self, template_id: str) -> Template:
         """Get template by ID"""
-        template = self.db.query(Template).filter(Template.id == template_id).first()
+        template = self.db.query(Template).options(joinedload(Template.document_type)).filter(Template.id == template_id).first()
         if not template:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Template not found"
             )
-        return {
-            "id": str(template.id),
-            "template_name": template.template_name,
-            "description": template.description,
-            "document_type_id": str(template.document_type_id),
-            "status_id": template.status_id,
-            "extraction_fields": template.extraction_fields,
-            "created_at": template.created_at.isoformat(),
-            "updated_at": template.updated_at.isoformat()
-        }
+        return template
 
-    def get_by_document_type(self, document_type_id: str) -> List[Dict]:
+    def get_by_document_type(self, document_type_id: str) -> List[Template]:
         """Get all templates for a specific document type"""
-        templates = self.db.query(Template).filter(Template.document_type_id == document_type_id).all()
-        return [{
-            "id": str(t.id),
-            "template_name": t.template_name,
-            "description": t.description,
-            "document_type_id": str(t.document_type_id),
-            "status_id": t.status_id,
-            "extraction_fields": t.extraction_fields,
-            "created_at": t.created_at.isoformat(),
-            "updated_at": t.updated_at.isoformat()
-        } for t in templates]
+        return self.db.query(Template).filter(Template.document_type_id == document_type_id).all()
 
     def create(self, template_name: str, document_type_id: str, description: Optional[str] = None, 
-               extraction_fields: Optional[List[Dict[str, Any]]] = None, status_id: str = 'active') -> Dict:
+               extraction_fields: Optional[List[Dict[str, Any]]] = None, status_id: Optional[str] = None) -> Template:
         """Create a new template"""
+        # Get inactive status if not provided
+        if status_id is None:
+            inactive_status = self.db.query(Status).filter(Status.name == 'INACTIVE').first()
+            if not inactive_status:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Inactive status not found in status table"
+                )
+            status_id = inactive_status.id
         # Verify document type exists
         document_type = self.db.query(DocumentType).filter(DocumentType.id == document_type_id).first()
         if not document_type:
@@ -77,20 +58,11 @@ class TemplateService:
         self.db.add(template)
         self.db.commit()
         self.db.refresh(template)
-        return {
-            "id": str(template.id),
-            "template_name": template.template_name,
-            "description": template.description,
-            "document_type_id": str(template.document_type_id),
-            "status_id": template.status_id,
-            "extraction_fields": template.extraction_fields,
-            "created_at": template.created_at.isoformat(),
-            "updated_at": template.updated_at.isoformat()
-        }
+        return template
 
     def update(self, template_id: str, template_name: Optional[str] = None, 
                description: Optional[str] = None, document_type_id: Optional[str] = None,
-               extraction_fields: Optional[List[Dict[str, Any]]] = None, status_id: Optional[str] = None) -> Dict:
+               extraction_fields: Optional[List[Dict[str, Any]]] = None, status_id: Optional[str] = None) -> Template:
         """Update a template"""
         template = self.db.query(Template).filter(Template.id == template_id).first()
         if not template:
@@ -122,21 +94,22 @@ class TemplateService:
         
         self.db.commit()
         self.db.refresh(template)
-        return {
-            "id": str(template.id),
-            "template_name": template.template_name,
-            "description": template.description,
-            "document_type_id": str(template.document_type_id),
-            "status_id": template.status_id,
-            "extraction_fields": template.extraction_fields,
-            "created_at": template.created_at.isoformat(),
-            "updated_at": template.updated_at.isoformat()
-        }
+        return template
 
-    def activate(self, template_id: str) -> Dict:
+    def _update_status(self, template_id: str, status_name: str) -> Template:
+        """Helper method to update template status"""
+        status = self.db.query(Status).filter(Status.name == status_name).first()
+        if not status:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{status_name} status not found in status table"
+            )
+        return self.update(template_id, status_id=status.id)
+
+    def activate(self, template_id: str) -> Template:
         """Activate a template"""
-        return self.update(template_id, status_id='active')
+        return self._update_status(template_id, 'ACTIVE')
 
-    def deactivate(self, template_id: str) -> Dict:
+    def deactivate(self, template_id: str) -> Template:
         """Deactivate a template"""
-        return self.update(template_id, status_id='inactive')
+        return self._update_status(template_id, 'INACTIVE')

@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Dict
 from app.models.document_type import DocumentType
+from app.models.status import Status
 from fastapi import HTTPException, status
 
 class DocumentTypeService:
@@ -37,8 +38,17 @@ class DocumentTypeService:
             "updated_at": document_type.updated_at.isoformat()
         }
 
-    def create(self, name: str, description: Optional[str] = None, status_id: str = 'active') -> Dict:
+    def create(self, name: str, description: Optional[str] = None, status_id: Optional[str] = None) -> Dict:
         """Create a new document type"""
+        # Get inactive status if not provided
+        if status_id is None:
+            inactive_status = self.db.query(Status).filter(Status.id == 'INACTIVE').first()
+            if not inactive_status:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Inactive status not found in status table"
+                )
+            status_id = inactive_status.id
         # Check for case-sensitive duplicate
         existing = self.db.query(DocumentType).filter(DocumentType.name == name).first()
         if existing:
@@ -115,8 +125,20 @@ class DocumentTypeService:
 
     def activate(self, document_type_id: str) -> Dict:
         """Activate a document type"""
-        return self.update(document_type_id, status_id='active')
+        active_status = self.db.query(Status).filter(Status.id == 'ACTIVE').first()
+        if not active_status:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Active status not found in status table"
+            )
+        return self.update(document_type_id, status_id=active_status.id)
 
     def deactivate(self, document_type_id: str) -> Dict:
         """Deactivate a document type"""
-        return self.update(document_type_id, status_id='inactive')
+        inactive_status = self.db.query(Status).filter(Status.id == 'INACTIVE').first()
+        if not inactive_status:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Inactive status not found in status table"
+            )
+        return self.update(document_type_id, status_id=inactive_status.id)
