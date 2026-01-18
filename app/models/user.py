@@ -1,6 +1,7 @@
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import UUID
 from .module import Base
 
 class User(Base):
@@ -18,6 +19,7 @@ class User(Base):
     phone_number = Column(String(15), nullable=True)
     is_superuser = Column(Boolean, default=False)
     is_client = Column(Boolean, default=False)
+    client_id = Column(UUID(as_uuid=True), ForeignKey('docucr.client.id'), nullable=True)
     status_id = Column(String, ForeignKey('docucr.status.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

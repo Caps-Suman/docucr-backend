@@ -145,6 +145,9 @@ async def refresh_token(request: Request, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     
+    if not AuthService.check_user_active(user, db):
+        raise HTTPException(status_code=403, detail="Account is inactive")
+    
     new_access_token = create_access_token(data={"sub": email, "role_id": role_id})
     new_refresh_token = create_refresh_token(data={"sub": email, "role_id": role_id})
     

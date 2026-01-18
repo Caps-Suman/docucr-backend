@@ -20,6 +20,7 @@ class ClientCreate(BaseModel):
     type: Optional[str] = None
     status_id: Optional[str] = None
     description: Optional[str] = None
+    user_id: Optional[str] = None
 
 class ClientUpdate(BaseModel):
     business_name: Optional[str] = None
@@ -59,15 +60,20 @@ class AssignClientsRequest(BaseModel):
     client_ids: List[str]
     assigned_by: str
 
+@router.get("/stats")
+async def get_client_stats(db: Session = Depends(get_db)):
+    return ClientService.get_client_stats(db)
+
 @router.get("", response_model=ClientListResponse)
 @router.get("/", response_model=ClientListResponse)
 async def get_clients(
     page: int = 1,
     page_size: int = 10,
     search: Optional[str] = None,
+    status_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    clients, total = ClientService.get_clients(page, page_size, search, db)
+    clients, total = ClientService.get_clients(page, page_size, search, status_id, db)
     return ClientListResponse(
         clients=[ClientResponse(**client) for client in clients],
         total=total,
@@ -101,12 +107,6 @@ async def update_client(client_id: str, client: ClientUpdate, db: Session = Depe
     if not updated_client:
         raise HTTPException(status_code=404, detail="Client not found")
     return ClientResponse(**updated_client)
-
-@router.delete("/{client_id}")
-async def delete_client(client_id: str, db: Session = Depends(get_db)):
-    if not ClientService.delete_client(client_id, db):
-        raise HTTPException(status_code=404, detail="Client not found")
-    return {"message": "Client deleted successfully"}
 
 @router.post("/{client_id}/activate", response_model=ClientResponse)
 async def activate_client(client_id: str, db: Session = Depends(get_db)):

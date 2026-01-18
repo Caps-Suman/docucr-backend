@@ -20,6 +20,7 @@ class UserCreate(BaseModel):
     phone_number: Optional[str] = None
     role_ids: List[str] = []
     supervisor_id: Optional[str] = None
+    client_id: Optional[str] = None
     
     @field_validator('email')
     @classmethod
@@ -89,9 +90,10 @@ async def get_users(
     page: int = 1,
     page_size: int = 10,
     search: Optional[str] = None,
+    status_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    users, total = UserService.get_users(page, page_size, search, db)
+    users, total = UserService.get_users(page, page_size, search, status_id, db)
     return UserListResponse(
         users=[UserResponse(**user) for user in users],
         total=total,
@@ -146,8 +148,16 @@ async def update_user(user_id: str, user: UserUpdate, db: Session = Depends(get_
         raise HTTPException(status_code=404, detail="User not found")
     return UserResponse(**updated_user)
 
-@router.delete("/{user_id}")
-async def delete_user(user_id: str, db: Session = Depends(get_db)):
-    if not UserService.delete_user(user_id, db):
-        raise HTTPException(status_code=400, detail="Cannot delete user")
-    return {"message": "User deleted successfully"}
+@router.post("/{user_id}/activate", response_model=UserResponse)
+async def activate_user(user_id: str, db: Session = Depends(get_db)):
+    user = UserService.activate_user(user_id, db)
+    if not user:
+        raise HTTPException(status_code=400, detail="Cannot activate user")
+    return UserResponse(**user)
+
+@router.post("/{user_id}/deactivate", response_model=UserResponse)
+async def deactivate_user(user_id: str, db: Session = Depends(get_db)):
+    user = UserService.deactivate_user(user_id, db)
+    if not user:
+        raise HTTPException(status_code=400, detail="Cannot deactivate user")
+    return UserResponse(**user)

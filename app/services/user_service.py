@@ -8,14 +8,19 @@ from app.models.user_role import UserRole
 from app.models.role import Role
 from app.models.status import Status
 from app.models.user_supervisor import UserSupervisor
+from app.models.user_client import UserClient
+from app.models.client import Client
 from app.core.security import get_password_hash
 
 
 class UserService:
     @staticmethod
-    def get_users(page: int, page_size: int, search: Optional[str], db: Session) -> Tuple[List[Dict], int]:
+    def get_users(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         query = db.query(User)
+        
+        if status_id:
+            query = query.filter(User.status_id == status_id)
         
         if search:
             query = query.filter(
@@ -78,8 +83,31 @@ class UserService:
         
         if user_data.get('supervisor_id'):
             UserService._assign_supervisor(new_user.id, user_data['supervisor_id'], db)
+
+        if user_data.get('client_id'):
+            UserService._link_client(new_user, user_data['client_id'], db)
         
         return UserService._format_user_response(new_user, db)
+
+    @staticmethod
+    def _link_client(user: User, client_id: str, db: Session):
+        # Verify client exists
+        client = db.query(Client).filter(Client.id == client_id).first()
+        if client:
+            # Create link
+            user_client = UserClient(
+                id=str(uuid.uuid4()),
+                user_id=user.id,
+                client_id=client_id,
+                assigned_by=user.id # Self-assigned via cross-creation
+            )
+            db.add(user_client)
+            
+            # Update flags
+            user.is_client = True
+            client.is_user = True
+            
+            db.commit()
 
     @staticmethod
     def update_user(user_id: str, user_data: Dict, db: Session) -> Optional[Dict]:
@@ -107,13 +135,30 @@ class UserService:
         return UserService._format_user_response(user, db)
 
     @staticmethod
-    def delete_user(user_id: str, db: Session) -> bool:
+    def activate_user(user_id: str, db: Session) -> Optional[Dict]:
         user = db.query(User).filter(User.id == user_id).first()
         if not user or user.is_superuser:
-            return False
-        db.delete(user)
-        db.commit()
-        return True
+            return None
+        
+        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        if active_status:
+            user.status_id = active_status.id
+            db.commit()
+            db.refresh(user)
+        return UserService._format_user_response(user, db)
+
+    @staticmethod
+    def deactivate_user(user_id: str, db: Session) -> Optional[Dict]:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user or user.is_superuser:
+            return None
+        
+        inactive_status = db.query(Status).filter(Status.name == 'INACTIVE').first()
+        if inactive_status:
+            user.status_id = inactive_status.id
+            db.commit()
+            db.refresh(user)
+        return UserService._format_user_response(user, db)
 
     @staticmethod
     def get_user_stats(db: Session) -> Dict:

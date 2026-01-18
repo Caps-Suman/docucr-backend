@@ -109,11 +109,19 @@ async def update_document_form_data(
 async def get_documents(
     skip: int = 0,
     limit: int = 100,
+    status_id: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    search_query: Optional[str] = None,
+    form_filters: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get user documents"""
-    documents = document_service.get_user_documents(db, current_user.id, skip, limit)
+    """Get user documents with filters"""
+    documents = document_service.get_user_documents(
+        db, current_user.id, skip, limit,
+        status_id, date_from, date_to, search_query, form_filters
+    )
     return [
         {
             "id": doc.id,

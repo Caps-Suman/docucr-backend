@@ -5,15 +5,34 @@ import uuid
 from datetime import datetime
 
 from app.models.client import Client
+from app.models.user import User
 from app.models.user_client import UserClient
 from app.models.status import Status
 
 
 class ClientService:
     @staticmethod
-    def get_clients(page: int, page_size: int, search: Optional[str], db: Session) -> Tuple[List[Dict], int]:
+    def get_client_stats(db: Session) -> Dict:
+        total_clients = db.query(func.count(Client.id)).filter(Client.deleted_at.is_(None)).scalar()
+        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_clients = db.query(func.count(Client.id)).filter(
+            Client.status_id == active_status.id,
+            Client.deleted_at.is_(None)
+        ).scalar() if active_status else 0
+        
+        return {
+            "total_clients": total_clients,
+            "active_clients": active_clients,
+            "inactive_clients": total_clients - active_clients
+        }
+
+    @staticmethod
+    def get_clients(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         query = db.query(Client).filter(Client.deleted_at.is_(None))
+        
+        if status_id:
+            query = query.filter(Client.status_id == status_id)
         
         if search:
             query = query.filter(
@@ -39,14 +58,43 @@ class ClientService:
     def create_client(client_data: Dict, db: Session) -> Dict:
         active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
         
+        # Extract user_id for linking
+        user_id = client_data.get('user_id')
+        client_data_copy = client_data.copy()
+        client_data_copy.pop('status_id', None)
+        
         new_client = Client(
             status_id=active_status.id if active_status else None,
-            **client_data
+            **client_data_copy
         )
         db.add(new_client)
         db.commit()
         db.refresh(new_client)
+
+        if user_id:
+            ClientService._link_user(new_client, user_id, db)
+
         return ClientService._format_client(new_client)
+
+    @staticmethod
+    def _link_user(client: Client, user_id: str, db: Session):
+        # Verify user exists
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            # Set direct foreign key relationships
+            user.client_id = client.id
+            user.is_client = True
+            client.is_user = True
+            
+            # Create UserClient relationship record for many-to-many queries
+            user_client = UserClient(
+                id=str(uuid.uuid4()),
+                client_id=client.id,
+                user_id=user_id,
+                assigned_by=user_id
+            )
+            db.add(user_client)
+            db.commit()
 
     @staticmethod
     def update_client(client_id: str, client_data: Dict, db: Session) -> Optional[Dict]:
@@ -62,41 +110,38 @@ class ClientService:
         return ClientService._format_client(client)
 
     @staticmethod
-    def delete_client(client_id: str, db: Session) -> bool:
-        client = db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
-        if not client:
-            return False
-        client.deleted_at = datetime.utcnow()
-        db.commit()
-        return True
-
-    @staticmethod
-    def check_npi_exists(npi: str, exclude_id: Optional[str], db: Session) -> bool:
-        query = db.query(Client).filter(Client.npi == npi, Client.deleted_at.is_(None))
-        if exclude_id:
-            query = query.filter(Client.id != exclude_id)
-        return query.first() is not None
-
-    @staticmethod
-    def activate_client(client_id: str, db: Session) -> Optional[Dict]:
-        client = db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
-        if not client:
-            return None
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
-        if active_status:
-            client.status_id = active_status.id
-            db.commit()
-            db.refresh(client)
-        return ClientService._format_client(client)
-
-    @staticmethod
     def deactivate_client(client_id: str, db: Session) -> Optional[Dict]:
         client = db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
         if not client:
             return None
+        
         inactive_status = db.query(Status).filter(Status.name == 'INACTIVE').first()
         if inactive_status:
             client.status_id = inactive_status.id
+            
+            # Deactivate linked user(s) - Check all possible links
+            
+            # 1. Direct link on Client
+            if client.user_id:
+                linked_user = db.query(User).filter(User.id == client.user_id).first()
+                if linked_user and not linked_user.is_superuser:
+                    linked_user.status_id = inactive_status.id
+
+            # 2. Links via UserClient (Many-to-Many junction)
+            linked_users_via_junction = db.query(User).join(UserClient, User.id == UserClient.user_id).filter(
+                UserClient.client_id == client.id
+            ).all()
+
+            for user in linked_users_via_junction:
+                if not user.is_superuser:
+                    user.status_id = inactive_status.id
+
+            # 3. Direct link on User (if User.client_id is used)
+            linked_users_via_foreign_key = db.query(User).filter(User.client_id == client.id).all()
+            for user in linked_users_via_foreign_key:
+                if not user.is_superuser:
+                    user.status_id = inactive_status.id
+            
             db.commit()
             db.refresh(client)
         return ClientService._format_client(client)

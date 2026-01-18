@@ -438,13 +438,65 @@ class DocumentService:
             db.close()
     
     @staticmethod
-    def get_user_documents(db: Session, user_id: str, skip: int = 0, limit: int = 100) -> List[Document]:
-        """Get documents for a user with form data for custom columns"""
+    def get_user_documents(db: Session, user_id: str, skip: int = 0, limit: int = 100,
+                         status_id: str = None, date_from: str = None, date_to: str = None,
+                         search_query: str = None, form_filters: str = None) -> List[Document]:
+        """Get documents for a user with filters"""
         from sqlalchemy.orm import joinedload
-        return db.query(Document)\
+        from sqlalchemy import and_, or_, cast, String, text
+        from ..models.document_form_data import DocumentFormData
+        import json
+        from datetime import datetime
+
+        query = db.query(Document)\
             .options(joinedload(Document.form_data_relation))\
-            .filter(Document.user_id == user_id)\
-            .order_by(Document.created_at.desc())\
+            .filter(Document.user_id == user_id)
+
+        # Status Filter
+        if status_id:
+            query = query.filter(Document.status_id == status_id)
+
+        # Date Filters
+        if date_from:
+            try:
+                # Expecting ISO format string or YYYY-MM-DD
+                d_from = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
+                query = query.filter(Document.created_at >= d_from)
+            except ValueError:
+                pass # Ignore invalid dates
+
+        if date_to:
+            try:
+                d_to = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
+                query = query.filter(Document.created_at <= d_to)
+            except ValueError:
+                pass
+
+        # Search Query (General - filename)
+        if search_query:
+            query = query.filter(Document.filename.ilike(f"%{search_query}%"))
+
+        # Dynamic Form Filters
+        if form_filters:
+            try:
+                filters = json.loads(form_filters)
+                if filters:
+                    # Join if not already implicit (joinedload is for loading, but we need to filter)
+                    # We outerjoin to include docs even if they don't have form data? 
+                    # No, if we are filtering BY form data, they must have it.
+                    query = query.join(Document.form_data_relation)
+                    
+                    for key, value in filters.items():
+                        if value:
+                            # Use JSON path filtering. 
+                            # Cast to string for ILIKE comparison to support partial/case-insensitive match
+                            query = query.filter(
+                                cast(DocumentFormData.data[key], String).ilike(f"%{value}%")
+                            )
+            except json.JSONDecodeError:
+                pass
+
+        return query.order_by(Document.created_at.desc())\
             .offset(skip)\
             .limit(limit)\
             .all()

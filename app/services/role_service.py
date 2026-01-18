@@ -12,10 +12,36 @@ from app.models.status import Status
 
 class RoleService:
     @staticmethod
-    def get_roles(page: int, page_size: int, db: Session) -> Tuple[List[Dict], int]:
+    def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
-        total = db.query(func.count(Role.id)).scalar()
-        roles = db.query(Role).offset(skip).limit(page_size).all()
+        query = db.query(Role)
+        
+        if status_id:
+            query = query.filter(Role.status_id == status_id)
+            
+        total = query.count()
+        roles = query.offset(skip).limit(page_size).all()
+        
+        result = []
+        for role in roles:
+            users_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
+            result.append({
+                "id": role.id,
+                "name": role.name,
+                "description": role.description,
+                "status_id": role.status_id,
+                "can_edit": role.can_edit,
+                "users_count": users_count
+            })
+        
+        return result, total
+
+    @staticmethod
+    def get_assignable_roles(page: int, page_size: int, db: Session) -> Tuple[List[Dict], int]:
+        skip = (page - 1) * page_size
+        query = db.query(Role).filter(func.upper(Role.name) != 'SUPER_ADMIN')
+        total = query.count()
+        roles = query.offset(skip).limit(page_size).all()
         
         result = []
         for role in roles:

@@ -75,14 +75,29 @@ class RoleListResponse(BaseModel):
     page: int
     page_size: int
 
+@router.get("/assignable", response_model=RoleListResponse)
+async def get_assignable_roles(
+    page: int = 1,
+    page_size: int = 10,
+    db: Session = Depends(get_db)
+):
+    roles, total = RoleService.get_assignable_roles(page, page_size, db)
+    return RoleListResponse(
+        roles=[RoleResponse(**role) for role in roles],
+        total=total,
+        page=page,
+        page_size=page_size
+    )
+
 @router.get("", response_model=RoleListResponse)
 @router.get("/", response_model=RoleListResponse)
 async def get_roles(
     page: int = 1,
     page_size: int = 10,
+    status_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    roles, total = RoleService.get_roles(page, page_size, db)
+    roles, total = RoleService.get_roles(page, page_size, status_id, db)
     return RoleListResponse(
         roles=[RoleResponse(**role) for role in roles],
         total=total,

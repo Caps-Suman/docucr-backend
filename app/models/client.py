@@ -15,6 +15,7 @@ class Client(Base):
     last_name = Column(String, nullable=True)
     npi = Column(String, nullable=True, index=True)
     is_user = Column(Boolean, default=False)
+    user_id = Column(String, ForeignKey('docucr.user.id'), nullable=True)
     type = Column(String, nullable=True)
     status_id = Column(String, ForeignKey('docucr.status.id'), nullable=True)
     description = Column(Text, nullable=True)
