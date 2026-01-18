@@ -70,7 +70,8 @@ class UserResponse(BaseModel):
     last_name: Optional[str]
     phone_country_code: Optional[str]
     phone_number: Optional[str]
-    status_id: Optional[str]
+    status_id: Optional[int]
+    statusCode: Optional[str]
     is_superuser: bool
     roles: List[dict]
     supervisor_id: Optional[str]

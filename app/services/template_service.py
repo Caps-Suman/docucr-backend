@@ -30,15 +30,31 @@ class TemplateService:
     def create(self, template_name: str, document_type_id: str, description: Optional[str] = None, 
                extraction_fields: Optional[List[Dict[str, Any]]] = None, status_id: Optional[str] = None) -> Template:
         """Create a new template"""
-        # Get inactive status if not provided
+        # Get inactive status if not provided (default)
         if status_id is None:
-            inactive_status = self.db.query(Status).filter(Status.name == 'INACTIVE').first()
+            inactive_status = self.db.query(Status).filter(Status.code == 'INACTIVE').first()
             if not inactive_status:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Inactive status not found in status table"
                 )
-            status_id = inactive_status.id
+            status_id_val = inactive_status.id
+        else:
+             # Look up ID from code if string provided? 
+             # Assuming input is status_id (integer) or code?
+             # If API passes string code, we must resolve it.
+             # If API passes integer ID (as string), we might just use it?
+             # Let's assume input 'status_id' might be code if coming from typical frontend flow we seen.
+             if isinstance(status_id, str) and not status_id.isdigit():
+                 st = self.db.query(Status).filter(Status.code == status_id).first()
+                 if st:
+                     status_id_val = st.id
+                 else:
+                     # Maybe it is a UUID/Integer in string form?
+                     status_id_val = status_id
+             else:
+                 status_id_val = status_id
+
         # Verify document type exists
         document_type = self.db.query(DocumentType).filter(DocumentType.id == document_type_id).first()
         if not document_type:
@@ -51,7 +67,7 @@ class TemplateService:
             template_name=template_name,
             description=description,
             document_type_id=document_type_id,
-            status_id=status_id,
+            status_id=status_id_val,
             extraction_fields=extraction_fields or []
         )
         
@@ -88,7 +104,14 @@ class TemplateService:
         if document_type_id is not None:
             template.document_type_id = document_type_id
         if status_id is not None:
-            template.status_id = status_id
+             # Resolve Status Code
+             if isinstance(status_id, str) and not status_id.isdigit(): # If code
+                 st = self.db.query(Status).filter(Status.code == status_id).first()
+                 if st:
+                     template.status_id = st.id
+             else:
+                 template.status_id = status_id
+
         if extraction_fields is not None:
             template.extraction_fields = extraction_fields
         
@@ -96,15 +119,15 @@ class TemplateService:
         self.db.refresh(template)
         return template
 
-    def _update_status(self, template_id: str, status_name: str) -> Template:
+    def _update_status(self, template_id: str, status_code: str) -> Template:
         """Helper method to update template status"""
-        status = self.db.query(Status).filter(Status.name == status_name).first()
-        if not status:
+        status_obj = self.db.query(Status).filter(Status.code == status_code).first()
+        if not status_obj:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{status_name} status not found in status table"
+                detail=f"{status_code} status not found in status table"
             )
-        return self.update(template_id, status_id=status.id)
+        return self.update(template_id, status_id=str(status_obj.id))
 
     def activate(self, template_id: str) -> Template:
         """Activate a template"""

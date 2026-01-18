@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from ..models.document import Document
+from ..models.status import Status
 from ..services.s3_service import s3_service
 from ..services.websocket_manager import websocket_manager
 from fastapi import UploadFile
@@ -7,17 +8,24 @@ import asyncio
 from typing import List
 
 class DocumentService:
-    
+    @staticmethod
+    def get_status_id_by_code(db: Session, code: str) -> int:
+        status = db.query(Status).filter(Status.code == code).first()
+        if status:
+            return status.id
+        return None
+
     @staticmethod
     async def create_document(db: Session, file: UploadFile, user_id: str) -> Document:
         """Create document record in database"""
+        status_id = DocumentService.get_status_id_by_code(db, "QUEUED")
         document = Document(
             filename=file.filename,
             original_filename=file.filename,
             file_size=file.size,
             content_type=file.content_type,
             user_id=user_id,
-            status_id="QUEUED"
+            status_id=status_id
         )
         db.add(document)
         db.commit()
@@ -25,13 +33,15 @@ class DocumentService:
         return document
     
     @staticmethod
-    async def update_document_status(db: Session, document_id: int, status_id: str, 
+    async def update_document_status(db: Session, document_id: int, status_code: str, 
                                    progress: int = 0, error_message: str = None, 
                                    s3_key: str = None, s3_bucket: str = None):
         """Update document status and notify via WebSocket"""
         document = db.query(Document).filter(Document.id == document_id).first()
         if document:
-            document.status_id = status_id
+            status_id = DocumentService.get_status_id_by_code(db, status_code)
+            if status_id:
+                document.status_id = status_id
             document.upload_progress = progress
             if error_message:
                 document.error_message = error_message
@@ -45,7 +55,7 @@ class DocumentService:
             # Send WebSocket notification
             await websocket_manager.broadcast_document_status(
                 document_id=document.id,
-                status=status_id,
+                status=status_code,
                 user_id=str(document.user_id),
                 progress=progress,
                 error_message=error_message
@@ -98,6 +108,13 @@ class DocumentService:
                 parsed_form_data = {}
         
         # Create all document records first with QUEUED status
+        queued_status_id = DocumentService.get_status_id_by_code(db, "QUEUED")
+        if not queued_status_id:
+             # Fallback or error? If status missing, we can't create.
+             # Assume it exists or use a default?
+             # Ideally statuses are seeded.
+             pass
+
         for file in files:
             # We must buffer the file content because FastAPI closes UploadFile 
             # as soon as the request handler returns.
@@ -114,7 +131,7 @@ class DocumentService:
                 file_size=file_size,
                 content_type=file.content_type,
                 user_id=user_id,
-                status_id="QUEUED",
+                status_id=queued_status_id,
                 upload_progress=0,
                 enable_ai=enable_ai,
                 document_type_id=document_type_id,
@@ -143,7 +160,7 @@ class DocumentService:
             })
         
         db.commit()  # Commit all documents at once
-        
+
         # Immediately notify about queued documents
         for document in documents:
             await websocket_manager.broadcast_document_status(
@@ -348,7 +365,8 @@ class DocumentService:
                 check_db = SessionLocal()
                 try:
                     current_doc = check_db.query(Document).filter(Document.id == document_id).first()
-                    return current_doc and current_doc.status_id == 'CANCELLED'
+                    cancelled_status_id = DocumentService.get_status_id_by_code(check_db, "CANCELLED")
+                    return current_doc and current_doc.status_id == cancelled_status_id
                 finally:
                     check_db.close()
 
@@ -445,16 +463,26 @@ class DocumentService:
         from sqlalchemy.orm import joinedload
         from sqlalchemy import and_, or_, cast, String, text
         from ..models.document_form_data import DocumentFormData
+        from ..models.status import Status
         import json
         from datetime import datetime
 
         query = db.query(Document)\
             .options(joinedload(Document.form_data_relation))\
+            .options(joinedload(Document.status))\
             .filter(Document.user_id == user_id)
 
-        # Status Filter
+        # Status Filter (Param status_id is actually the CODE string from frontend e.g. 'UPLOADED')
         if status_id:
-            query = query.filter(Document.status_id == status_id)
+            if status_id.upper() == 'ARCHIVED':
+                query = query.filter(Document.is_archived == True)
+            else:
+                query = query.join(Document.status).filter(Status.code == status_id.upper())
+                # Also filter out archived documents when showing other statuses
+                query = query.filter(Document.is_archived == False)
+        else:
+            # By default, exclude archived documents
+            query = query.filter(Document.is_archived == False)
 
         # Date Filters
         if date_from:
@@ -513,6 +541,50 @@ class DocumentService:
             Document.user_id == user_id
         ).first()
     
+    @staticmethod
+    async def archive_document(db: Session, document_id: int, user_id: str) -> bool:
+        """Archive a document by setting is_archived to True"""
+        document = db.query(Document).filter(
+            Document.id == document_id, 
+            Document.user_id == user_id
+        ).first()
+        
+        if not document:
+            return False
+        
+        document.is_archived = True
+        db.commit()
+        
+        await websocket_manager.broadcast_document_status(
+            document_id=document_id,
+            status="ARCHIVED",
+            user_id=str(document.user_id),
+            progress=100
+        )
+        return True
+
+    @staticmethod
+    async def unarchive_document(db: Session, document_id: int, user_id: str) -> bool:
+        """Unarchive a document by setting is_archived to False"""
+        document = db.query(Document).filter(
+            Document.id == document_id, 
+            Document.user_id == user_id
+        ).first()
+        
+        if not document:
+            return False
+        
+        document.is_archived = False
+        db.commit()
+        
+        await websocket_manager.broadcast_document_status(
+            document_id=document_id,
+            status=document.status.code if document.status else "COMPLETED",
+            user_id=str(document.user_id),
+            progress=100
+        )
+        return True
+
     @staticmethod
     async def delete_document(db: Session, document_id: int, user_id: str) -> bool:
         """Delete a document and its S3 file"""
@@ -626,5 +698,42 @@ class DocumentService:
             print(f"Background re-analysis failed: {e}")
         finally:
             db.close()
+
+    @staticmethod
+    def get_document_stats(db: Session, user_id: str):
+        """Get document statistics for a user"""
+        from sqlalchemy import func
+        from ..models.status import Status
+        
+        # Total active (not archived) documents
+        total_active = db.query(func.count(Document.id)).filter(
+            Document.user_id == user_id,
+            Document.is_archived == False
+        ).scalar() or 0
+        
+        # Total archived documents
+        total_archived = db.query(func.count(Document.id)).filter(
+            Document.user_id == user_id,
+            Document.is_archived == True
+        ).scalar() or 0
+        
+        # Counts by status
+        status_counts = db.query(
+            Status.code,
+            func.count(Document.id)
+        ).join(Document.status)\
+         .filter(Document.user_id == user_id, Document.is_archived == False)\
+         .group_by(Status.code).all()
+        
+        counts_dict = {code: count for code, count in status_counts}
+        
+        # Aggregated stats for the cards
+        return {
+            "total": total_active,
+            "processed": counts_dict.get("COMPLETED", 0),
+            "processing": counts_dict.get("PROCESSING", 0) + counts_dict.get("ANALYZING", 0) + counts_dict.get("AI_QUEUED", 0),
+            "uploading": counts_dict.get("UPLOADING", 0) + counts_dict.get("QUEUED", 0),
+            "archived": total_archived
+        }
 
 document_service = DocumentService()

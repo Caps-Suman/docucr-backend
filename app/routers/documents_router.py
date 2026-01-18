@@ -41,7 +41,8 @@ async def upload_documents(
         {
             "id": doc.id,
             "filename": doc.filename,
-            "status": doc.status_id,
+            "status_id": doc.status_id,
+            "statusCode": doc.status.code if doc.status else None,
             "file_size": doc.file_size,
             "upload_progress": doc.upload_progress
         }
@@ -67,9 +68,49 @@ async def get_document_form_data(
         
     if not document.form_data_relation:
          return {"data": {}, "form_id": None}
+    
+    # Resolve field IDs to field names
+    resolved_data = {}
+    if document.form_data_relation.data:
+        from ..models.form import FormField
+        from ..models.client import Client
+        from ..models.document_type import DocumentType
+        
+        for field_id, value in document.form_data_relation.data.items():
+            field = db.query(FormField).filter(FormField.id == field_id).first()
+            if field:
+                # Resolve dropdown values if needed
+                display_value = value
+                if field.field_type == 'dropdown' and field.options:
+                    # Find the option label for the value
+                    for option in field.options:
+                        if option.get('value') == value:
+                            display_value = option.get('label', value)
+                            break
+                elif field.field_type == 'client_dropdown':
+                    # Resolve client ID to client name
+                    try:
+                        client = db.query(Client).filter(Client.id == value).first()
+                        if client:
+                            display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
+                    except:
+                        pass
+                elif field.field_type == 'document_type_dropdown':
+                    # Resolve document type ID to document type name
+                    try:
+                        doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
+                        if doc_type:
+                            display_value = doc_type.name
+                    except:
+                        pass
+                        
+                resolved_data[field.label] = display_value
+            else:
+                # Field not found, keep original
+                resolved_data[field_id] = value
          
     return {
-        "data": document.form_data_relation.data,
+        "data": resolved_data,
         "form_id": document.form_data_relation.form_id,
         "updated_at": document.form_data_relation.updated_at
     }
@@ -105,6 +146,14 @@ async def update_document_form_data(
     db.commit()
     return {"message": "Form data updated"}
 
+@router.get("/stats")
+async def get_document_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get aggregate document statistics for the cards"""
+    return document_service.get_document_stats(db, current_user.id)
+
 @router.get("/", response_model=List[dict])
 async def get_documents(
     skip: int = 0,
@@ -127,12 +176,14 @@ async def get_documents(
             "id": doc.id,
             "filename": doc.filename,
             "original_filename": doc.original_filename,
-            "status": doc.status_id,
+            "status_id": doc.status_id,
+            "statusCode": doc.status.code if doc.status else None,
             "file_size": doc.file_size,
             "upload_progress": doc.upload_progress,
             "error_message": doc.error_message,
             "created_at": doc.created_at.isoformat(),
             "updated_at": doc.updated_at.isoformat(),
+            "is_archived": doc.is_archived,
             "custom_form_data": doc.form_data_relation.data if doc.form_data_relation else {}
         }
         for doc in documents
@@ -153,7 +204,8 @@ async def get_document_detail(
         "id": document.id,
         "filename": document.filename,
         "original_filename": document.original_filename,
-        "status": document.status_id,
+        "status_id": document.status_id,
+        "statusCode": document.status.code if document.status else None,
         "file_size": document.file_size,
         "content_type": document.content_type,
         "upload_progress": document.upload_progress,
@@ -161,6 +213,7 @@ async def get_document_detail(
         "created_at": document.created_at.isoformat(),
         "updated_at": document.updated_at.isoformat(),
         "analysis_report_s3_key": document.analysis_report_s3_key,
+        "is_archived": document.is_archived,
         "extracted_documents": [
             {
                 "id": str(ed.id),
@@ -291,6 +344,30 @@ async def reanalyze_document(
         return {"message": "Document queued for re-analysis"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/{document_id}/archive")
+async def archive_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Archive a document"""
+    success = await document_service.archive_document(db, document_id, current_user.id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"message": "Document archived successfully"}
+
+@router.post("/{document_id}/unarchive")
+async def unarchive_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Unarchive a document"""
+    success = await document_service.unarchive_document(db, document_id, current_user.id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"message": "Document unarchived successfully"}
 
 @router.delete("/{document_id}")
 async def delete_document(

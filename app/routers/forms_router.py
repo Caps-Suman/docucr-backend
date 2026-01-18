@@ -32,7 +32,8 @@ class FormResponse(BaseModel):
     id: str
     name: str
     description: Optional[str]
-    status_id: Optional[str]
+    status_id: Optional[int]
+    statusCode: Optional[str]
     created_at: Any
     fields_count: Optional[int] = 0
 
@@ -40,7 +41,7 @@ class FormDetailResponse(BaseModel):
     id: str
     name: str
     description: Optional[str]
-    status_id: Optional[str]
+    status_id: Optional[int]
     created_at: Any
     fields: List[Dict[str, Any]]
 

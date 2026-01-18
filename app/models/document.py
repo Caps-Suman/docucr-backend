@@ -15,11 +15,12 @@ class Document(Base):
     content_type = Column(String(100), nullable=False)
     s3_key = Column(String(500), nullable=True)
     s3_bucket = Column(String(100), nullable=True)
-    status_id = Column(String, ForeignKey("docucr.status.id"), nullable=False)
+    status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=False)
     upload_progress = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
     user_id = Column(String, ForeignKey("docucr.user.id"), nullable=False)
     analysis_report_s3_key = Column(String(500), nullable=True)
+    is_archived = Column(Boolean, default=False, nullable=False)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
@@ -20,8 +20,9 @@ class User(Base):
     is_superuser = Column(Boolean, default=False)
     is_client = Column(Boolean, default=False)
     client_id = Column(UUID(as_uuid=True), ForeignKey('docucr.client.id'), nullable=True)
-    status_id = Column(String, ForeignKey('docucr.status.id'), nullable=True)
+    status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     documents = relationship("Document", back_populates="user")
+    status_relation = relationship("Status")

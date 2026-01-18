@@ -40,6 +40,9 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
 
     roles = AuthService.get_user_roles(user.id, db)
     
+    if not roles:
+        raise HTTPException(status_code=403, detail="No active roles assigned")
+    
     if len(roles) == 1:
         tokens = AuthService.generate_tokens(user.email, roles[0]["id"])
         return {

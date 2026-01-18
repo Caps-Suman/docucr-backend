@@ -17,7 +17,7 @@ class RoleService:
         query = db.query(Role)
         
         if status_id:
-            query = query.filter(Role.status_id == status_id)
+            query = query.join(Role.status_relation).filter(Status.code == status_id)
             
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
@@ -25,11 +25,15 @@ class RoleService:
         result = []
         for role in roles:
             users_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
+            # Resolve Status Code
+            status_code = role.status_relation.code if role.status_relation else None
+                
             result.append({
                 "id": role.id,
                 "name": role.name,
                 "description": role.description,
                 "status_id": role.status_id,
+                "statusCode": status_code,
                 "can_edit": role.can_edit,
                 "users_count": users_count
             })
@@ -46,11 +50,14 @@ class RoleService:
         result = []
         for role in roles:
             users_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
+            status_code = role.status_relation.code if role.status_relation else None
+            
             result.append({
                 "id": role.id,
                 "name": role.name,
                 "description": role.description,
                 "status_id": role.status_id,
+                "statusCode": status_code,
                 "can_edit": role.can_edit,
                 "users_count": users_count
             })
@@ -64,11 +71,14 @@ class RoleService:
             return None
         
         users_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
+        status_code = role.status_relation.code if role.status_relation else None
+
         return {
             "id": role.id,
             "name": role.name,
             "description": role.description,
             "status_id": role.status_id,
+            "statusCode": status_code,
             "can_edit": role.can_edit,
             "users_count": users_count
         }
@@ -80,13 +90,13 @@ class RoleService:
 
     @staticmethod
     def create_role(role_data: Dict, db: Session) -> Dict:
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         
         new_role = Role(
             id=str(uuid.uuid4()),
             name=role_data['name'].upper(),
             description=role_data.get('description'),
-            status_id=active_status.id
+            status_id=active_status.id if active_status else None
         )
         
         db.add(new_role)
@@ -96,11 +106,14 @@ class RoleService:
         if role_data.get('modules'):
             RoleService._assign_modules(new_role.id, role_data['modules'], db)
         
+        status_code = new_role.status_relation.code if new_role.status_relation else (active_status.code if active_status else None)
+        
         return {
             "id": new_role.id,
             "name": new_role.name,
             "description": new_role.description,
             "status_id": new_role.status_id,
+            "statusCode": status_code,
             "can_edit": new_role.can_edit,
             "users_count": 0
         }
@@ -116,7 +129,14 @@ class RoleService:
         if 'description' in role_data:
             role.description = role_data['description']
         if 'status_id' in role_data:
-            role.status_id = role_data['status_id']
+            # If status_id is string Code, resolve to ID
+            status_code = role_data['status_id']
+            # Find status by code, try both exact and upper/lower to be safe? No, just match code standard
+            # But the user might send lowercase? I should probably .upper() existing input just in case
+            # But let's stick to using code==status_code check.
+            status = db.query(Status).filter(Status.code == status_code).first()
+            if status:
+                role.status_id = status.id
         
         if 'modules' in role_data and role_data['modules'] is not None:
             role_module_ids = [rm.id for rm in db.query(RoleModule).filter(RoleModule.role_id == role_id).all()]
@@ -129,11 +149,14 @@ class RoleService:
         db.refresh(role)
         
         users_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
+        status_code = role.status_relation.code if role.status_relation else None
+        
         return {
             "id": role.id,
             "name": role.name,
             "description": role.description,
             "status_id": role.status_id,
+            "statusCode": status_code,
             "can_edit": role.can_edit,
             "users_count": users_count
         }
@@ -151,11 +174,11 @@ class RoleService:
         db.delete(role)
         db.commit()
         return True, None
-
+    
     @staticmethod
     def get_role_stats(db: Session) -> Dict:
         total_roles = db.query(func.count(Role.id)).scalar()
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         active_roles = db.query(func.count(Role.id)).filter(Role.status_id == active_status.id).scalar() if active_status else 0
         
         return {

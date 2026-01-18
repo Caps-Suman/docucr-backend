@@ -5,9 +5,10 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 
 from app.core.database import get_db
+from app.core.security import get_current_user
 from app.services.role_service import RoleService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 class ModulePermission(BaseModel):
     module_id: str
@@ -62,7 +63,8 @@ class RoleResponse(BaseModel):
     id: str
     name: str
     description: Optional[str]
-    status_id: Optional[str]
+    status_id: Optional[int]
+    statusCode: Optional[str]
     can_edit: bool
     users_count: int
 
@@ -121,6 +123,7 @@ async def get_role_modules(role_id: str, db: Session = Depends(get_db)):
     modules = RoleService.get_role_modules(role_id, db)
     return {"modules": modules}
 
+@router.post("", response_model=RoleResponse)
 @router.post("/", response_model=RoleResponse)
 async def create_role(role: RoleCreate, db: Session = Depends(get_db)):
     if RoleService.check_role_name_exists(role.name, None, db):

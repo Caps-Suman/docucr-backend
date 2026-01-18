@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, DateTime, func, ForeignKey
+from sqlalchemy import Column, String, Text, DateTime, func, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from .module import Base
@@ -11,7 +11,7 @@ class DocumentType(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(100), nullable=False, unique=True)
     description = Column(Text, nullable=True)
-    status_id = Column(String, ForeignKey('docucr.status.id'), nullable=False)
+    status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     

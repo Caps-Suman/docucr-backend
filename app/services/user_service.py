@@ -20,7 +20,7 @@ class UserService:
         query = db.query(User)
         
         if status_id:
-            query = query.filter(User.status_id == status_id)
+            query = query.join(User.status_relation).filter(Status.code == status_id)
         
         if search:
             query = query.filter(
@@ -58,8 +58,13 @@ class UserService:
 
     @staticmethod
     def create_user(user_data: Dict, db: Session) -> Dict:
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == 'active').first()
+        # Fallback if case mismatch or missing
+        if not active_status:
+             active_status = db.query(Status).filter(Status.name == 'Active').first()
         
+        status_id_val = active_status.id if active_status else None
+
         new_user = User(
             id=str(uuid.uuid4()),
             email=user_data['email'].lower(),
@@ -71,7 +76,7 @@ class UserService:
             phone_country_code=user_data.get('phone_country_code'),
             phone_number=user_data.get('phone_number'),
             is_superuser=False,
-            status_id=active_status.id
+            status_id=status_id_val
         )
         
         db.add(new_user)
@@ -88,7 +93,7 @@ class UserService:
             UserService._link_client(new_user, user_data['client_id'], db)
         
         return UserService._format_user_response(new_user, db)
-
+    
     @staticmethod
     def _link_client(user: User, client_id: str, db: Session):
         # Verify client exists
@@ -117,9 +122,21 @@ class UserService:
         
         for key, value in user_data.items():
             if key not in ['role_ids', 'supervisor_id', 'password'] and value is not None:
-                if key in ['email', 'username']:
-                    value = value.lower()
-                setattr(user, key, value)
+                if key == 'status_id':
+                     # Handle status update safely
+                     if isinstance(value, str) and not value.isdigit():
+                         status_obj = db.query(Status).filter(Status.code == value).first()
+                         if status_obj:
+                             user.status_id = status_obj.id
+                         # If not found, ignore? or error? ignoring is safer for now.
+                     else:
+                         user.status_id = value
+                elif key in ['email', 'username']:
+                    user.email = value.lower() if key == 'email' else value.lower()
+                    # setattr(user, key, value.lower()) # Wait, above line is weird
+                    setattr(user, key, value.lower())
+                else:
+                    setattr(user, key, value)
         
         if 'role_ids' in user_data and user_data['role_ids'] is not None:
             db.query(UserRole).filter(UserRole.user_id == user_id).delete()
@@ -133,14 +150,14 @@ class UserService:
         db.commit()
         db.refresh(user)
         return UserService._format_user_response(user, db)
-
+    
     @staticmethod
     def activate_user(user_id: str, db: Session) -> Optional[Dict]:
         user = db.query(User).filter(User.id == user_id).first()
         if not user or user.is_superuser:
             return None
         
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         if active_status:
             user.status_id = active_status.id
             db.commit()
@@ -153,7 +170,7 @@ class UserService:
         if not user or user.is_superuser:
             return None
         
-        inactive_status = db.query(Status).filter(Status.name == 'INACTIVE').first()
+        inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
         if inactive_status:
             user.status_id = inactive_status.id
             db.commit()
@@ -163,7 +180,7 @@ class UserService:
     @staticmethod
     def get_user_stats(db: Session) -> Dict:
         total_users = db.query(func.count(User.id)).scalar()
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         active_users = db.query(func.count(User.id)).filter(User.status_id == active_status.id).scalar() if active_status else 0
         admin_users = db.query(func.count(User.id)).filter(User.is_superuser == True).scalar()
         
@@ -196,6 +213,23 @@ class UserService:
         supervisor = db.query(UserSupervisor).filter(UserSupervisor.user_id == user.id).first()
         supervisor_id = supervisor.supervisor_id if supervisor else None
         
+        # Load status relationship if not loaded?
+        # User model usually doesn't have status relationship defined explicitly in snippet I saw?
+        # Let's check User model again if I need to add relationship.
+        # Snippet for User model showed `status_id` column but no `status = relationship(...)`?
+        # Wait, I checked User model in Step 793, it had:
+        # status_id = Column(String, ForeignKey('docucr.status.id'), nullable=True)
+        # documents = relationship("Document", back_populates="user")
+        # NO `status` relationship!
+        # I MUST add status relationship to User model to use `user.status.code`.
+        # OR perform a query here.
+        
+        status_code = None
+        if user.status_id:
+             status_obj = db.query(Status).filter(Status.id == user.status_id).first()
+             if status_obj:
+                 status_code = status_obj.code
+
         return {
             "id": user.id,
             "email": user.email,
@@ -205,7 +239,8 @@ class UserService:
             "last_name": user.last_name,
             "phone_country_code": user.phone_country_code,
             "phone_number": user.phone_number,
-            "status_id": user.status_id,
+            "status_id": user.status_id, # Integer
+            "statusCode": status_code,   # String
             "is_superuser": user.is_superuser,
             "roles": roles,
             "supervisor_id": supervisor_id

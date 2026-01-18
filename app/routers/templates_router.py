@@ -39,7 +39,8 @@ class TemplateResponse(BaseModel):
     template_name: str
     description: Optional[str] = None
     document_type_id: UUID
-    status_id: str
+    status_id: int
+    statusCode: Optional[str] = None
     extraction_fields: List[Dict[str, Any]]
     created_at: datetime
     updated_at: datetime
@@ -52,6 +53,14 @@ class TemplateResponse(BaseModel):
     @field_serializer('created_at', 'updated_at')
     def serialize_datetime(self, value: datetime) -> str:
         return value.isoformat()
+
+    @field_serializer('statusCode', when_used='always')
+    def serialize_status_code(self, status_code: Optional[str], _info):
+        # If this is called on an ORM object, and statusCode is None, 
+        # try to get it from status relationship
+        if status_code is None and _info.data.get('status'):
+            return _info.data['status'].code
+        return status_code
 
     class Config:
         from_attributes = True

@@ -10,25 +10,38 @@ class FormService:
     def get_forms(page: int, page_size: int, db: Session) -> Tuple[List[Dict], int]:
         offset = (page - 1) * page_size
         
+        # We need to join Status to filter or select code.
+        # Original query selected Form.status_id, which is now Integer.
+        # We want to return the code.
+        # So join Status and select Status.code
         query = db.query(
             Form.id,
             Form.name,
             Form.description,
             Form.status_id,
+            Status.code.label('status_code'),
             Form.created_at,
             func.count(FormField.id).label('fields_count')
         ).outerjoin(FormField, Form.id == FormField.form_id)\
-         .group_by(Form.id, Form.name, Form.description, Form.status_id, Form.created_at)\
+         .outerjoin(Status, Form.status_id == Status.id)\
+         .group_by(Form.id, Form.name, Form.description, Form.status_id, Status.code, Form.created_at)\
          .order_by(Form.created_at.desc())
         
         total = query.count()
         forms = query.offset(offset).limit(page_size).all()
         
-        return [dict(row._mapping) for row in forms], total
+        result = []
+        for row in forms:
+            r = dict(row._mapping)
+            # rename status_code to statusCode for frontend
+            r['statusCode'] = r.pop('status_code', None)
+            result.append(r)
+
+        return result, total
     
     @staticmethod
     def get_form_stats(db: Session) -> Dict[str, int]:
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         
         total_forms = db.query(func.count(Form.id)).scalar()
         active_forms = db.query(func.count(Form.id)).filter(
@@ -48,12 +61,14 @@ class FormService:
             return None
         
         fields = db.query(FormField).filter(FormField.form_id == form_id).order_by(FormField.order).all()
-        
+        status_code = form.status_relation.code if form.status_relation else None
+
         return {
             "id": form.id,
             "name": form.name,
             "description": form.description,
             "status_id": form.status_id,
+            "statusCode": status_code,
             "created_at": form.created_at,
             "fields": [{
                 "id": f.id,
@@ -70,7 +85,7 @@ class FormService:
     
     @staticmethod
     def get_active_form(db: Session) -> Optional[Dict]:
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         if not active_status:
             return None
         
@@ -82,13 +97,15 @@ class FormService:
     
     @staticmethod
     def create_form(data: Dict[str, Any], user_id: str, db: Session) -> Dict:
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         
-        # Check if there's already an active form
+        # Check if there's already an active form and deactivate it
         if active_status:
             existing_active = db.query(Form).filter(Form.status_id == active_status.id).first()
             if existing_active:
-                raise ValueError("Only one form can be active at a time. Please deactivate the existing active form first.")
+                inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
+                if inactive_status:
+                    existing_active.status_id = inactive_status.id
         
         form = Form(
             id=str(uuid.uuid4()),
@@ -132,16 +149,27 @@ class FormService:
             form.description = data['description']
         if 'status_id' in data:
             # Check if trying to activate this form
-            active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
-            if active_status and data['status_id'] == active_status.id:
-                # Check if there's already another active form
-                existing_active = db.query(Form).filter(
-                    and_(Form.status_id == active_status.id, Form.id != form_id)
-                ).first()
-                if existing_active:
-                    raise ValueError("Only one form can be active at a time. Please deactivate the existing active form first.")
-            form.status_id = data['status_id']
-        
+            active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
+            
+            # Map input status code (potentially string) to ID if needed, but here logic compares IDs? 
+            # `data['status_id']` from frontend is string code ('ACTIVE').
+            # We must resolve it.
+            status_code_input = data['status_id']
+            status_obj = db.query(Status).filter(Status.code == status_code_input).first()
+            
+            if status_obj:
+                 new_status_id = status_obj.id
+                 
+                 if active_status and new_status_id == active_status.id:
+                    # Deactivate all other forms first
+                    inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
+                    if inactive_status:
+                        db.query(Form).filter(
+                            and_(Form.status_id == active_status.id, Form.id != form_id)
+                        ).update({Form.status_id: inactive_status.id})
+                 
+                 form.status_id = new_status_id
+
         if 'fields' in data:
             db.query(FormField).filter(FormField.form_id == form_id).delete()
             
@@ -164,6 +192,8 @@ class FormService:
         db.refresh(form)
         
         return FormService.get_form_by_id(form.id, db)
+
+
     
     @staticmethod
     def delete_form(form_id: str, db: Session) -> bool:

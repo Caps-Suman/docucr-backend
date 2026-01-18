@@ -24,12 +24,12 @@ class AuthService:
 
     @staticmethod
     def check_user_active(user: User, db: Session) -> bool:
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         return active_status and user.status_id == active_status.id
 
     @staticmethod
     def get_user_roles(user_id: str, db: Session) -> List[Dict]:
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         user_roles = db.query(UserRole, Role).join(Role, UserRole.role_id == Role.id).filter(
             UserRole.user_id == user_id,
             Role.status_id == active_status.id
@@ -49,7 +49,7 @@ class AuthService:
 
     @staticmethod
     def verify_user_role(user_id: str, role_id: str, db: Session) -> Optional[Role]:
-        active_status = db.query(Status).filter(Status.name == 'ACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         user_role = db.query(UserRole, Role).join(Role, UserRole.role_id == Role.id).filter(
             UserRole.user_id == user_id,
             UserRole.role_id == role_id,

@@ -7,6 +7,8 @@ from datetime import datetime
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.services.client_service import ClientService
+from app.models.user import User
+from app.models.user_client import UserClient
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -42,8 +44,10 @@ class ClientResponse(BaseModel):
     npi: Optional[str]
     is_user: bool
     type: Optional[str]
-    status_id: Optional[str]
+    status_id: Optional[int]
+    statusCode: Optional[str]
     description: Optional[str]
+    assigned_users: List[str]
     created_at: Optional[str]
     updated_at: Optional[str]
     
@@ -71,15 +75,23 @@ async def get_clients(
     page_size: int = 10,
     search: Optional[str] = None,
     status_id: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
-    clients, total = ClientService.get_clients(page, page_size, search, status_id, db)
+    clients, total = ClientService.get_clients(page, page_size, search, status_id, db, current_user)
     return ClientListResponse(
         clients=[ClientResponse(**client) for client in clients],
         total=total,
         page=page,
         page_size=page_size
     )
+
+@router.get("/{client_id}/users")
+async def get_client_users(client_id: str, db: Session = Depends(get_db)):
+    users = db.query(User).join(UserClient, User.id == UserClient.user_id).filter(
+        UserClient.client_id == client_id
+    ).all()
+    return [{"id": user.id, "username": user.username, "name": f"{user.first_name} {user.last_name}"} for user in users]
 
 @router.get("/{client_id}", response_model=ClientResponse)
 async def get_client(client_id: str, db: Session = Depends(get_db)):

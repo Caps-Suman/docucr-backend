@@ -23,7 +23,8 @@ class DocumentTypeResponse(BaseModel):
     id: str
     name: str
     description: str = None
-    status_id: str
+    status_id: int
+    statusCode: str = None
     created_at: str
     updated_at: str
 
