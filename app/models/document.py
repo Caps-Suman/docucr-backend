@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Boolean
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .module import Base
@@ -18,8 +19,22 @@ class Document(Base):
     upload_progress = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
     user_id = Column(String, ForeignKey("docucr.user.id"), nullable=False)
+    analysis_report_s3_key = Column(String(500), nullable=True)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     user = relationship("User", back_populates="documents")
     status = relationship("Status")
+    
+    # New Columns for Processing Context
+    document_type_id = Column(UUID(as_uuid=True), ForeignKey("docucr.document_types.id"), nullable=True)
+    template_id = Column(UUID(as_uuid=True), ForeignKey("docucr.templates.id"), nullable=True)
+    enable_ai = Column(Boolean, default=False)
+
+    # Relationships to new tables
+    extracted_documents = relationship("ExtractedDocument", back_populates="document", cascade="all, delete-orphan")
+    unverified_documents = relationship("UnverifiedDocument", back_populates="document", cascade="all, delete-orphan")
+    
+    # metadata relationship
+    form_data_relation = relationship("DocumentFormData", back_populates="document", uselist=False, cascade="all, delete-orphan")

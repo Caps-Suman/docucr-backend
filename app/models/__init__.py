@@ -9,5 +9,14 @@ from .user_supervisor import UserSupervisor
 from .document_type import DocumentType
 from .template import Template
 from .document import Document
+from .document_form_data import DocumentFormData
+from .extracted_document import ExtractedDocument
+from .unverified_document import UnverifiedDocument
+from .form import Form
+from .status import Status
 
-__all__ = ['Base', 'Module', 'Privilege', 'Role', 'RoleModule', 'User', 'UserRole', 'UserRoleModule', 'UserSupervisor', 'DocumentType', 'Template', 'Document']
+__all__ = [
+    'Base', 'Module', 'Privilege', 'Role', 'RoleModule', 'User', 'UserRole', 
+    'UserRoleModule', 'UserSupervisor', 'DocumentType', 'Template', 'Document',
+    'DocumentFormData', 'ExtractedDocument', 'UnverifiedDocument', 'Form', 'Status'
+]
