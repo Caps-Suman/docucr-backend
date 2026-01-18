@@ -171,6 +171,40 @@ async def get_documents(
         db, current_user.id, skip, limit,
         status_id, date_from, date_to, search_query, form_filters
     )
+    
+    # Helper function to resolve form data
+    def resolve_form_data(form_data_dict):
+        if not form_data_dict:
+            return {}
+        
+        from ..models.form import FormField
+        from ..models.client import Client
+        from ..models.document_type import DocumentType
+        
+        resolved_data = {}
+        for field_id, value in form_data_dict.items():
+            field = db.query(FormField).filter(FormField.id == field_id).first()
+            if field:
+                display_value = value
+                if field.field_type == 'client_dropdown':
+                    try:
+                        client = db.query(Client).filter(Client.id == value).first()
+                        if client:
+                            display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
+                    except:
+                        pass
+                elif field.field_type == 'document_type_dropdown':
+                    try:
+                        doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
+                        if doc_type:
+                            display_value = doc_type.name
+                    except:
+                        pass
+                resolved_data[field.label] = display_value
+            else:
+                resolved_data[field_id] = value
+        return resolved_data
+    
     return [
         {
             "id": doc.id,
@@ -184,7 +218,7 @@ async def get_documents(
             "created_at": doc.created_at.isoformat(),
             "updated_at": doc.updated_at.isoformat(),
             "is_archived": doc.is_archived,
-            "custom_form_data": doc.form_data_relation.data if doc.form_data_relation else {}
+            "custom_form_data": resolve_form_data(doc.form_data_relation.data if doc.form_data_relation else {})
         }
         for doc in documents
     ]
