@@ -9,13 +9,41 @@ class TemplateService:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_all(self) -> List[Template]:
+    def get_all(self) -> List[Dict]:
         """Get all templates with document type info"""
-        return self.db.query(Template).options(joinedload(Template.document_type)).all()
+        templates = self.db.query(Template).options(
+            joinedload(Template.document_type),
+            joinedload(Template.status)
+        ).all()
+        
+        result = []
+        for template in templates:
+            template_dict = {
+                "id": template.id,
+                "template_name": template.template_name,
+                "description": template.description,
+                "document_type_id": template.document_type_id,
+                "status_id": template.status_id,
+                "statusCode": template.status.code if template.status else "",
+                "extraction_fields": template.extraction_fields,
+                "created_at": template.created_at,
+                "updated_at": template.updated_at,
+                "document_type": {
+                    "id": template.document_type.id,
+                    "name": template.document_type.name,
+                    "description": template.document_type.description
+                } if template.document_type else None
+            }
+            result.append(template_dict)
+        
+        return result
 
     def get_by_id(self, template_id: str) -> Template:
         """Get template by ID"""
-        template = self.db.query(Template).options(joinedload(Template.document_type)).filter(Template.id == template_id).first()
+        template = self.db.query(Template).options(
+            joinedload(Template.document_type),
+            joinedload(Template.status)
+        ).filter(Template.id == template_id).first()
         if not template:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

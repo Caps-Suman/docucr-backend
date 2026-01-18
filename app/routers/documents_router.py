@@ -57,12 +57,49 @@ async def get_document_form_data(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get form data for a document"""
-    document = db.query(Document).filter(
-        Document.id == document_id, 
-        Document.user_id == current_user.id
-    ).first()
+    """Get form data for a document with role-based access control"""
+    from ..models.user_role import UserRole
+    from ..models.role import Role
+    from ..models.status import Status
+    from ..models.user_client import UserClient
+    from ..models.client import Client
+    from ..models.document_form_data import DocumentFormData
+    from sqlalchemy import cast, String, or_
     
+    # Get user's roles to determine access level
+    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+        User.id == current_user.id,
+        Role.status_id.in_(
+            db.query(Status.id).filter(Status.code == 'ACTIVE')
+        )
+    ).all()
+    
+    role_names = [role.name for role in user_roles]
+    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+    
+    query = db.query(Document).filter(Document.id == document_id)
+    
+    if not is_admin:
+        assigned_client_ids = db.query(UserClient.client_id).filter(
+            UserClient.user_id == current_user.id
+        ).subquery()
+        
+        client_documents_query = db.query(Document.id).join(
+            DocumentFormData, Document.id == DocumentFormData.document_id
+        ).join(
+            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+        ).filter(
+            Client.id.in_(assigned_client_ids)
+        )
+        
+        query = query.filter(
+            or_(
+                Document.user_id == current_user.id,
+                Document.id.in_(client_documents_query)
+            )
+        )
+    
+    document = query.first()
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
         
@@ -122,12 +159,49 @@ async def update_document_form_data(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update form data for a document"""
-    document = db.query(Document).filter(
-        Document.id == document_id, 
-        Document.user_id == current_user.id
-    ).first()
+    """Update form data for a document with role-based access control"""
+    from ..models.user_role import UserRole
+    from ..models.role import Role
+    from ..models.status import Status
+    from ..models.user_client import UserClient
+    from ..models.client import Client
+    from ..models.document_form_data import DocumentFormData
+    from sqlalchemy import cast, String, or_
     
+    # Get user's roles to determine access level
+    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+        User.id == current_user.id,
+        Role.status_id.in_(
+            db.query(Status.id).filter(Status.code == 'ACTIVE')
+        )
+    ).all()
+    
+    role_names = [role.name for role in user_roles]
+    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+    
+    query = db.query(Document).filter(Document.id == document_id)
+    
+    if not is_admin:
+        assigned_client_ids = db.query(UserClient.client_id).filter(
+            UserClient.user_id == current_user.id
+        ).subquery()
+        
+        client_documents_query = db.query(Document.id).join(
+            DocumentFormData, Document.id == DocumentFormData.document_id
+        ).join(
+            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+        ).filter(
+            Client.id.in_(assigned_client_ids)
+        )
+        
+        query = query.filter(
+            or_(
+                Document.user_id == current_user.id,
+                Document.id.in_(client_documents_query)
+            )
+        )
+    
+    document = query.first()
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -273,12 +347,49 @@ async def get_document_preview_url(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get secure, temporary pre-signed URL for preview (enables streaming/seeking)"""
-    document = db.query(Document).filter(
-        Document.id == document_id,
-        Document.user_id == current_user.id
-    ).first()
+    """Get secure, temporary pre-signed URL for preview with role-based access control"""
+    from ..models.user_role import UserRole
+    from ..models.role import Role
+    from ..models.status import Status
+    from ..models.user_client import UserClient
+    from ..models.client import Client
+    from ..models.document_form_data import DocumentFormData
+    from sqlalchemy import cast, String, or_
     
+    # Get user's roles to determine access level
+    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+        User.id == current_user.id,
+        Role.status_id.in_(
+            db.query(Status.id).filter(Status.code == 'ACTIVE')
+        )
+    ).all()
+    
+    role_names = [role.name for role in user_roles]
+    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+    
+    query = db.query(Document).filter(Document.id == document_id)
+    
+    if not is_admin:
+        assigned_client_ids = db.query(UserClient.client_id).filter(
+            UserClient.user_id == current_user.id
+        ).subquery()
+        
+        client_documents_query = db.query(Document.id).join(
+            DocumentFormData, Document.id == DocumentFormData.document_id
+        ).join(
+            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+        ).filter(
+            Client.id.in_(assigned_client_ids)
+        )
+        
+        query = query.filter(
+            or_(
+                Document.user_id == current_user.id,
+                Document.id.in_(client_documents_query)
+            )
+        )
+    
+    document = query.first()
     if not document or not document.s3_key:
         raise HTTPException(status_code=404, detail="Document not found")
         
@@ -296,12 +407,49 @@ async def get_document_download_url(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get secure download URL"""
-    document = db.query(Document).filter(
-        Document.id == document_id,
-        Document.user_id == current_user.id
-    ).first()
+    """Get secure download URL with role-based access control"""
+    from ..models.user_role import UserRole
+    from ..models.role import Role
+    from ..models.status import Status
+    from ..models.user_client import UserClient
+    from ..models.client import Client
+    from ..models.document_form_data import DocumentFormData
+    from sqlalchemy import cast, String, or_
     
+    # Get user's roles to determine access level
+    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+        User.id == current_user.id,
+        Role.status_id.in_(
+            db.query(Status.id).filter(Status.code == 'ACTIVE')
+        )
+    ).all()
+    
+    role_names = [role.name for role in user_roles]
+    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+    
+    query = db.query(Document).filter(Document.id == document_id)
+    
+    if not is_admin:
+        assigned_client_ids = db.query(UserClient.client_id).filter(
+            UserClient.user_id == current_user.id
+        ).subquery()
+        
+        client_documents_query = db.query(Document.id).join(
+            DocumentFormData, Document.id == DocumentFormData.document_id
+        ).join(
+            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+        ).filter(
+            Client.id.in_(assigned_client_ids)
+        )
+        
+        query = query.filter(
+            or_(
+                Document.user_id == current_user.id,
+                Document.id.in_(client_documents_query)
+            )
+        )
+    
+    document = query.first()
     if not document or not document.s3_key:
         raise HTTPException(status_code=404, detail="Document not found")
         
@@ -328,12 +476,49 @@ async def get_document_report_url(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get secure download URL for the analysis report"""
-    document = db.query(Document).filter(
-        Document.id == document_id,
-        Document.user_id == current_user.id
-    ).first()
+    """Get secure download URL for the analysis report with role-based access control"""
+    from ..models.user_role import UserRole
+    from ..models.role import Role
+    from ..models.status import Status
+    from ..models.user_client import UserClient
+    from ..models.client import Client
+    from ..models.document_form_data import DocumentFormData
+    from sqlalchemy import cast, String, or_
     
+    # Get user's roles to determine access level
+    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+        User.id == current_user.id,
+        Role.status_id.in_(
+            db.query(Status.id).filter(Status.code == 'ACTIVE')
+        )
+    ).all()
+    
+    role_names = [role.name for role in user_roles]
+    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+    
+    query = db.query(Document).filter(Document.id == document_id)
+    
+    if not is_admin:
+        assigned_client_ids = db.query(UserClient.client_id).filter(
+            UserClient.user_id == current_user.id
+        ).subquery()
+        
+        client_documents_query = db.query(Document.id).join(
+            DocumentFormData, Document.id == DocumentFormData.document_id
+        ).join(
+            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+        ).filter(
+            Client.id.in_(assigned_client_ids)
+        )
+        
+        query = query.filter(
+            or_(
+                Document.user_id == current_user.id,
+                Document.id.in_(client_documents_query)
+            )
+        )
+    
+    document = query.first()
     if not document or not document.analysis_report_s3_key:
         raise HTTPException(status_code=404, detail="Analysis report not found")
         

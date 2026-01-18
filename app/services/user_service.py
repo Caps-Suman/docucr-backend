@@ -17,7 +17,15 @@ class UserService:
     @staticmethod
     def get_users(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
-        query = db.query(User)
+        query = db.query(User).outerjoin(UserRole).outerjoin(Role)
+        
+        # Exclude users with SUPER_ADMIN role
+        query = query.filter(
+            ~db.query(UserRole).join(Role).filter(
+                UserRole.user_id == User.id,
+                Role.name == 'SUPER_ADMIN'
+            ).exists()
+        )
         
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
@@ -44,7 +52,13 @@ class UserService:
 
     @staticmethod
     def get_user_by_id(user_id: str, db: Session) -> Optional[Dict]:
-        user = db.query(User).filter(User.id == user_id).first()
+        user = db.query(User).filter(
+            User.id == user_id,
+            ~db.query(UserRole).join(Role).filter(
+                UserRole.user_id == User.id,
+                Role.name == 'SUPER_ADMIN'
+            ).exists()
+        ).first()
         if not user:
             return None
         return UserService._format_user_response(user, db)
@@ -179,10 +193,30 @@ class UserService:
 
     @staticmethod
     def get_user_stats(db: Session) -> Dict:
-        total_users = db.query(func.count(User.id)).scalar()
+        # Exclude SUPER_ADMIN users from all counts
+        total_users = db.query(func.count(User.id)).filter(
+            ~db.query(UserRole).join(Role).filter(
+                UserRole.user_id == User.id,
+                Role.name == 'SUPER_ADMIN'
+            ).exists()
+        ).scalar()
+        
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        active_users = db.query(func.count(User.id)).filter(User.status_id == active_status.id).scalar() if active_status else 0
-        admin_users = db.query(func.count(User.id)).filter(User.is_superuser == True).scalar()
+        active_users = db.query(func.count(User.id)).filter(
+            User.status_id == active_status.id,
+            ~db.query(UserRole).join(Role).filter(
+                UserRole.user_id == User.id,
+                Role.name == 'SUPER_ADMIN'
+            ).exists()
+        ).scalar() if active_status else 0
+        
+        admin_users = db.query(func.count(User.id)).filter(
+            User.is_superuser == True,
+            ~db.query(UserRole).join(Role).filter(
+                UserRole.user_id == User.id,
+                Role.name == 'SUPER_ADMIN'
+            ).exists()
+        ).scalar()
         
         return {
             "total_users": total_users,

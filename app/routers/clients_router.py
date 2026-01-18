@@ -9,6 +9,8 @@ from app.core.security import get_current_user
 from app.services.client_service import ClientService
 from app.models.user import User
 from app.models.user_client import UserClient
+from app.models.user_role import UserRole
+from app.models.role import Role
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -89,7 +91,11 @@ async def get_clients(
 @router.get("/{client_id}/users")
 async def get_client_users(client_id: str, db: Session = Depends(get_db)):
     users = db.query(User).join(UserClient, User.id == UserClient.user_id).filter(
-        UserClient.client_id == client_id
+        UserClient.client_id == client_id,
+        ~db.query(UserRole).join(Role).filter(
+            UserRole.user_id == User.id,
+            Role.name == 'SUPER_ADMIN'
+        ).exists()
     ).all()
     return [{"id": user.id, "username": user.username, "name": f"{user.first_name} {user.last_name}"} for user in users]
 

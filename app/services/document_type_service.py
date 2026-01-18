@@ -15,9 +15,9 @@ class DocumentTypeService:
         return [{
             "id": str(dt.id),
             "name": dt.name,
-            "description": dt.description,
+            "description": dt.description or "",
             "status_id": dt.status_id,
-            "statusCode": dt.status.code,
+            "statusCode": dt.status.code if dt.status else "",
             "created_at": dt.created_at.isoformat(),
             "updated_at": dt.updated_at.isoformat()
         } for dt in document_types]
@@ -36,9 +36,9 @@ class DocumentTypeService:
         return [{
             "id": str(dt.id),
             "name": dt.name,
-            "description": dt.description,
+            "description": dt.description or "",
             "status_id": dt.status_id,
-            "statusCode": dt.status.code,
+            "statusCode": dt.status.code if dt.status else "",
             "created_at": dt.created_at.isoformat(),
             "updated_at": dt.updated_at.isoformat()
         } for dt in document_types]
@@ -54,24 +54,27 @@ class DocumentTypeService:
         return {
             "id": str(document_type.id),
             "name": document_type.name,
-            "description": document_type.description,
+            "description": document_type.description or "",
             "status_id": document_type.status_id,
-            "statusCode": document_type.status.code,
+            "statusCode": document_type.status.code if document_type.status else "",
             "created_at": document_type.created_at.isoformat(),
             "updated_at": document_type.updated_at.isoformat()
         }
 
     def create(self, name: str, description: Optional[str] = None, status_id: Optional[str] = None) -> Dict:
         """Create a new document type"""
-        # Get inactive status if not provided
-        if status_id is None:
-            inactive_status = self.db.query(Status).filter(Status.code == 'INACTIVE').first()
-            if not inactive_status:
+        # Handle status_id conversion from code to ID
+        if status_id is None or isinstance(status_id, str):
+            # If status_id is a string, treat it as a status code
+            status_code = status_id if status_id else 'INACTIVE'
+            status_obj = self.db.query(Status).filter(Status.code == status_code.upper()).first()
+            if not status_obj:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Inactive status not found in status table"
+                    detail=f"Status '{status_code}' not found in status table"
                 )
-            status_id = inactive_status.id
+            status_id = status_obj.id
+        
         # Check for case-sensitive duplicate
         existing = self.db.query(DocumentType).filter(DocumentType.name == name).first()
         if existing:
@@ -90,9 +93,9 @@ class DocumentTypeService:
             return {
                 "id": str(document_type.id),
                 "name": document_type.name,
-                "description": document_type.description,
+                "description": document_type.description or "",
                 "status_id": document_type.status_id,
-                "statusCode": document_type.status.code,
+                "statusCode": document_type.status.code if document_type.status else "",
                 "created_at": document_type.created_at.isoformat(),
                 "updated_at": document_type.updated_at.isoformat()
             }
@@ -124,6 +127,16 @@ class DocumentTypeService:
                     detail="Document type with this name already exists"
                 )
         
+        # Handle status_id conversion from code to ID
+        if status_id is not None and isinstance(status_id, str) and not status_id.isdigit():
+            status_obj = self.db.query(Status).filter(Status.code == status_id.upper()).first()
+            if not status_obj:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Status '{status_id}' not found in status table"
+                )
+            status_id = status_obj.id
+        
         try:
             if name is not None:
                 document_type.name = name
@@ -138,9 +151,9 @@ class DocumentTypeService:
             return {
                 "id": str(document_type.id),
                 "name": document_type.name,
-                "description": document_type.description,
+                "description": document_type.description or "",
                 "status_id": document_type.status_id,
-                "statusCode": document_type.status.code,
+                "statusCode": document_type.status.code if document_type.status else "",
                 "created_at": document_type.created_at.isoformat(),
                 "updated_at": document_type.updated_at.isoformat()
             }
@@ -170,3 +183,22 @@ class DocumentTypeService:
                 detail="Inactive status not found in status table"
             )
         return self.update(document_type_id, status_id=inactive_status.id)
+
+    def delete(self, document_type_id: str) -> bool:
+        """Delete a document type and all associated templates"""
+        document_type = self.db.query(DocumentType).filter(DocumentType.id == document_type_id).first()
+        if not document_type:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document type not found"
+            )
+        
+        # Check if there are associated templates (for informational purposes)
+        from app.models.template import Template
+        template_count = self.db.query(Template).filter(Template.document_type_id == document_type_id).count()
+        
+        # Delete the document type (templates will be deleted automatically due to cascade)
+        self.db.delete(document_type)
+        self.db.commit()
+        
+        return True

@@ -55,12 +55,8 @@ class TemplateResponse(BaseModel):
         return value.isoformat()
 
     @field_serializer('statusCode', when_used='always')
-    def serialize_status_code(self, status_code: Optional[str], _info):
-        # If this is called on an ORM object, and statusCode is None, 
-        # try to get it from status relationship
-        if status_code is None and _info.data.get('status'):
-            return _info.data['status'].code
-        return status_code
+    def serialize_status_code(self, status_code: Optional[str]):
+        return status_code or ""
 
     class Config:
         from_attributes = True

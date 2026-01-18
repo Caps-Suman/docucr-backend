@@ -9,8 +9,8 @@ from app.services.status_service import StatusService
 router = APIRouter()
 
 class StatusResponse(BaseModel):
-    id: str
-    name: str
+    id: int
+    code: str
     description: Optional[str]
     type: Optional[str]
     

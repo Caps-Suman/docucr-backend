@@ -8,4 +8,4 @@ class StatusService:
     @staticmethod
     def get_all_statuses(db: Session) -> List[Dict]:
         statuses = db.query(Status).all()
-        return [{"id": s.id, "name": s.name, "description": s.description, "type": s.type} for s in statuses]
+        return [{"id": s.id, "code": s.code, "description": s.description, "type": s.type} for s in statuses]

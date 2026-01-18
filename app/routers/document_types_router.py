@@ -22,9 +22,9 @@ class DocumentTypeUpdate(BaseModel):
 class DocumentTypeResponse(BaseModel):
     id: str
     name: str
-    description: str = None
+    description: str = ""
     status_id: int
-    statusCode: str = None
+    statusCode: str = ""
     created_at: str
     updated_at: str
 
@@ -92,3 +92,13 @@ async def deactivate_document_type(
     """Deactivate a document type"""
     service = DocumentTypeService(db)
     return service.deactivate(document_type_id)
+
+@router.delete("/{document_type_id}")
+async def delete_document_type(
+    document_type_id: str,
+    db: Session = Depends(get_db)
+):
+    """Delete a document type"""
+    service = DocumentTypeService(db)
+    service.delete(document_type_id)
+    return {"message": "Document type deleted successfully"}

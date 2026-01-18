@@ -7,6 +7,8 @@ from datetime import datetime
 from app.models.client import Client
 from app.models.user import User
 from app.models.user_client import UserClient
+from app.models.user_role import UserRole
+from app.models.role import Role
 from app.models.status import Status
 
 
@@ -223,11 +225,15 @@ class ClientService:
         elif client.status_id and client.status_relation: # If already eager loaded or available
              status_code = client.status_relation.code
 
-        # Get assigned users
+        # Get assigned users (excluding SUPER_ADMIN)
         assigned_users = []
         if db:
             user_assignments = db.query(User).join(UserClient, User.id == UserClient.user_id).filter(
-                UserClient.client_id == client.id
+                UserClient.client_id == client.id,
+                ~db.query(UserRole).join(Role).filter(
+                    UserRole.user_id == User.id,
+                    Role.name == 'SUPER_ADMIN'
+                ).exists()
             ).all()
             assigned_users = [f"{user.first_name} {user.last_name}" for user in user_assignments]
 

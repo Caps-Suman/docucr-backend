@@ -4,6 +4,8 @@ from ..models.status import Status
 from ..services.s3_service import s3_service
 from ..services.websocket_manager import websocket_manager
 from fastapi import UploadFile
+from ..services.webhook_service import webhook_service
+from ..core.database import SessionLocal
 import asyncio
 from typing import List
 
@@ -296,6 +298,19 @@ class DocumentService:
                 progress=100, s3_key=s3_key, s3_bucket=bucket_name
             )
             
+            # Trigger Webhook: document.uploaded
+            asyncio.create_task(asyncio.to_thread(
+                webhook_service.trigger_webhook_background,
+                "document.uploaded",
+                {
+                    "document_id": document_id,
+                    "filename": document.filename,
+                    "s3_key": s3_key
+                },
+                str(document.user_id),
+                SessionLocal
+            ))
+            
             return True
 
         except Exception as e:
@@ -443,6 +458,19 @@ class DocumentService:
                 progress=100, error_message="Analysis Complete"
             )
 
+            # Trigger Webhook: document.processed
+            asyncio.create_task(asyncio.to_thread(
+                webhook_service.trigger_webhook_background,
+                "document.processed",
+                {
+                    "document_id": document_id,
+                    "filename": document.filename,
+                    "status": "COMPLETED"
+                },
+                str(document.user_id),
+                SessionLocal
+            ))
+
         except Exception as e:
             error_str = str(e)
             is_cancelled = "Analysis Cancelled" in error_str
@@ -451,6 +479,21 @@ class DocumentService:
                 db, document_id, "CANCELLED" if is_cancelled else "AI_FAILED", 
                 error_message="Analysis Cancelled" if is_cancelled else error_str
             )
+
+            if not is_cancelled:
+                # Trigger Webhook: document.failed
+                asyncio.create_task(asyncio.to_thread(
+                    webhook_service.trigger_webhook_background,
+                    "document.failed",
+                    {
+                        "document_id": document_id,
+                        "filename": (db.query(Document).filter(Document.id == document_id).first()).filename if db.query(Document).filter(Document.id == document_id).first() else "Unknown",
+                        "error": error_str
+                    },
+                    str((db.query(Document).filter(Document.id == document_id).first()).user_id) if db.query(Document).filter(Document.id == document_id).first() else "Unknown",
+                    SessionLocal
+                ))
+            
             print(f"AI Analysis {'Cancelled' if is_cancelled else 'Failed'} for {document_id}: {e}")
         finally:
             db.close()
@@ -459,18 +502,60 @@ class DocumentService:
     def get_user_documents(db: Session, user_id: str, skip: int = 0, limit: int = 100,
                          status_id: str = None, date_from: str = None, date_to: str = None,
                          search_query: str = None, form_filters: str = None) -> List[Document]:
-        """Get documents for a user with filters"""
+        """Get documents for a user with role-based access control"""
         from sqlalchemy.orm import joinedload
         from sqlalchemy import and_, or_, cast, String, text
         from ..models.document_form_data import DocumentFormData
         from ..models.status import Status
+        from ..models.user import User
+        from ..models.user_role import UserRole
+        from ..models.role import Role
+        from ..models.user_client import UserClient
+        from ..models.client import Client
         import json
         from datetime import datetime
 
+        # Get user's roles to determine access level
+        user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+            User.id == user_id,
+            Role.status_id.in_(
+                db.query(Status.id).filter(Status.code == 'ACTIVE')
+            )
+        ).all()
+        
+        role_names = [role.name for role in user_roles]
+        is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+
         query = db.query(Document)\
             .options(joinedload(Document.form_data_relation))\
-            .options(joinedload(Document.status))\
-            .filter(Document.user_id == user_id)
+            .options(joinedload(Document.status))
+        
+        if is_admin:
+            # Admin users see all documents - no user filter
+            pass
+        else:
+            # Non-admin users see only:
+            # 1. Documents they uploaded
+            # 2. Documents from clients assigned to them
+            assigned_client_ids = db.query(UserClient.client_id).filter(
+                UserClient.user_id == user_id
+            ).subquery()
+            
+            # Get documents from assigned clients by joining with form data
+            client_documents_query = db.query(Document.id).join(
+                DocumentFormData, Document.id == DocumentFormData.document_id
+            ).join(
+                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+            ).filter(
+                Client.id.in_(assigned_client_ids)
+            )
+            
+            query = query.filter(
+                or_(
+                    Document.user_id == user_id,  # Documents uploaded by user
+                    Document.id.in_(client_documents_query)  # Documents from assigned clients
+                )
+            )
 
         # Status Filter (Param status_id is actually the CODE string from frontend e.g. 'UPLOADED')
         if status_id:
@@ -531,24 +616,102 @@ class DocumentService:
 
     @staticmethod
     def get_document_detail(db: Session, document_id: int, user_id: str) -> Document:
-        """Get document with all details (extracted/unverified docs)"""
+        """Get document with all details (extracted/unverified docs) with role-based access control"""
         from sqlalchemy.orm import joinedload
-        return db.query(Document).options(
+        from ..models.user import User
+        from ..models.user_role import UserRole
+        from ..models.role import Role
+        from ..models.status import Status
+        from ..models.user_client import UserClient
+        from ..models.client import Client
+        from ..models.document_form_data import DocumentFormData
+        from sqlalchemy import cast, String, or_
+        
+        # Get user's roles to determine access level
+        user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+            User.id == user_id,
+            Role.status_id.in_(
+                db.query(Status.id).filter(Status.code == 'ACTIVE')
+            )
+        ).all()
+        
+        role_names = [role.name for role in user_roles]
+        is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+        
+        query = db.query(Document).options(
             joinedload(Document.extracted_documents),
             joinedload(Document.unverified_documents)
-        ).filter(
-            Document.id == document_id, 
-            Document.user_id == user_id
-        ).first()
+        ).filter(Document.id == document_id)
+        
+        if not is_admin:
+            # Non-admin users can only access their own documents or assigned client documents
+            assigned_client_ids = db.query(UserClient.client_id).filter(
+                UserClient.user_id == user_id
+            ).subquery()
+            
+            client_documents_query = db.query(Document.id).join(
+                DocumentFormData, Document.id == DocumentFormData.document_id
+            ).join(
+                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+            ).filter(
+                Client.id.in_(assigned_client_ids)
+            )
+            
+            query = query.filter(
+                or_(
+                    Document.user_id == user_id,
+                    Document.id.in_(client_documents_query)
+                )
+            )
+        
+        return query.first()
     
     @staticmethod
     async def archive_document(db: Session, document_id: int, user_id: str) -> bool:
-        """Archive a document by setting is_archived to True"""
-        document = db.query(Document).filter(
-            Document.id == document_id, 
-            Document.user_id == user_id
-        ).first()
+        """Archive a document by setting is_archived to True with role-based access control"""
+        from ..models.user import User
+        from ..models.user_role import UserRole
+        from ..models.role import Role
+        from ..models.status import Status
+        from ..models.user_client import UserClient
+        from ..models.client import Client
+        from ..models.document_form_data import DocumentFormData
+        from sqlalchemy import cast, String, or_
         
+        # Get user's roles to determine access level
+        user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+            User.id == user_id,
+            Role.status_id.in_(
+                db.query(Status.id).filter(Status.code == 'ACTIVE')
+            )
+        ).all()
+        
+        role_names = [role.name for role in user_roles]
+        is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+        
+        query = db.query(Document).filter(Document.id == document_id)
+        
+        if not is_admin:
+            assigned_client_ids = db.query(UserClient.client_id).filter(
+                UserClient.user_id == user_id
+            ).subquery()
+            
+            client_documents_query = db.query(Document.id).join(
+                DocumentFormData, Document.id == DocumentFormData.document_id
+            ).join(
+                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+            ).filter(
+                Client.id.in_(assigned_client_ids)
+            )
+            
+            query = query.filter(
+                or_(
+                    Document.user_id == user_id,
+                    Document.id.in_(client_documents_query)
+                )
+            )
+        
+        document = query.first()
         if not document:
             return False
         
@@ -565,12 +728,50 @@ class DocumentService:
 
     @staticmethod
     async def unarchive_document(db: Session, document_id: int, user_id: str) -> bool:
-        """Unarchive a document by setting is_archived to False"""
-        document = db.query(Document).filter(
-            Document.id == document_id, 
-            Document.user_id == user_id
-        ).first()
+        """Unarchive a document by setting is_archived to False with role-based access control"""
+        from ..models.user import User
+        from ..models.user_role import UserRole
+        from ..models.role import Role
+        from ..models.status import Status
+        from ..models.user_client import UserClient
+        from ..models.client import Client
+        from ..models.document_form_data import DocumentFormData
+        from sqlalchemy import cast, String, or_
         
+        # Get user's roles to determine access level
+        user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+            User.id == user_id,
+            Role.status_id.in_(
+                db.query(Status.id).filter(Status.code == 'ACTIVE')
+            )
+        ).all()
+        
+        role_names = [role.name for role in user_roles]
+        is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+        
+        query = db.query(Document).filter(Document.id == document_id)
+        
+        if not is_admin:
+            assigned_client_ids = db.query(UserClient.client_id).filter(
+                UserClient.user_id == user_id
+            ).subquery()
+            
+            client_documents_query = db.query(Document.id).join(
+                DocumentFormData, Document.id == DocumentFormData.document_id
+            ).join(
+                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+            ).filter(
+                Client.id.in_(assigned_client_ids)
+            )
+            
+            query = query.filter(
+                or_(
+                    Document.user_id == user_id,
+                    Document.id.in_(client_documents_query)
+                )
+            )
+        
+        document = query.first()
         if not document:
             return False
         
@@ -587,12 +788,50 @@ class DocumentService:
 
     @staticmethod
     async def delete_document(db: Session, document_id: int, user_id: str) -> bool:
-        """Delete a document and its S3 file"""
-        document = db.query(Document).filter(
-            Document.id == document_id, 
-            Document.user_id == user_id
-        ).first()
+        """Delete a document and its S3 file with role-based access control"""
+        from ..models.user import User
+        from ..models.user_role import UserRole
+        from ..models.role import Role
+        from ..models.status import Status
+        from ..models.user_client import UserClient
+        from ..models.client import Client
+        from ..models.document_form_data import DocumentFormData
+        from sqlalchemy import cast, String, or_
         
+        # Get user's roles to determine access level
+        user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+            User.id == user_id,
+            Role.status_id.in_(
+                db.query(Status.id).filter(Status.code == 'ACTIVE')
+            )
+        ).all()
+        
+        role_names = [role.name for role in user_roles]
+        is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+        
+        query = db.query(Document).filter(Document.id == document_id)
+        
+        if not is_admin:
+            assigned_client_ids = db.query(UserClient.client_id).filter(
+                UserClient.user_id == user_id
+            ).subquery()
+            
+            client_documents_query = db.query(Document.id).join(
+                DocumentFormData, Document.id == DocumentFormData.document_id
+            ).join(
+                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+            ).filter(
+                Client.id.in_(assigned_client_ids)
+            )
+            
+            query = query.filter(
+                or_(
+                    Document.user_id == user_id,
+                    Document.id.in_(client_documents_query)
+                )
+            )
+        
+        document = query.first()
         if not document:
             return False
         
@@ -607,16 +846,67 @@ class DocumentService:
         # Delete from database
         db.delete(document)
         db.commit()
+
+        # Trigger Webhook: document.deleted
+        asyncio.create_task(asyncio.to_thread(
+            webhook_service.trigger_webhook_background,
+            "document.deleted",
+            {
+                "document_id": document_id,
+                "filename": document.filename
+            },
+            str(user_id),
+            SessionLocal
+        ))
+        
         return True
 
     @staticmethod
     async def cancel_document_analysis(db: Session, document_id: int, user_id: str):
-        """Cancel ongoing analysis by setting status"""
-        document = db.query(Document).filter(
-            Document.id == document_id, 
-            Document.user_id == user_id
-        ).first()
+        """Cancel ongoing analysis by setting status with role-based access control"""
+        from ..models.user import User
+        from ..models.user_role import UserRole
+        from ..models.role import Role
+        from ..models.status import Status
+        from ..models.user_client import UserClient
+        from ..models.client import Client
+        from ..models.document_form_data import DocumentFormData
+        from sqlalchemy import cast, String, or_
         
+        # Get user's roles to determine access level
+        user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+            User.id == user_id,
+            Role.status_id.in_(
+                db.query(Status.id).filter(Status.code == 'ACTIVE')
+            )
+        ).all()
+        
+        role_names = [role.name for role in user_roles]
+        is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+        
+        query = db.query(Document).filter(Document.id == document_id)
+        
+        if not is_admin:
+            assigned_client_ids = db.query(UserClient.client_id).filter(
+                UserClient.user_id == user_id
+            ).subquery()
+            
+            client_documents_query = db.query(Document.id).join(
+                DocumentFormData, Document.id == DocumentFormData.document_id
+            ).join(
+                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+            ).filter(
+                Client.id.in_(assigned_client_ids)
+            )
+            
+            query = query.filter(
+                or_(
+                    Document.user_id == user_id,
+                    Document.id.in_(client_documents_query)
+                )
+            )
+        
+        document = query.first()
         if not document:
              return False
              
@@ -628,12 +918,50 @@ class DocumentService:
 
     @staticmethod
     async def reanalyze_document(db: Session, document_id: int, user_id: str):
-        """Reset status to AI_QUEUED and trigger background analysis"""
-        document = db.query(Document).filter(
-            Document.id == document_id,
-            Document.user_id == user_id
-        ).first()
+        """Reset status to AI_QUEUED and trigger background analysis with role-based access control"""
+        from ..models.user import User
+        from ..models.user_role import UserRole
+        from ..models.role import Role
+        from ..models.status import Status
+        from ..models.user_client import UserClient
+        from ..models.client import Client
+        from ..models.document_form_data import DocumentFormData
+        from sqlalchemy import cast, String, or_
         
+        # Get user's roles to determine access level
+        user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+            User.id == user_id,
+            Role.status_id.in_(
+                db.query(Status.id).filter(Status.code == 'ACTIVE')
+            )
+        ).all()
+        
+        role_names = [role.name for role in user_roles]
+        is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+        
+        query = db.query(Document).filter(Document.id == document_id)
+        
+        if not is_admin:
+            assigned_client_ids = db.query(UserClient.client_id).filter(
+                UserClient.user_id == user_id
+            ).subquery()
+            
+            client_documents_query = db.query(Document.id).join(
+                DocumentFormData, Document.id == DocumentFormData.document_id
+            ).join(
+                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+            ).filter(
+                Client.id.in_(assigned_client_ids)
+            )
+            
+            query = query.filter(
+                or_(
+                    Document.user_id == user_id,
+                    Document.id.in_(client_documents_query)
+                )
+            )
+        
+        document = query.first()
         if not document:
             raise Exception("Document not found")
             
@@ -701,38 +1029,84 @@ class DocumentService:
 
     @staticmethod
     def get_document_stats(db: Session, user_id: str):
-        """Get document statistics for a user"""
+        """Get document statistics for a user with role-based access control"""
         from sqlalchemy import func
         from ..models.status import Status
+        from ..models.user import User
+        from ..models.user_role import UserRole
+        from ..models.role import Role
+        from ..models.user_client import UserClient
+        from ..models.client import Client
+        from ..models.document_form_data import DocumentFormData
+        from ..models.document_share import DocumentShare
+        from ..services.document_share_service import DocumentShareService
+        from sqlalchemy import cast, String, or_
+        
+        # Get user's roles to determine access level
+        user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+            User.id == user_id,
+            Role.status_id.in_(
+                db.query(Status.id).filter(Status.code == 'ACTIVE')
+            )
+        ).all()
+        
+        role_names = [role.name for role in user_roles]
+        is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+        
+        # Base query for documents
+        base_query = db.query(Document)
+        
+        if not is_admin:
+            # Non-admin users see only their documents and assigned client documents
+            assigned_client_ids = db.query(UserClient.client_id).filter(
+                UserClient.user_id == user_id
+            ).subquery()
+            
+            client_documents_query = db.query(Document.id).join(
+                DocumentFormData, Document.id == DocumentFormData.document_id
+            ).join(
+                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+            ).filter(
+                Client.id.in_(assigned_client_ids)
+            )
+            
+            base_query = base_query.filter(
+                or_(
+                    Document.user_id == user_id,
+                    Document.id.in_(client_documents_query)
+                )
+            )
         
         # Total active (not archived) documents
-        total_active = db.query(func.count(Document.id)).filter(
-            Document.user_id == user_id,
+        total_active = base_query.filter(
             Document.is_archived == False
-        ).scalar() or 0
+        ).count()
         
         # Total archived documents
-        total_archived = db.query(func.count(Document.id)).filter(
-            Document.user_id == user_id,
+        total_archived = base_query.filter(
             Document.is_archived == True
-        ).scalar() or 0
+        ).count()
         
         # Counts by status
         status_counts = db.query(
             Status.code,
             func.count(Document.id)
-        ).join(Document.status)\
-         .filter(Document.user_id == user_id, Document.is_archived == False)\
+        ).select_from(base_query.subquery()).join(Document.status)\
+         .filter(Document.is_archived == False)\
          .group_by(Status.code).all()
         
         counts_dict = {code: count for code, count in status_counts}
+        
+        # Get shared documents count
+        share_service = DocumentShareService(db)
+        shared_count = share_service.get_shared_documents_count(user_id)
         
         # Aggregated stats for the cards
         return {
             "total": total_active,
             "processed": counts_dict.get("COMPLETED", 0),
             "processing": counts_dict.get("PROCESSING", 0) + counts_dict.get("ANALYZING", 0) + counts_dict.get("AI_QUEUED", 0),
-            "uploading": counts_dict.get("UPLOADING", 0) + counts_dict.get("QUEUED", 0),
+            "sharedWithMe": shared_count,
             "archived": total_archived
         }
 
