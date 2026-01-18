@@ -439,8 +439,15 @@ class DocumentService:
     
     @staticmethod
     def get_user_documents(db: Session, user_id: str, skip: int = 0, limit: int = 100) -> List[Document]:
-        """Get documents for a user"""
-        return db.query(Document).filter(Document.user_id == user_id).offset(skip).limit(limit).all()
+        """Get documents for a user with form data for custom columns"""
+        from sqlalchemy.orm import joinedload
+        return db.query(Document)\
+            .options(joinedload(Document.form_data_relation))\
+            .filter(Document.user_id == user_id)\
+            .order_by(Document.created_at.desc())\
+            .offset(skip)\
+            .limit(limit)\
+            .all()
 
     @staticmethod
     def get_document_detail(db: Session, document_id: int, user_id: str) -> Document:

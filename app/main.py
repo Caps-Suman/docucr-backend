@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth_router, modules_router, roles_router, privileges_router, users_router, statuses_router, profile_router, forms_router, clients_router, document_types_router, templates_router, documents_router
+from .routers import auth_router, modules_router, roles_router, privileges_router, users_router, statuses_router, profile_router, forms_router, clients_router, document_types_router, templates_router, documents_router, document_list_config_router
 # Import all models to ensure they are registered with Base metadata
-from .models import user, role, privilege, status, module, document, template, extracted_document, unverified_document
+from .models import user, role, privilege, status, module, document, template, extracted_document, unverified_document, document_list_config
 
 app = FastAPI(title="DocuCR API", version="1.0.0")
 
@@ -28,6 +28,7 @@ app.include_router(clients_router.router, prefix="/api/clients", tags=["clients"
 app.include_router(document_types_router.router)
 app.include_router(templates_router.router)
 app.include_router(documents_router.router)
+app.include_router(document_list_config_router.router)
 
 @app.get("/api/health")
 async def health():

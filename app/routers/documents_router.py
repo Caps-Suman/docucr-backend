@@ -124,7 +124,8 @@ async def get_documents(
             "upload_progress": doc.upload_progress,
             "error_message": doc.error_message,
             "created_at": doc.created_at.isoformat(),
-            "updated_at": doc.updated_at.isoformat()
+            "updated_at": doc.updated_at.isoformat(),
+            "custom_form_data": doc.form_data_relation.data if doc.form_data_relation else {}
         }
         for doc in documents
     ]
