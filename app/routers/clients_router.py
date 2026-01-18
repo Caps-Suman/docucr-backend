@@ -5,9 +5,10 @@ from typing import Optional, List
 from datetime import datetime
 
 from app.core.database import get_db
+from app.core.security import get_current_user
 from app.services.client_service import ClientService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 class ClientCreate(BaseModel):
     business_name: Optional[str] = None

@@ -5,9 +5,10 @@ from pydantic import BaseModel, field_serializer
 from datetime import datetime
 from uuid import UUID
 from app.core.database import get_db
+from app.core.security import get_current_user
 from app.services.template_service import TemplateService
 
-router = APIRouter(prefix="/api/templates", tags=["templates"])
+router = APIRouter(prefix="/api/templates", tags=["templates"], dependencies=[Depends(get_current_user)])
 
 # Pydantic models
 class TemplateCreate(BaseModel):

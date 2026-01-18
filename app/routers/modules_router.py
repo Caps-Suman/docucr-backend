@@ -4,6 +4,8 @@ from typing import List
 from pydantic import BaseModel
 
 from app.core.database import get_db
+from app.core.security import get_current_user
+from app.models.user import User
 from app.services.module_service import ModuleService
 
 router = APIRouter()
@@ -29,7 +31,7 @@ class ModulesResponse(BaseModel):
 
 @router.get("", response_model=ModulesResponse)
 @router.get("/", response_model=ModulesResponse)
-async def get_all_modules(db: Session = Depends(get_db)):
+async def get_all_modules(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     modules = ModuleService.get_all_modules(db)
     return ModulesResponse(modules=modules)
 
@@ -37,7 +39,8 @@ async def get_all_modules(db: Session = Depends(get_db)):
 @router.get("/user-modules/", response_model=ModulesResponse)
 async def get_current_user_modules(
     email: str = Query(..., description="User email"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     modules = ModuleService.get_user_modules(email, db)
     if not modules:

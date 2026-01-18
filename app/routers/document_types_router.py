@@ -3,9 +3,10 @@ from sqlalchemy.orm import Session
 from typing import List
 from pydantic import BaseModel
 from app.core.database import get_db
+from app.core.security import get_current_user
 from app.services.document_type_service import DocumentTypeService
 
-router = APIRouter(prefix="/api/document-types", tags=["document-types"])
+router = APIRouter(prefix="/api/document-types", tags=["document-types"], dependencies=[Depends(get_current_user)])
 
 # Pydantic models
 class DocumentTypeCreate(BaseModel):
