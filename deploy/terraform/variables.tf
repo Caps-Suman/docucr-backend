@@ -24,17 +24,17 @@ variable "container_image" {
 variable "db_username" {
   description = "Database username"
   type        = string
-  default     = "aiicr_user"
+  default     = "docucr_user"
 }
 
 variable "db_name" {
   description = "Database name"
   type        = string
-  default     = "aiicr"
+  default     = "docucr_db"
 }
 
 variable "db_schema" {
   description = "Database schema"
   type        = string
-  default     = "aiicr"
+  default     = "docucr"
 }

@@ -12,7 +12,7 @@ from app.models.role import Role
 from app.models.status import Status
 from app.core.security import verify_password, create_access_token, create_refresh_token, get_password_hash
 from app.utils.email import send_otp_email
-
+from datetime import timezone
 
 class AuthService:
     @staticmethod
@@ -60,7 +60,8 @@ class AuthService:
     @staticmethod
     def generate_otp(email: str, db: Session) -> str:
         otp_code = ''.join(random.choices(string.digits, k=6))
-        expires_at = datetime.utcnow() + timedelta(minutes=10)
+        # Use timezone-aware UTC
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
         otp_record = db.query(OTP).filter(OTP.email == email).first()
         if otp_record:
@@ -82,7 +83,7 @@ class AuthService:
     @staticmethod
     def verify_otp(email: str, otp: str, db: Session) -> bool:
         otp_record = db.query(OTP).filter(OTP.email == email, OTP.otp_code == otp).first()
-        if not otp_record or otp_record.is_used or otp_record.expires_at < datetime.utcnow():
+        if not otp_record or otp_record.is_used or otp_record.expires_at < datetime.now(timezone.utc):
             return False
         return True
 

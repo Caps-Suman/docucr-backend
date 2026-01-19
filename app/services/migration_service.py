@@ -26,44 +26,42 @@ class MigrationService:
         7. Creating the initial SUPER_ADMIN user
         """
         
-        # 1. Create Schema and Tables
         try:
+            # 1. Create Schema and Tables
             db.execute(text("CREATE SCHEMA IF NOT EXISTS docucr"))
-            # Ensure tables are created (using metadata from one of the models)
-            # Privilege.metadata includes all models because they share Module.Base
-            Privilege.metadata.create_all(db.get_bind())
             db.commit()
-        except Exception as e:
-            print(f"Schema/Table initialization: {e}")
-            db.rollback()
+            
+            # Create all tables
+            Base.metadata.create_all(db.get_bind())
+            db.commit()
+            
+            # 2. Seed Statuses
+            statuses = [
+                {"code": "ACTIVE", "description": "Active status", "type": "USER"},
+                {"code": "INACTIVE", "description": "Inactive status", "type": "USER"},
+                {"code": "PENDING", "description": "Pending status", "type": "GENERAL"},
+                {"code": "REJECTED", "description": "Rejected status", "type": "GENERAL"},
+            ]
+            
+            db_statuses = {}
+            for s in statuses:
+                existing = db.query(Status).filter(Status.code == s["code"]).first()
+                if not existing:
+                    new_status = Status(
+                        code=s["code"],
+                        description=s["description"],
+                        type=s["type"]
+                    )
+                    db.add(new_status)
+                    db.flush()
+                    db_statuses[s["code"]] = new_status
+                else:
+                    db_statuses[s["code"]] = existing
+            
+            active_status = db_statuses.get("ACTIVE")
 
-        # 2. Seed Statuses
-        statuses = [
-            {"code": "ACTIVE", "description": "Active status", "type": "USER"},
-            {"code": "INACTIVE", "description": "Inactive status", "type": "USER"},
-            {"code": "PENDING", "description": "Pending status", "type": "GENERAL"},
-            {"code": "REJECTED", "description": "Rejected status", "type": "GENERAL"},
-        ]
-        
-        db_statuses = {}
-        for s in statuses:
-            existing = db.query(Status).filter(Status.code == s["code"]).first()
-            if not existing:
-                new_status = Status(
-                    code=s["code"],
-                    description=s["description"],
-                    type=s["type"]
-                )
-                db.add(new_status)
-                db.flush()
-                db_statuses[s["code"]] = new_status
-            else:
-                db_statuses[s["code"]] = existing
-        
-        active_status = db_statuses.get("ACTIVE")
-
-        # 3. Seed Modules (Using Definitive Dev Data)
-        modules_data = [
+            # 3. Seed Modules (Using Definitive Dev Data)
+            modules_data = [
           {
             "id": "81a2f87b-8483-4191-97a6-1f3a86b8ba8e",
             "name": "dashboard",
@@ -172,21 +170,21 @@ class MigrationService:
             "color_from": "#ff9a9e",
             "color_to": "#fecfef"
           }
-        ]
-        
-        db_modules = []
-        for m in modules_data:
-            existing = db.query(Module).filter(Module.id == m["id"]).first()
-            if not existing:
-                new_mod = Module(**m)
-                db.add(new_mod)
-                db_modules.append(new_mod)
-            else:
-                db_modules.append(existing)
-        db.flush()
+            ]
+            
+            db_modules = []
+            for m in modules_data:
+                existing = db.query(Module).filter(Module.id == m["id"]).first()
+                if not existing:
+                    new_mod = Module(**m)
+                    db.add(new_mod)
+                    db_modules.append(new_mod)
+                else:
+                    db_modules.append(existing)
+            db.flush()
 
-        # 4. Seed Privileges (Using Definitive Dev Data)
-        privileges_data = [
+            # 4. Seed Privileges (Using Definitive Dev Data)
+            privileges_data = [
           {
             "id": "9a147d3b-81c2-4b5a-a1e6-44401bf3062f",
             "name": "CREATE",
@@ -227,93 +225,97 @@ class MigrationService:
             "name": "MANAGE",
             "description": "Full management access"
           }
-        ]
-        
-        db_privileges = []
-        for p in privileges_data:
-            existing = db.query(Privilege).filter(Privilege.id == p["id"]).first()
-            if not existing:
-                new_priv = Privilege(**p)
-                db.add(new_priv)
-                db_privileges.append(new_priv)
-            else:
-                db_privileges.append(existing)
-        db.flush()
-
-        # 5. Create SUPER_ADMIN Role
-        role_name = "SUPER_ADMIN"
-        super_admin_role = db.query(Role).filter(Role.name == role_name).first()
-        if not super_admin_role:
-            super_admin_role = Role(
-                id=role_name,
-                name=role_name,
-                description="System administrator with full access",
-                status_id=active_status.id if active_status else None,
-                can_edit=False
-            )
-            db.add(super_admin_role)
-            db.flush()
-        
-        role_id = super_admin_role.id
-
-        # 6. Link all privileges to SUPER_ADMIN for all modules
-        for mod in db_modules:
-            for priv in db_privileges:
-                # Check if link exists
-                link_id = f"{role_id}_{mod.id}_{priv.id}"
-                existing_link = db.query(RoleModule).filter(RoleModule.id == link_id).first()
-                if not existing_link:
-                    new_link = RoleModule(
-                        id=link_id,
-                        role_id=role_id,
-                        module_id=mod.id,
-                        privilege_id=priv.id
-                    )
-                    db.add(new_link)
-        db.flush()
-
-        # 7. Create/Update SUPER_ADMIN User
-        existing_user = db.query(User).filter(User.email == super_admin_email.lower()).first()
-        if not existing_user:
-            new_user = User(
-                id=str(uuid.uuid4()),
-                email=super_admin_email.lower(),
-                username=super_admin_email.split('@')[0].lower(),
-                hashed_password=get_password_hash(super_admin_password),
-                first_name="Super",
-                last_name="Admin",
-                is_superuser=True,
-                status_id=active_status.id if active_status else None
-            )
-            db.add(new_user)
-            db.flush()
+            ]
             
-            # Link to role
-            user_role_link = UserRole(
-                id=str(uuid.uuid4()),
-                user_id=new_user.id,
-                role_id=role_id
-            )
-            db.add(user_role_link)
-        else:
-            # Ensure superuser and correct password
-            existing_user.hashed_password = get_password_hash(super_admin_password)
-            existing_user.is_superuser = True
-            if active_status:
-                existing_user.status_id = active_status.id
+            db_privileges = []
+            for p in privileges_data:
+                existing = db.query(Privilege).filter(Privilege.id == p["id"]).first()
+                if not existing:
+                    new_priv = Privilege(**p)
+                    db.add(new_priv)
+                    db_privileges.append(new_priv)
+                else:
+                    db_privileges.append(existing)
+            db.flush()
+
+            # 5. Create SUPER_ADMIN Role
+            role_name = "SUPER_ADMIN"
+            super_admin_role = db.query(Role).filter(Role.name == role_name).first()
+            if not super_admin_role:
+                super_admin_role = Role(
+                    id=role_name,
+                    name=role_name,
+                    description="System administrator with full access",
+                    status_id=active_status.id if active_status else None,
+                    can_edit=False
+                )
+                db.add(super_admin_role)
+                db.flush()
             
-            # Ensure role link exists
-            existing_role_link = db.query(UserRole).filter(
-                UserRole.user_id == existing_user.id,
-                UserRole.role_id == role_id
-            ).first()
-            if not existing_role_link:
+            role_id = super_admin_role.id
+
+            # 6. Link all privileges to SUPER_ADMIN for all modules
+            for mod in db_modules:
+                for priv in db_privileges:
+                    # Check if link exists
+                    link_id = f"{role_id}_{mod.id}_{priv.id}"
+                    existing_link = db.query(RoleModule).filter(RoleModule.id == link_id).first()
+                    if not existing_link:
+                        new_link = RoleModule(
+                            id=link_id,
+                            role_id=role_id,
+                            module_id=mod.id,
+                            privilege_id=priv.id
+                        )
+                        db.add(new_link)
+            db.flush()
+
+            # 7. Create/Update SUPER_ADMIN User
+            existing_user = db.query(User).filter(User.email == super_admin_email.lower()).first()
+            if not existing_user:
+                new_user = User(
+                    id=str(uuid.uuid4()),
+                    email=super_admin_email.lower(),
+                    username=super_admin_email.split('@')[0].lower(),
+                    hashed_password=get_password_hash(super_admin_password),
+                    first_name="Super",
+                    last_name="Admin",
+                    is_superuser=True,
+                    status_id=active_status.id if active_status else None
+                )
+                db.add(new_user)
+                db.flush()
+                
+                # Link to role
                 user_role_link = UserRole(
                     id=str(uuid.uuid4()),
-                    user_id=existing_user.id,
+                    user_id=new_user.id,
                     role_id=role_id
                 )
                 db.add(user_role_link)
+            else:
+                # Ensure superuser and correct password
+                existing_user.hashed_password = get_password_hash(super_admin_password)
+                existing_user.is_superuser = True
+                if active_status:
+                    existing_user.status_id = active_status.id
+                
+                # Ensure role link exists
+                existing_role_link = db.query(UserRole).filter(
+                    UserRole.user_id == existing_user.id,
+                    UserRole.role_id == role_id
+                ).first()
+                if not existing_role_link:
+                    user_role_link = UserRole(
+                        id=str(uuid.uuid4()),
+                        user_id=existing_user.id,
+                        role_id=role_id
+                    )
+                    db.add(user_role_link)
 
-        db.commit()
-        return {"message": "System initialized successfully with definitive seed data"}
+            db.commit()
+            return {"message": "System initialized successfully with definitive seed data"}
+        
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Migration failed: {str(e)}")
