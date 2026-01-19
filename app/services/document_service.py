@@ -513,7 +513,7 @@ class DocumentService:
     @staticmethod
     def get_user_documents(db: Session, user_id: str, skip: int = 0, limit: int = 100,
                          status_id: str = None, date_from: str = None, date_to: str = None,
-                         search_query: str = None, form_filters: str = None) -> List[Document]:
+                         search_query: str = None, form_filters: str = None) -> tuple[List[Document], int]:
         """Get documents for a user with role-based access control"""
         # Get user's roles to determine access level - optimized query
         role_names = [r[0] for r in db.query(Role.name).join(UserRole).filter(
@@ -607,10 +607,14 @@ class DocumentService:
             except json.JSONDecodeError:
                 pass
 
-        return query.order_by(Document.created_at.desc())\
+        total_count = query.count()
+
+        documents = query.order_by(Document.created_at.desc())\
             .offset(skip)\
             .limit(limit)\
             .all()
+            
+        return documents, total_count
 
     @staticmethod
     def get_document_detail(db: Session, document_id: int, user_id: str) -> Document:

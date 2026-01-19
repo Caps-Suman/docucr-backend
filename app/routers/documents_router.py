@@ -231,10 +231,10 @@ def get_document_stats(
     """Get aggregate document statistics for the cards"""
     return document_service.get_document_stats(db, current_user.id)
 
-@router.get("/", response_model=List[dict])
+@router.get("/", response_model=dict)
 def get_documents(
     skip: int = 0,
-    limit: int = 100,
+    limit: int = 25,
     status_id: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
@@ -244,7 +244,7 @@ def get_documents(
     db: Session = Depends(get_db)
 ):
     """Get user documents with filters"""
-    documents = document_service.get_user_documents(
+    documents, total_count = document_service.get_user_documents(
         db, current_user.id, skip, limit,
         status_id, date_from, date_to, search_query, form_filters
     )
@@ -284,7 +284,7 @@ def get_documents(
                 resolved_data[field_id] = value
         return resolved_data
     
-    return [
+    result = [
         {
             "id": doc.id,
             "filename": doc.filename,
@@ -294,13 +294,20 @@ def get_documents(
             "file_size": doc.file_size,
             "upload_progress": doc.upload_progress,
             "error_message": doc.error_message,
-            "created_at": doc.created_at.isoformat(),
-            "updated_at": doc.updated_at.isoformat(),
+            "created_at": doc.created_at.isoformat() if doc.created_at else None,
+            "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
             "is_archived": doc.is_archived,
             "custom_form_data": resolve_form_data(doc.form_data_relation.data if doc.form_data_relation else {})
         }
         for doc in documents
     ]
+
+    return {
+        "documents": result,
+        "total": total_count,
+        "page": (skip // limit) + 1 if limit > 0 else 1,
+        "page_size": limit
+    }
 
 @router.get("/{document_id}")
 async def get_document_detail(
