@@ -8,6 +8,9 @@ from ..services.document_service import document_service
 from ..services.websocket_manager import websocket_manager
 from ..models.document import Document
 from ..models.user import User
+from ..models.form import FormField
+from ..models.client import Client
+from ..models.document_type import DocumentType
 import asyncio
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -221,7 +224,7 @@ async def update_document_form_data(
     return {"message": "Form data updated"}
 
 @router.get("/stats")
-async def get_document_stats(
+def get_document_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -229,7 +232,7 @@ async def get_document_stats(
     return document_service.get_document_stats(db, current_user.id)
 
 @router.get("/", response_model=List[dict])
-async def get_documents(
+def get_documents(
     skip: int = 0,
     limit: int = 100,
     status_id: Optional[str] = None,
@@ -246,34 +249,36 @@ async def get_documents(
         status_id, date_from, date_to, search_query, form_filters
     )
     
-    # Helper function to resolve form data
+    # Get all form fields for this user's scope (simplified to all for now as it's small)
+    fields = db.query(FormField).all()
+    field_map = {str(f.id): f for f in fields}
+    
+    # Get all clients
+    clients = db.query(Client).all()
+    client_map = {str(c.id): c for c in clients}
+    
+    # Get all document types
+    doc_types = db.query(DocumentType).all()
+    doc_type_map = {str(dt.id): dt for dt in doc_types}
+
+    # Helper function to resolve form data using pre-fetched maps
     def resolve_form_data(form_data_dict):
         if not form_data_dict:
             return {}
         
-        from ..models.form import FormField
-        from ..models.client import Client
-        from ..models.document_type import DocumentType
-        
         resolved_data = {}
         for field_id, value in form_data_dict.items():
-            field = db.query(FormField).filter(FormField.id == field_id).first()
+            field = field_map.get(str(field_id))
             if field:
                 display_value = value
                 if field.field_type == 'client_dropdown':
-                    try:
-                        client = db.query(Client).filter(Client.id == value).first()
-                        if client:
-                            display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
-                    except:
-                        pass
+                    client = client_map.get(str(value))
+                    if client:
+                        display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
                 elif field.field_type == 'document_type_dropdown':
-                    try:
-                        doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
-                        if doc_type:
-                            display_value = doc_type.name
-                    except:
-                        pass
+                    doc_type = doc_type_map.get(str(value))
+                    if doc_type:
+                        display_value = doc_type.name
                 resolved_data[field.label] = display_value
             else:
                 resolved_data[field_id] = value

@@ -19,6 +19,6 @@ class StatusResponse(BaseModel):
 
 @router.get("", response_model=List[StatusResponse])
 @router.get("/", response_model=List[StatusResponse])
-async def get_statuses(db: Session = Depends(get_db)):
+def get_statuses(db: Session = Depends(get_db)):
     statuses = StatusService.get_all_statuses(db)
     return [StatusResponse(**s) for s in statuses]

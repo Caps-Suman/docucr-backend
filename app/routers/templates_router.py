@@ -62,7 +62,7 @@ class TemplateResponse(BaseModel):
         from_attributes = True
 
 @router.get("/", response_model=List[TemplateResponse])
-async def get_templates(
+def get_templates(
     db: Session = Depends(get_db)
 ):
     """Get all templates with document type info"""
@@ -70,7 +70,7 @@ async def get_templates(
     return service.get_all()
 
 @router.post("/", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
-async def create_template(
+def create_template(
     template_data: TemplateCreate,
     db: Session = Depends(get_db)
 ):
@@ -85,7 +85,7 @@ async def create_template(
     )
 
 @router.get("/{template_id}", response_model=TemplateResponse)
-async def get_template(
+def get_template(
     template_id: str,
     db: Session = Depends(get_db)
 ):
@@ -94,7 +94,7 @@ async def get_template(
     return service.get_by_id(template_id)
 
 @router.put("/{template_id}", response_model=TemplateResponse)
-async def update_template(
+def update_template(
     template_id: str,
     template_data: TemplateUpdate,
     db: Session = Depends(get_db)
@@ -111,7 +111,7 @@ async def update_template(
     )
 
 @router.patch("/{template_id}/activate")
-async def activate_template(
+def activate_template(
     template_id: str,
     db: Session = Depends(get_db)
 ):
@@ -120,7 +120,7 @@ async def activate_template(
     return service.activate(template_id)
 
 @router.patch("/{template_id}/deactivate")
-async def deactivate_template(
+def deactivate_template(
     template_id: str,
     db: Session = Depends(get_db)
 ):
@@ -129,7 +129,7 @@ async def deactivate_template(
     return service.deactivate(template_id)
 
 @router.get("/by-document-type/{document_type_id}", response_model=List[TemplateResponse])
-async def get_templates_by_document_type(
+def get_templates_by_document_type(
     document_type_id: str,
     db: Session = Depends(get_db)
 ):
