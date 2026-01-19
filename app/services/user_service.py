@@ -145,10 +145,11 @@ class UserService:
                          # If not found, ignore? or error? ignoring is safer for now.
                      else:
                          user.status_id = value
-                elif key in ['email', 'username']:
-                    user.email = value.lower() if key == 'email' else value.lower()
-                    # setattr(user, key, value.lower()) # Wait, above line is weird
-                    setattr(user, key, value.lower())
+                elif key == 'email':
+                    user.email = value.lower()
+
+                elif key == 'username':
+                    user.username = value.lower()
                 else:
                     setattr(user, key, value)
         
