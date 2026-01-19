@@ -93,68 +93,80 @@ class AIService:
         }}
         """
 
-        # Batch Processing
+        # Batch Processing Optimization
         BATCH_SIZE = 2
         all_findings = []
         
+        # Limit concurrent requests to avoid Rate Limiting (TPM)
+        sem = asyncio.Semaphore(3)
+
+        async def process_batch(start_idx: int, batch_images: List[str]):
+            async with sem:
+                # Check for cancellation
+                if check_cancelled_callback and await check_cancelled_callback():
+                    # We can't easily "cancel" other running tasks in gather without complex logic,
+                    # but we can abort this one.
+                    return []
+
+                start_page = start_idx + 1
+                end_page = min(start_idx + len(batch_images), total_pages)
+                
+                # Progress Update (Approximate, as they run in parallel)
+                if progress_callback:
+                    # Calculate approximate progress
+                    # We use a simplified metric here since exact tracking with concurrency is noisy
+                    await progress_callback(f"Analyzing pages...", 
+                                          int((end_page / total_pages) * 80) + 10)
+
+                # Construct Batch Prompt
+                batch_user_content = [
+                    {"type": "text", "text": f"Analyze these specific pages ({start_page} to {end_page} of {total_pages}) and extract logical documents found strictly within this range."}
+                ]
+                
+                for img_b64 in batch_images:
+                    batch_user_content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{img_b64}"
+                        }
+                    })
+
+                try:
+                    response = await self.client.chat.completions.create(
+                        model=self.deployment_name,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": batch_user_content}
+                        ],
+                        max_tokens=4096,
+                        response_format={"type": "json_object"}
+                    )
+                    
+                    result = json.loads(response.choices[0].message.content)
+                    return result.get("findings", [])
+                    
+                except Exception as e:
+                    print(f"Error analyzing batch {start_page}-{end_page}: {e}")
+                    # Return error finding
+                    return [{
+                        "type": "Error",
+                        "page_range": f"{start_page}-{end_page}",
+                        "data": {"error": f"Batch analysis failed: {str(e)}"},
+                        "confidence": 0.0
+                    }]
+
+        # Create tasks
+        tasks = []
         for i in range(0, total_pages, BATCH_SIZE):
-            # Check for cancellation
-            if check_cancelled_callback and await check_cancelled_callback():
-                raise Exception("Analysis Cancelled by User")
+            batch_imgs = images[i : i + BATCH_SIZE]
+            tasks.append(process_batch(i, batch_imgs))
 
-            batch_images = images[i : i + BATCH_SIZE]
-            start_page = i + 1
-            end_page = min(i + BATCH_SIZE, total_pages)
-            
-            # Progress Update
-            if progress_callback:
-                await progress_callback(f"Analyzing pages {start_page}-{end_page} of {total_pages}...", 
-                                      int((end_page / total_pages) * 80) + 10) # range 10-90%
-
-            # Construct Batch Prompt
-            batch_user_content = [
-                {"type": "text", "text": f"Analyze these specific pages ({start_page} to {end_page} of {total_pages}) and extract logical documents found strictly within this range."}
-            ]
-            
-            for img_b64 in batch_images:
-                batch_user_content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{img_b64}"
-                    }
-                })
-
-            # Call AI
-            try:
-                response = await self.client.chat.completions.create(
-                    model=self.deployment_name,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": batch_user_content}
-                    ],
-                    max_tokens=4096,
-                    response_format={"type": "json_object"}
-                )
-                
-                result = json.loads(response.choices[0].message.content)
-                batch_findings = result.get("findings", [])
-                
-                # Post-process: specific page range updates if AI returns generic "1-2"
-                # (Optional: ensures page numbers are relative to document, not batch)
-                # For now assuming AI respects the "Analyze pages X-Y" instruction
-                all_findings.extend(batch_findings)
-                
-            except Exception as e:
-                print(f"Error analyzing batch {start_page}-{end_page}: {e}")
-                # Optional: Add a placeholder error finding or continue?
-                # For strict requirements, we might want to raise, or just log.
-                # Let's add a failed placeholder entry.
-                all_findings.append({
-                    "type": "Unknown",
-                    "page_range": f"{start_page}-{end_page}",
-                    "data": {"error": f"Batch analysis failed: {str(e)}"},
-                    "confidence": 0.0
-                })
+        # Execute concurrently
+        results = await asyncio.gather(*tasks)
+        
+        # Flatten results
+        for batch_findings in results:
+            all_findings.extend(batch_findings)
 
         if progress_callback:
             await progress_callback("Finalizing analysis...", 95)

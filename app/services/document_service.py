@@ -464,24 +464,49 @@ class DocumentService:
                 document.analysis_report_s3_key = report_s3_key
                 db.commit()
 
-            # Final Status
-            await DocumentService.update_document_status(
-                db, document_id, "COMPLETED", 
-                progress=100, error_message="Analysis Complete"
-            )
+            # Check if any findings reported an error
+            error_findings = [f for f in findings if f.get("type") == "Error" or f.get("type") == "Unknown" and "error" in f.get("data", {})]
+            
+            if error_findings:
+                # If we have errors, mark as AI_FAILED and use the first error message
+                first_error = error_findings[0].get("data", {}).get("error", "Unknown AI Error")
+                await DocumentService.update_document_status(
+                    db, document_id, "AI_FAILED", 
+                    progress=100, error_message=f"Partial Analysis Failure: {first_error}"
+                )
+                
+                # Trigger Webhook: document.failed (Partial)
+                asyncio.create_task(asyncio.to_thread(
+                    webhook_service.trigger_webhook_background,
+                    "document.failed",
+                    {
+                        "document_id": document_id,
+                        "filename": document.filename,
+                        "error": f"Partial Analysis Failure: {first_error}"
+                    },
+                    str(document.user_id),
+                    SessionLocal
+                ))
 
-            # Trigger Webhook: document.processed
-            asyncio.create_task(asyncio.to_thread(
-                webhook_service.trigger_webhook_background,
-                "document.processed",
-                {
-                    "document_id": document_id,
-                    "filename": document.filename,
-                    "status": "COMPLETED"
-                },
-                str(document.user_id),
-                SessionLocal
-            ))
+            else:
+                # Final Status - COMPLETED only if no errors
+                await DocumentService.update_document_status(
+                    db, document_id, "COMPLETED", 
+                    progress=100, error_message="Analysis Complete"
+                )
+
+                # Trigger Webhook: document.processed
+                asyncio.create_task(asyncio.to_thread(
+                    webhook_service.trigger_webhook_background,
+                    "document.processed",
+                    {
+                        "document_id": document_id,
+                        "filename": document.filename,
+                        "status": "COMPLETED"
+                    },
+                    str(document.user_id),
+                    SessionLocal
+                ))
 
         except Exception as e:
             error_str = str(e)
