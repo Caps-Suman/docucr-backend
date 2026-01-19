@@ -1088,11 +1088,9 @@ class DocumentService:
         ).count()
         
         # Counts by status
-        status_counts = db.query(
-            Status.code,
-            func.count(Document.id)
-        ).select_from(base_query.subquery()).join(Document.status)\
+        status_counts = base_query.join(Document.status)\
          .filter(Document.is_archived == False)\
+         .with_entities(Status.code, func.count(Document.id))\
          .group_by(Status.code).all()
         
         counts_dict = {code: count for code, count in status_counts}
