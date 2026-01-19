@@ -74,7 +74,7 @@ async def get_client_stats(db: Session = Depends(get_db)):
 @router.get("/", response_model=ClientListResponse)
 def get_clients(
     page: int = 1,
-    page_size: int = 10,
+    page_size: int = 25,
     search: Optional[str] = None,
     status_id: Optional[str] = None,
     db: Session = Depends(get_db),

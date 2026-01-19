@@ -89,7 +89,7 @@ class UserListResponse(BaseModel):
 @router.get("/", response_model=UserListResponse)
 async def get_users(
     page: int = 1,
-    page_size: int = 10,
+    page_size: int = 25,
     search: Optional[str] = None,
     status_id: Optional[str] = None,
     db: Session = Depends(get_db)
