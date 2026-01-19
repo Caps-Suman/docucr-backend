@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            line-height: 1.6;
+            color: #1e293b;
+            background-color: #f1f5f9;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 800;
+            color: #0ea5e9;
+            text-decoration: none;
+            font-family: 'Comfortaa', cursive;
+        }
+
+        .content {
+            margin-bottom: 30px;
+        }
+
+        .button {
+            display: inline-block;
+            padding: 8px 18px;
+            background-color: #0ea5e9;
+            color: white !important;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            margin: 10px 0;
+        }
+
+        .footer {
+            font-size: 14px;
+            color: #64748b;
+            text-align: center;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 20px;
+        }
+
+        .info-box {
+            background-color: #f0f9ff;
+            border-left: 4px solid #0ea5e9;
+            padding: 15px;
+            margin: 20px 0;
+            font-size: 14px;
+        }
+
+        .brand-text {
+            font-family: 'Comfortaa', cursive;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="{{ site_url }}" class="logo">docucr</a>
+        </div>
+        <div class="content">
+            <h2>Document Shared With You</h2>
+            <p>Hello,</p>
+            <p><strong>{{ shared_by }}</strong> has shared document(s) with you using <span
+                    class="brand-text">docucr</span>.</p>
+
+            <div class="content">
+                {{ documents_html }}
+            </div>
+
+            <p>To access these documents, please click the links above. You will be asked to enter the password provided
+                to you by the sender.</p>
+        </div>
+        <div class="footer">
+            <p>This is an automated notification from <span class="brand-text">docucr</span>. If you weren't expecting
+                this, please ignore this email.
+            </p>
+        </div>
+    </div>
+</body>
+
+</html>

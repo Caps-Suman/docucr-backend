@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth_router, modules_router, roles_router, privileges_router, users_router, statuses_router, profile_router, forms_router, clients_router, document_types_router, templates_router, documents_router, document_list_config_router, document_share_router, dashboard_router, webhook_router
+from .routers import auth_router, modules_router, roles_router, privileges_router, users_router, statuses_router, profile_router, forms_router, clients_router, document_types_router, templates_router, documents_router, document_list_config_router, document_share_router, dashboard_router, webhook_router, external_share_router
 # Import all models to ensure they are registered with Base metadata
-from .models import user, role, privilege, status, module, document, template, extracted_document, unverified_document, document_list_config, document_share, webhook
+from .models import user, role, privilege, status, module, document, template, extracted_document, unverified_document, document_list_config, document_share, webhook, external_share
 
-app = FastAPI(title="DocuCR API", version="1.0.0")
+app = FastAPI(title="docucr API", version="1.0.0")
 
 # CORS middleware
 app.add_middleware(
@@ -32,6 +32,7 @@ app.include_router(document_list_config_router.router)
 app.include_router(document_share_router.router)
 app.include_router(dashboard_router.router)
 app.include_router(webhook_router.router)
+app.include_router(external_share_router.router)
 
 @app.get("/api/health")
 async def health():

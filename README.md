@@ -1,6 +1,6 @@
-# DocuCR Backend
+# docucr Backend
 
-PaaS-ready backend for DocuCR document processing platform.
+PaaS-ready backend for docucr document processing platform.
 
 ## Project Structure
 
