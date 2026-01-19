@@ -1,5 +1,13 @@
 # Backend Deployment
 
+# if you are copying the infra and deploying different priject in the current infa then copy the state file first in current project 
+cp /Users/apple/Documents/OCR/Docu-CR/backend/deploy/terraform/terraform.tfstate /Users/apple/Documents/OCR/docucr/docucr-backend/deploy/terraform/
+terraform apply
+
+# Force new deployment 
+aws ecs update-service --cluster docu-cr-backend-cluster --service docu-cr-backend-service --force-new-deployment --region us-east-1
+
+
 ## Architecture Overview
 
 ### AWS Services Used
@@ -17,7 +25,7 @@
 - **RDS PostgreSQL**: Managed relational database
   - Why: Reliable, automated backups, multi-AZ support
   - How: Stores all application data (users, documents, metadata)
-  - Schema: `aiicr`
+  - Schema: `docucr`
 
 **Networking:**
 - **Application Load Balancer (ALB)**: HTTPS traffic distribution

@@ -87,3 +87,5 @@ resource "aws_eip" "nat_instance" {
 
   depends_on = [aws_internet_gateway.main]
 }
+
+

@@ -58,12 +58,39 @@ resource "aws_ecs_task_definition" "app" {
         },
         {
           name  = "DB_SCHEMA"
-          value = "aiicr"
+          value = "docucr"
         },
-
+        {
+          name  = "AZURE_OPENAI_ENDPOINT"
+          value = "https://customer-service-agents-resource.cognitiveservices.azure.com/"
+        },
+        {
+          name  = "AZURE_OPENAI_DEPLOYMENT_NAME"
+          value = "gpt-4o-mini"
+        },
+        {
+          name  = "AZURE_OPENAI_API_VERSION"
+          value = "2024-12-01-preview"
+        },
+        {
+          name  = "AWS_REGION"
+          value = var.aws_region
+        },
+        {
+          name  = "SMTP_PORT"
+          value = "587"
+        },
+        {
+          name  = "SMTP_SERVER"
+          value = "smtp.gmail.com"
+        },
+        {
+          name  = "FRONTEND_URL"
+          value = "https://docucr.medeye360.com"
+        },
         {
           name  = "ADMIN_EMAIL"
-          value = "admin@aiicr.com"
+          value = "suman.singh@marvelsync.com"
         },
         {
           name  = "ALLOWED_HOSTS"
@@ -85,16 +112,8 @@ resource "aws_ecs_task_definition" "app" {
           valueFrom = aws_secretsmanager_secret.database_url.arn
         },
         {
-          name      = "SECRET_KEY"
-          valueFrom = "${data.aws_secretsmanager_secret.app.arn}:SECRET_KEY::"
-        },
-        {
           name      = "JWT_SECRET_KEY"
           valueFrom = "${data.aws_secretsmanager_secret.app.arn}:JWT_SECRET_KEY::"
-        },
-        {
-          name      = "ADMIN_PASSWORD"
-          valueFrom = "${data.aws_secretsmanager_secret.app.arn}:ADMIN_PASSWORD::"
         },
         {
           name      = "AWS_S3_BUCKET"
@@ -107,11 +126,27 @@ resource "aws_ecs_task_definition" "app" {
         {
           name      = "AWS_SECRET_ACCESS_KEY"
           valueFrom = "${data.aws_secretsmanager_secret.app.arn}:AWS_SECRET_ACCESS_KEY::"
+        },
+        {
+          name      = "AZURE_OPENAI_API_KEY"
+          valueFrom = "${data.aws_secretsmanager_secret.app.arn}:AZURE_OPENAI_API_KEY::"
+        },
+        {
+          name      = "SMTP_USERNAME"
+          valueFrom = "${data.aws_secretsmanager_secret.app.arn}:SMTP_USERNAME::"
+        },
+        {
+          name      = "SMTP_PASSWORD"
+          valueFrom = "${data.aws_secretsmanager_secret.app.arn}:SMTP_PASSWORD::"
+        },
+        {
+          name      = "SENDER_EMAIL"
+          valueFrom = "${data.aws_secretsmanager_secret.app.arn}:SENDER_EMAIL::"
         }
       ]
       
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+        command     = ["CMD-SHELL", "python -c \"import requests; requests.get('http://localhost:8000/health')\" || exit 1"]
         interval    = 30
         timeout     = 10
         retries     = 3
