@@ -23,11 +23,20 @@ class AIService:
                 azure_endpoint=self.endpoint
             )
 
+    # def _encode_image(self, image: Image.Image) -> str:
+    #     """Convert PIL Image to base64 string"""
+    #     buffered = io.BytesIO()
+    #     image.save(buffered, format="JPEG")
+    #     return base64.b64encode(buffered.getvalue()).decode('utf-8')
     def _encode_image(self, image: Image.Image) -> str:
-        """Convert PIL Image to base64 string"""
         buffered = io.BytesIO()
-        image.save(buffered, format="JPEG")
-        return base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+        # CRITICAL FIX: normalize image mode
+        if image.mode in ("RGBA", "LA", "P"):
+            image = image.convert("RGB")
+
+        image.save(buffered, format="JPEG", quality=90)
+        return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
     async def analyze_document(self, file_content: bytes, filename: str, schemas: List[Dict], progress_callback=None, check_cancelled_callback=None) -> Dict[str, Any]:
         """

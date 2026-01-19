@@ -75,7 +75,7 @@ class UserService:
         active_status = db.query(Status).filter(Status.code == 'active').first()
         # Fallback if case mismatch or missing
         if not active_status:
-             active_status = db.query(Status).filter(Status.name == 'Active').first()
+             active_status = db.query(Status).filter(Status.code == 'Active').first()
         
         status_id_val = active_status.id if active_status else None
 
