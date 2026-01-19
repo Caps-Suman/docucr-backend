@@ -21,6 +21,11 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+data "aws_acm_certificate" "main" {
+  domain   = "*.medeye360.com"
+  statuses = ["ISSUED"]
+}
+
 # VPC
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
@@ -215,6 +220,7 @@ resource "aws_lb_target_group" "app" {
   name        = "${var.project_name}-tg-v2"
   port        = 8000
   protocol    = "HTTP"
+  protocol_version = "HTTP1"
   vpc_id      = aws_vpc.main.id
   target_type = "ip"  # Required for Fargate
   
@@ -249,6 +255,27 @@ resource "aws_lb_listener" "app" {
   load_balancer_arn = aws_lb.main.arn
   port              = "80"
   protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_lb_listener" "app_https" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = "443"
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS-1-2-2017-01"
+  certificate_arn   = data.aws_acm_certificate.main.arn
 
   default_action {
     type             = "forward"

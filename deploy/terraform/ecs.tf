@@ -176,5 +176,5 @@ resource "aws_ecs_service" "app" {
     container_port   = 8000
   }
 
-  depends_on = [aws_lb_listener.app]
+  depends_on = [aws_lb_listener.app, aws_lb_listener.app_https]
 }
