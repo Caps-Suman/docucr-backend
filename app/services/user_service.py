@@ -72,7 +72,7 @@ class UserService:
 
     @staticmethod
     def create_user(user_data: Dict, db: Session) -> Dict:
-        active_status = db.query(Status).filter(Status.code == 'active').first()
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         # Fallback if case mismatch or missing
         if not active_status:
              active_status = db.query(Status).filter(Status.code == 'Active').first()

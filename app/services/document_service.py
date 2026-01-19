@@ -1,13 +1,25 @@
-from sqlalchemy.orm import Session
+from fastapi import UploadFile
+from datetime import datetime
+from typing import List, Optional, Dict, Any, Union
+import asyncio
+import json
+from io import BytesIO
+
+from sqlalchemy import and_, or_, cast, String, text, func
+from sqlalchemy.orm import Session, joinedload
+
 from ..models.document import Document
 from ..models.status import Status
+from ..models.user import User
+from ..models.user_role import UserRole
+from ..models.role import Role
+from ..models.user_client import UserClient
+from ..models.client import Client
+from ..models.document_form_data import DocumentFormData
 from ..services.s3_service import s3_service
 from ..services.websocket_manager import websocket_manager
-from fastapi import UploadFile
 from ..services.webhook_service import webhook_service
 from ..core.database import SessionLocal
-import asyncio
-from typing import List
 
 class DocumentService:
     @staticmethod
@@ -501,29 +513,15 @@ class DocumentService:
     @staticmethod
     def get_user_documents(db: Session, user_id: str, skip: int = 0, limit: int = 100,
                          status_id: str = None, date_from: str = None, date_to: str = None,
-                         search_query: str = None, form_filters: str = None) -> List[Document]:
+                         search_query: str = None, form_filters: str = None) -> tuple[List[Document], int]:
         """Get documents for a user with role-based access control"""
-        from sqlalchemy.orm import joinedload
-        from sqlalchemy import and_, or_, cast, String, text
-        from ..models.document_form_data import DocumentFormData
-        from ..models.status import Status
-        from ..models.user import User
-        from ..models.user_role import UserRole
-        from ..models.role import Role
-        from ..models.user_client import UserClient
-        from ..models.client import Client
-        import json
-        from datetime import datetime
-
-        # Get user's roles to determine access level
-        user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-            User.id == user_id,
+        # Get user's roles to determine access level - optimized query
+        role_names = [r[0] for r in db.query(Role.name).join(UserRole).filter(
+            UserRole.user_id == user_id,
             Role.status_id.in_(
                 db.query(Status.id).filter(Status.code == 'ACTIVE')
             )
-        ).all()
-        
-        role_names = [role.name for role in user_roles]
+        ).all()]
         is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
 
         query = db.query(Document)\
@@ -609,10 +607,14 @@ class DocumentService:
             except json.JSONDecodeError:
                 pass
 
-        return query.order_by(Document.created_at.desc())\
+        total_count = query.count()
+
+        documents = query.order_by(Document.created_at.desc())\
             .offset(skip)\
             .limit(limit)\
             .all()
+            
+        return documents, total_count
 
     @staticmethod
     def get_document_detail(db: Session, document_id: int, user_id: str) -> Document:
@@ -1088,11 +1090,9 @@ class DocumentService:
         ).count()
         
         # Counts by status
-        status_counts = db.query(
-            Status.code,
-            func.count(Document.id)
-        ).select_from(base_query.subquery()).join(Document.status)\
+        status_counts = base_query.join(Document.status)\
          .filter(Document.is_archived == False)\
+         .with_entities(Status.code, func.count(Document.id))\
          .group_by(Status.code).all()
         
         counts_dict = {code: count for code, count in status_counts}

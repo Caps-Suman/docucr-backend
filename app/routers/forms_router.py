@@ -53,7 +53,7 @@ class FormListResponse(BaseModel):
 
 @router.get("", response_model=FormListResponse)
 @router.get("/", response_model=FormListResponse)
-async def get_forms(
+def get_forms(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
@@ -68,14 +68,14 @@ async def get_forms(
     )
 
 @router.get("/stats")
-async def get_form_stats(
+def get_form_stats(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
     return FormService.get_form_stats(db)
 
 @router.get("/active", response_model=FormDetailResponse)
-async def get_active_form(
+def get_active_form(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -85,7 +85,7 @@ async def get_active_form(
     return form
 
 @router.get("/{form_id}", response_model=FormDetailResponse)
-async def get_form(
+def get_form(
     form_id: str,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -97,7 +97,7 @@ async def get_form(
 
 @router.post("", response_model=FormDetailResponse)
 @router.post("/", response_model=FormDetailResponse)
-async def create_form(
+def create_form(
     form: FormCreate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -113,7 +113,7 @@ async def create_form(
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.put("/{form_id}", response_model=FormDetailResponse)
-async def update_form(
+def update_form(
     form_id: str,
     form: FormUpdate,
     db: Session = Depends(get_db),
@@ -132,7 +132,7 @@ async def update_form(
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.delete("/{form_id}")
-async def delete_form(
+def delete_form(
     form_id: str,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)

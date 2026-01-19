@@ -23,7 +23,7 @@ def check_admin_access(current_user: User, db: Session):
         raise HTTPException(status_code=403, detail="Admin access required")
 
 @router.get("/admin")
-async def get_admin_dashboard(
+def get_admin_dashboard(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -32,7 +32,7 @@ async def get_admin_dashboard(
     return DashboardService.get_admin_stats(db)
 
 @router.get("/user")
-async def get_user_dashboard(
+def get_user_dashboard(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):

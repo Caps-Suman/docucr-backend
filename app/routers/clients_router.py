@@ -72,7 +72,7 @@ async def get_client_stats(db: Session = Depends(get_db)):
 
 @router.get("", response_model=ClientListResponse)
 @router.get("/", response_model=ClientListResponse)
-async def get_clients(
+def get_clients(
     page: int = 1,
     page_size: int = 10,
     search: Optional[str] = None,
