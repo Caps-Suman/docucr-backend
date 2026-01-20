@@ -292,6 +292,8 @@ class UserService:
             db.add(user_role)
         db.commit()
 
+    @staticmethod
+    def _assign_supervisor(user_id: str, supervisor_id: str, db: Session):
         supervisor = UserSupervisor(
             id=str(uuid.uuid4()),
             user_id=user_id,

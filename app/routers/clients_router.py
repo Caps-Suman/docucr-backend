@@ -141,7 +141,7 @@ async def deactivate_client(client_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Client not found")
     return ClientResponse(**client)
 
-@router.post("/users/{user_id}/assign", dependencies=[Depends(Permission("clients", "MANAGE"))])
+@router.post("/users/{user_id}/assign", dependencies=[Depends(Permission("clients", "ADMIN"))])
 async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db: Session = Depends(get_db)):
     ClientService.assign_clients_to_user(user_id, request.client_ids, request.assigned_by, db)
     return {"message": "Clients assigned successfully"}

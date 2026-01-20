@@ -4,6 +4,7 @@ from typing import List, Optional
 from uuid import UUID
 from ..core.database import get_db
 from ..core.security import get_current_user
+from ..core.permissions import Permission
 from ..services.document_service import DocumentService, document_service
 from ..services.websocket_manager import websocket_manager
 from ..models.document import Document
@@ -27,7 +28,8 @@ async def upload_documents(
     form_id: Optional[UUID] = Form(None),
     form_data: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "CREATE"))
 ):
     """Upload multiple documents - returns immediately with queued status"""
     if not files:
@@ -61,7 +63,8 @@ async def upload_documents(
 async def get_document_form_data(
     document_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get form data for a document with role-based access control"""
     from ..models.user_role import UserRole
@@ -163,7 +166,8 @@ async def update_document_form_data(
     document_id: int,
     form_data: dict, 
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "UPDATE"))
 ):
     """Update form data for a document with role-based access control"""
     from ..models.user_role import UserRole
@@ -229,7 +233,8 @@ async def update_document_form_data(
 @router.get("/stats")
 def get_document_stats(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get aggregate document statistics for the cards"""
     return document_service.get_document_stats(db, current_user.id)
@@ -244,7 +249,8 @@ def get_documents(
     search_query: Optional[str] = None,
     form_filters: Optional[str] = None,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get user documents with filters"""
     documents, total_count = document_service.get_user_documents(
@@ -316,7 +322,8 @@ def get_documents(
 async def get_document_detail(
     document_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get document details including extracted data"""
     document = document_service.get_document_detail(db, document_id, current_user.id)
@@ -362,7 +369,8 @@ async def get_document_detail(
 async def get_document_preview_url(
     document_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get secure, temporary pre-signed URL for preview with role-based access control"""
     from ..models.user_role import UserRole
@@ -422,7 +430,8 @@ async def get_document_preview_url(
 async def get_document_download_url(
     document_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "EXPORT"))
 ):
     """Get secure download URL with role-based access control"""
     from ..models.user_role import UserRole
@@ -491,7 +500,8 @@ async def get_document_download_url(
 async def get_document_report_url(
     document_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "EXPORT"))
 ):
     """Get secure download URL for the analysis report with role-based access control"""
     from ..models.user_role import UserRole
@@ -560,7 +570,8 @@ async def get_document_report_url(
 async def cancel_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "UPDATE"))
 ):
     """Cancel document analysis"""
     success = await document_service.cancel_document_analysis(db, document_id, current_user.id)
@@ -572,7 +583,8 @@ async def cancel_document(
 async def reanalyze_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "UPDATE"))
 ):
     """Re-analyze document"""
     try:
@@ -585,7 +597,8 @@ async def reanalyze_document(
 async def archive_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "UPDATE"))
 ):
     """Archive a document"""
     success = await document_service.archive_document(db, document_id, current_user.id)
@@ -597,7 +610,8 @@ async def archive_document(
 async def unarchive_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "UPDATE"))
 ):
     """Unarchive a document"""
     success = await document_service.unarchive_document(db, document_id, current_user.id)
@@ -609,7 +623,8 @@ async def unarchive_document(
 async def delete_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "DELETE"))
 ):
     """Delete a document"""
     success = await document_service.delete_document(db, document_id, current_user.id)

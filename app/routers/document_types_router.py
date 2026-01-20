@@ -4,6 +4,7 @@ from typing import List
 from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import Permission
 from app.services.document_type_service import DocumentTypeService
 
 router = APIRouter(prefix="/api/document-types", tags=["document-types"], dependencies=[Depends(get_current_user)])
@@ -33,7 +34,8 @@ class DocumentTypeResponse(BaseModel):
 
 @router.get("", response_model=List[DocumentTypeResponse])
 def get_document_types(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("document_types", "READ"))
 ):
     """Get all document types"""
     service = DocumentTypeService(db)
@@ -41,7 +43,8 @@ def get_document_types(
 
 @router.get("/active", response_model=List[DocumentTypeResponse])
 def get_active_document_types(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("document_types", "READ"))
 ):
     """Get all active document types"""
     service = DocumentTypeService(db)
@@ -50,7 +53,8 @@ def get_active_document_types(
 @router.post("", response_model=DocumentTypeResponse, status_code=status.HTTP_201_CREATED)
 def create_document_type(
     document_type_data: DocumentTypeCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("document_types", "CREATE"))
 ):
     """Create a new document type"""
     service = DocumentTypeService(db)
@@ -59,7 +63,8 @@ def create_document_type(
 @router.get("/{document_type_id}", response_model=DocumentTypeResponse)
 def get_document_type(
     document_type_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("document_types", "READ"))
 ):
     """Get a specific document type"""
     service = DocumentTypeService(db)
@@ -69,7 +74,8 @@ def get_document_type(
 def update_document_type(
     document_type_id: str,
     document_type_data: DocumentTypeUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("document_types", "UPDATE"))
 ):
     """Update a document type"""
     service = DocumentTypeService(db)
@@ -78,7 +84,8 @@ def update_document_type(
 @router.patch("/{document_type_id}/activate", response_model=DocumentTypeResponse)
 def activate_document_type(
     document_type_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("document_types", "UPDATE"))
 ):
     """Activate a document type"""
     service = DocumentTypeService(db)
@@ -87,7 +94,8 @@ def activate_document_type(
 @router.patch("/{document_type_id}/deactivate", response_model=DocumentTypeResponse)
 def deactivate_document_type(
     document_type_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("document_types", "UPDATE"))
 ):
     """Deactivate a document type"""
     service = DocumentTypeService(db)
@@ -96,7 +104,8 @@ def deactivate_document_type(
 @router.delete("/{document_type_id}")
 def delete_document_type(
     document_type_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("document_types", "DELETE"))
 ):
     """Delete a document type"""
     service = DocumentTypeService(db)

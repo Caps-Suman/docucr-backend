@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import List
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import Permission
 from app.services.document_share_service import DocumentShareService
 from app.models.user import User
 
@@ -17,7 +18,8 @@ class ShareDocumentsRequest(BaseModel):
 async def share_documents(
     request: ShareDocumentsRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "SHARE"))
 ):
     """Share documents with users"""
     service = DocumentShareService(db)
@@ -27,7 +29,8 @@ async def share_documents(
 @router.get("/shared-with-me")
 async def get_shared_documents(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get documents shared with current user"""
     service = DocumentShareService(db)

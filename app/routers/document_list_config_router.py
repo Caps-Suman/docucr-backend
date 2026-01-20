@@ -4,6 +4,7 @@ from typing import Dict, Any, List
 from pydantic import BaseModel, Field
 from ..core.database import get_db
 from ..core.security import get_current_user
+from ..core.permissions import Permission
 from ..models.user import User
 from ..services.document_list_config_service import DocumentListConfigService
 
@@ -26,7 +27,8 @@ class DocumentListConfigRequest(BaseModel):
 @router.get("/")
 async def get_config(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get user's document list configuration"""
     try:
@@ -40,7 +42,8 @@ async def get_config(
 async def update_config(
     config_request: DocumentListConfigRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Save or update user's document list configuration"""
     try:
@@ -62,7 +65,8 @@ async def update_config(
 @router.delete("/")
 async def delete_config(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Delete user's document list configuration (reset to default)"""
     try:
