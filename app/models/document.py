@@ -21,7 +21,7 @@ class Document(Base):
     user_id = Column(String, ForeignKey("docucr.user.id"), nullable=False)
     analysis_report_s3_key = Column(String(500), nullable=True)
     is_archived = Column(Boolean, default=False, nullable=False)
-    
+    total_pages = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
