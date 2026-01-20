@@ -192,12 +192,12 @@ from PIL import Image
 
 class AIService:
     def __init__(self):
-        self.azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-        self.endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-        self.deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
-        self.api_version = os.getenv(
-            "AZURE_OPENAI_API_VERSION", "2024-02-15-preview"
-        )
+        # self.azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        # self.endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        # self.deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+        # self.api_version = os.getenv(
+        #     "AZURE_OPENAI_API_VERSION", "2024-02-15-preview"
+        # )
 
         # self.client = AsyncAzureOpenAI(
         #     api_key=self.azure_api_key,
@@ -313,7 +313,7 @@ DO NOT add extra keys.
             all_pages.extend(result.get("pages", []))
 
             # ✅ SHORT sleep, not 60s
-            await asyncio.sleep(30)
+            await asyncio.sleep(0.5)
 
         return all_pages
     async def safe_call(fn):
@@ -478,7 +478,7 @@ NO EXPLANATION.
             })
 
         response = await self.client.chat.completions.create(
-            model=self.deployment_name,
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content}
@@ -522,8 +522,8 @@ NO EXPLANATION.
 
         for s in schemas:
             if isinstance(s, dict) and "type_name" in s:
-                schema_map[s["type_name"]] = s
- 
+                schema_map[s["type_name"].strip().lower()] = s
+
 
         pages = await self._classify_pages_batched(
             images,
@@ -552,7 +552,9 @@ NO EXPLANATION.
                     30 + int((idx / len(structure)) * 60)
                 )
 
-            schema = schema_map.get(doc["type"])
+            doc_type_key = doc["type"].strip().lower()
+            schema = schema_map.get(doc_type_key)
+
 
             if not schema or not isinstance(schema, dict):
                 raise RuntimeError(
