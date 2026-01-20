@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 from app.core.database import get_db
 from app.services.form_service import FormService
 from app.routers.auth_router import get_current_user
+from app.core.permissions import Permission
 
 router = APIRouter()
 
@@ -57,7 +58,8 @@ def get_forms(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    permission: bool = Depends(Permission("templates", "READ"))
 ):
     forms, total = FormService.get_forms(page, page_size, db)
     return FormListResponse(
@@ -70,14 +72,16 @@ def get_forms(
 @router.get("/stats")
 def get_form_stats(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    permission: bool = Depends(Permission("templates", "READ"))
 ):
     return FormService.get_form_stats(db)
 
 @router.get("/active", response_model=FormDetailResponse)
 def get_active_form(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    permission: bool = Depends(Permission("templates", "READ"))
 ):
     form = FormService.get_active_form(db)
     if not form:
@@ -88,7 +92,8 @@ def get_active_form(
 def get_form(
     form_id: str,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    permission: bool = Depends(Permission("templates", "READ"))
 ):
     form = FormService.get_form_by_id(form_id, db)
     if not form:
@@ -100,7 +105,8 @@ def get_form(
 def create_form(
     form: FormCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    permission: bool = Depends(Permission("templates", "CREATE"))
 ):
     if FormService.check_form_name_exists(form.name, None, db):
         raise HTTPException(status_code=400, detail="Form with this name already exists")
@@ -117,7 +123,8 @@ def update_form(
     form_id: str,
     form: FormUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    permission: bool = Depends(Permission("templates", "UPDATE"))
 ):
     if form.name and FormService.check_form_name_exists(form.name, form_id, db):
         raise HTTPException(status_code=400, detail="Form with this name already exists")
@@ -135,7 +142,8 @@ def update_form(
 def delete_form(
     form_id: str,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    permission: bool = Depends(Permission("templates", "DELETE"))
 ):
     success = FormService.delete_form(form_id, db)
     if not success:

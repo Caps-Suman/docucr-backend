@@ -6,6 +6,7 @@ from datetime import datetime
 from uuid import UUID
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import Permission
 from app.services.template_service import TemplateService
 
 router = APIRouter(prefix="/api/templates", tags=["templates"], dependencies=[Depends(get_current_user)])
@@ -63,7 +64,8 @@ class TemplateResponse(BaseModel):
 
 @router.get("/", response_model=List[TemplateResponse])
 def get_templates(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("templates", "READ"))
 ):
     """Get all templates with document type info"""
     service = TemplateService(db)
@@ -72,7 +74,8 @@ def get_templates(
 @router.post("/", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
 def create_template(
     template_data: TemplateCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("templates", "CREATE"))
 ):
     """Create a new template"""
     service = TemplateService(db)
@@ -87,7 +90,8 @@ def create_template(
 @router.get("/{template_id}", response_model=TemplateResponse)
 def get_template(
     template_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("templates", "READ"))
 ):
     """Get a specific template"""
     service = TemplateService(db)
@@ -97,7 +101,8 @@ def get_template(
 def update_template(
     template_id: str,
     template_data: TemplateUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("templates", "UPDATE"))
 ):
     """Update a template"""
     service = TemplateService(db)
@@ -113,7 +118,8 @@ def update_template(
 @router.patch("/{template_id}/activate")
 def activate_template(
     template_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("templates", "UPDATE"))
 ):
     """Activate a template"""
     service = TemplateService(db)
@@ -122,7 +128,8 @@ def activate_template(
 @router.patch("/{template_id}/deactivate")
 def deactivate_template(
     template_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("templates", "UPDATE"))
 ):
     """Deactivate a template"""
     service = TemplateService(db)
@@ -131,7 +138,8 @@ def deactivate_template(
 @router.get("/by-document-type/{document_type_id}", response_model=List[TemplateResponse])
 def get_templates_by_document_type(
     document_type_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("templates", "READ"))
 ):
     """Get all templates for a specific document type"""
     service = TemplateService(db)

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..core.database import get_db
+from ..core.permissions import Permission
 from ..services.openai_document_ai import OpenAIDocumentAI
 from ..services.ai_client import openai_client
 from ..models.template import Template
@@ -13,7 +14,8 @@ router = APIRouter( tags=["AI"])
 @router.post("/classify-and-extract")
 async def classify_and_extract_document(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "CREATE"))
 ):
     file_bytes = await file.read()
 

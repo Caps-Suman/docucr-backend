@@ -93,7 +93,8 @@ async def get_users(
     page_size: int = 25,
     search: Optional[str] = None,
     status_id: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("users", "READ"))
 ):
     users, total = UserService.get_users(page, page_size, search, status_id, db)
     return UserListResponse(
@@ -104,25 +105,40 @@ async def get_users(
     )
 
 @router.get("/stats")
-async def get_user_stats(db: Session = Depends(get_db)):
+async def get_user_stats(
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("users", "READ"))
+):
     return UserService.get_user_stats(db)
 
 @router.get("/email/{email}", response_model=UserResponse)
-async def get_user_by_email(email: str, db: Session = Depends(get_db)):
+async def get_user_by_email(
+    email: str, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("users", "READ"))
+):
     user = UserService.get_user_by_email(email, db)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return UserResponse(**user)
 
 @router.get("/{user_id}", response_model=UserResponse)
-async def get_user(user_id: str, db: Session = Depends(get_db)):
+async def get_user(
+    user_id: str, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("users", "READ"))
+):
     user = UserService.get_user_by_id(user_id, db)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return UserResponse(**user)
 
 @router.post("/", response_model=UserResponse)
-async def create_user(user: UserCreate, db: Session = Depends(get_db)):
+async def create_user(
+    user: UserCreate, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("users", "CREATE"))
+):
     if UserService.check_email_exists(user.email, None, db):
         raise HTTPException(status_code=400, detail="Email already exists")
     if UserService.check_username_exists(user.username, None, db):
@@ -133,7 +149,12 @@ async def create_user(user: UserCreate, db: Session = Depends(get_db)):
     return UserResponse(**created_user)
 
 @router.put("/{user_id}", response_model=UserResponse)
-async def update_user(user_id: str, user: UserUpdate, db: Session = Depends(get_db)):
+async def update_user(
+    user_id: str, 
+    user: UserUpdate, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("users", "UPDATE"))
+):
     if user.email and UserService.check_email_exists(user.email, user_id, db):
         raise HTTPException(status_code=400, detail="Email already exists")
     if user.username and UserService.check_username_exists(user.username, user_id, db):
@@ -151,14 +172,22 @@ async def update_user(user_id: str, user: UserUpdate, db: Session = Depends(get_
     return UserResponse(**updated_user)
 
 @router.post("/{user_id}/activate", response_model=UserResponse)
-async def activate_user(user_id: str, db: Session = Depends(get_db)):
+async def activate_user(
+    user_id: str, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("users", "UPDATE"))
+):
     user = UserService.activate_user(user_id, db)
     if not user:
         raise HTTPException(status_code=400, detail="Cannot activate user")
     return UserResponse(**user)
 
 @router.post("/{user_id}/deactivate", response_model=UserResponse)
-async def deactivate_user(user_id: str, db: Session = Depends(get_db)):
+async def deactivate_user(
+    user_id: str, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("users", "UPDATE"))
+):
     user = UserService.deactivate_user(user_id, db)
     if not user:
         raise HTTPException(status_code=400, detail="Cannot deactivate user")
@@ -172,7 +201,7 @@ async def change_user_password(
     user_id: str, 
     request: ChangePasswordRequest, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "MANAGE"))
+    permission: bool = Depends(Permission("users", "ADMIN"))
 ):
     success = UserService.change_password(user_id, request.new_password, db)
     if not success:

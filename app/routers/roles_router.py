@@ -6,6 +6,7 @@ from typing import Optional, List
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.permissions import Permission
 from app.services.role_service import RoleService
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -81,7 +82,8 @@ class RoleListResponse(BaseModel):
 async def get_assignable_roles(
     page: int = 1,
     page_size: int = 10,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("roles", "READ"))
 ):
     roles, total = RoleService.get_assignable_roles(page, page_size, db)
     return RoleListResponse(
@@ -97,7 +99,8 @@ async def get_roles(
     page: int = 1,
     page_size: int = 10,
     status_id: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("roles", "READ"))
 ):
     roles, total = RoleService.get_roles(page, page_size, status_id, db)
     return RoleListResponse(
@@ -108,24 +111,39 @@ async def get_roles(
     )
 
 @router.get("/stats")
-async def get_role_stats(db: Session = Depends(get_db)):
+async def get_role_stats(
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("roles", "READ"))
+):
     return RoleService.get_role_stats(db)
 
 @router.get("/{role_id}", response_model=RoleResponse)
-async def get_role(role_id: str, db: Session = Depends(get_db)):
+async def get_role(
+    role_id: str, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("roles", "READ"))
+):
     role = RoleService.get_role_by_id(role_id, db)
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
     return RoleResponse(**role)
 
 @router.get("/{role_id}/modules")
-async def get_role_modules(role_id: str, db: Session = Depends(get_db)):
+async def get_role_modules(
+    role_id: str, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("roles", "READ"))
+):
     modules = RoleService.get_role_modules(role_id, db)
     return {"modules": modules}
 
 @router.post("", response_model=RoleResponse)
 @router.post("/", response_model=RoleResponse)
-async def create_role(role: RoleCreate, db: Session = Depends(get_db)):
+async def create_role(
+    role: RoleCreate, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("roles", "CREATE"))
+):
     if RoleService.check_role_name_exists(role.name, None, db):
         raise HTTPException(status_code=400, detail="Role with this name already exists")
     
@@ -134,7 +152,12 @@ async def create_role(role: RoleCreate, db: Session = Depends(get_db)):
     return RoleResponse(**created_role)
 
 @router.put("/{role_id}", response_model=RoleResponse)
-async def update_role(role_id: str, role: RoleUpdate, db: Session = Depends(get_db)):
+async def update_role(
+    role_id: str, 
+    role: RoleUpdate, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("roles", "UPDATE"))
+):
     if role.name and RoleService.check_role_name_exists(role.name, role_id, db):
         raise HTTPException(status_code=400, detail="Role with this name already exists")
     
@@ -145,7 +168,11 @@ async def update_role(role_id: str, role: RoleUpdate, db: Session = Depends(get_
     return RoleResponse(**updated_role)
 
 @router.delete("/{role_id}")
-async def delete_role(role_id: str, db: Session = Depends(get_db)):
+async def delete_role(
+    role_id: str, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("roles", "DELETE"))
+):
     success, error = RoleService.delete_role(role_id, db)
     if not success:
         raise HTTPException(status_code=400, detail=error)
