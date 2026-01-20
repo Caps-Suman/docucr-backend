@@ -6,6 +6,7 @@ import re
 
 from app.core.database import get_db
 from app.services.user_service import UserService
+from app.core.permissions import Permission
 
 router = APIRouter()
 
@@ -162,3 +163,18 @@ async def deactivate_user(user_id: str, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=400, detail="Cannot deactivate user")
     return UserResponse(**user)
+
+class ChangePasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=6, description="New password for the user")
+
+@router.post("/{user_id}/change-password")
+async def change_user_password(
+    user_id: str, 
+    request: ChangePasswordRequest, 
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("users", "MANAGE"))
+):
+    success = UserService.change_password(user_id, request.new_password, db)
+    if not success:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"message": "Password changed successfully"}

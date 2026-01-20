@@ -25,3 +25,14 @@ async def initialize_system(request: MigrationRequest, db: Session = Depends(get
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/initialize-printers")
+async def initialize_printers(db: Session = Depends(get_db)):
+    """
+    Initializes the printer table in the database.
+    """
+    try:
+        result = MigrationService.initialize_printer_table(db)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

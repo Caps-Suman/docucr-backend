@@ -292,8 +292,6 @@ class UserService:
             db.add(user_role)
         db.commit()
 
-    @staticmethod
-    def _assign_supervisor(user_id: str, supervisor_id: str, db: Session):
         supervisor = UserSupervisor(
             id=str(uuid.uuid4()),
             user_id=user_id,
@@ -301,3 +299,13 @@ class UserService:
         )
         db.add(supervisor)
         db.commit()
+
+    @staticmethod
+    def change_password(user_id: str, new_password: str, db: Session) -> bool:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+        
+        user.hashed_password = get_password_hash(new_password)
+        db.commit()
+        return True
