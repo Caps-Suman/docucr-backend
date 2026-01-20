@@ -4,7 +4,7 @@ from typing import List, Optional
 from uuid import UUID
 from ..core.database import get_db
 from ..core.security import get_current_user
-from ..services.document_service import document_service
+from ..services.document_service import DocumentService, document_service
 from ..services.websocket_manager import websocket_manager
 from ..models.document import Document
 from ..models.user import User
@@ -12,9 +12,9 @@ from ..models.form import FormField
 from ..models.client import Client
 from ..models.document_type import DocumentType
 import asyncio
-
+# from app.services.document_service import build_derived_document_counts
 router = APIRouter(prefix="/api/documents", tags=["documents"])
-
+document_service= DocumentService()
 @router.post("/upload", response_model=List[dict])
 async def upload_documents(
     files: List[UploadFile] = File(...),
@@ -319,7 +319,8 @@ async def get_document_detail(
     document = document_service.get_document_detail(db, document_id, current_user.id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    
+    derived_counts = document_service.build_derived_document_counts(document.extracted_documents)
+
     return {
         "id": document.id,
         "filename": document.filename,
@@ -327,6 +328,7 @@ async def get_document_detail(
         "status_id": document.status_id,
         "statusCode": document.status.code if document.status else None,
         "file_size": document.file_size,
+        "derived_documents": derived_counts,   # 👈 NEW (what UI should use)
         "content_type": document.content_type,
         "upload_progress": document.upload_progress,
         "error_message": document.error_message,

@@ -4,6 +4,7 @@ from typing import List, Optional, Dict, Any, Union
 import asyncio
 import json
 from io import BytesIO
+from collections import Counter
 
 from sqlalchemy import and_, or_, cast, String, text, func
 from sqlalchemy.orm import Session, joinedload
@@ -28,6 +29,14 @@ class DocumentService:
         if status:
             return status.id
         return None
+
+    @staticmethod
+    def build_derived_document_counts(extracted_docs) -> Dict[str, int]:
+        counter = Counter()
+        for ed in extracted_docs:
+            if ed.document_type:
+                counter[ed.document_type.name] += 1
+        return dict(counter)
 
     @staticmethod
     async def create_document(db: Session, file: UploadFile, user_id: str) -> Document:
