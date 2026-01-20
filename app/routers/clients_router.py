@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from app.core.permissions import Permission
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -66,12 +67,12 @@ class AssignClientsRequest(BaseModel):
     client_ids: List[str]
     assigned_by: str
 
-@router.get("/stats")
+@router.get("/stats", dependencies=[Depends(Permission("clients", "READ"))])
 async def get_client_stats(db: Session = Depends(get_db)):
     return ClientService.get_client_stats(db)
 
-@router.get("", response_model=ClientListResponse)
-@router.get("/", response_model=ClientListResponse)
+@router.get("", response_model=ClientListResponse, dependencies=[Depends(Permission("clients", "READ"))])
+@router.get("/", response_model=ClientListResponse, dependencies=[Depends(Permission("clients", "READ"))])
 def get_clients(
     page: int = 1,
     page_size: int = 25,
@@ -88,7 +89,7 @@ def get_clients(
         page_size=page_size
     )
 
-@router.get("/{client_id}/users")
+@router.get("/{client_id}/users", dependencies=[Depends(Permission("clients", "READ"))])
 async def get_client_users(client_id: str, db: Session = Depends(get_db)):
     users = db.query(User).join(UserClient, User.id == UserClient.user_id).filter(
         UserClient.client_id == client_id,
@@ -99,14 +100,14 @@ async def get_client_users(client_id: str, db: Session = Depends(get_db)):
     ).all()
     return [{"id": user.id, "username": user.username, "name": f"{user.first_name} {user.last_name}"} for user in users]
 
-@router.get("/{client_id}", response_model=ClientResponse)
+@router.get("/{client_id}", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "READ"))])
 async def get_client(client_id: str, db: Session = Depends(get_db)):
     client = ClientService.get_client_by_id(client_id, db)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     return ClientResponse(**client)
 
-@router.post("/", response_model=ClientResponse)
+@router.post("/", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "CREATE"))])
 async def create_client(client: ClientCreate, db: Session = Depends(get_db)):
     if client.npi and ClientService.check_npi_exists(client.npi, None, db):
         raise HTTPException(status_code=400, detail="NPI already exists")
@@ -115,7 +116,7 @@ async def create_client(client: ClientCreate, db: Session = Depends(get_db)):
     created_client = ClientService.create_client(client_data, db)
     return ClientResponse(**created_client)
 
-@router.put("/{client_id}", response_model=ClientResponse)
+@router.put("/{client_id}", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def update_client(client_id: str, client: ClientUpdate, db: Session = Depends(get_db)):
     if client.npi and ClientService.check_npi_exists(client.npi, client_id, db):
         raise HTTPException(status_code=400, detail="NPI already exists")
@@ -126,26 +127,26 @@ async def update_client(client_id: str, client: ClientUpdate, db: Session = Depe
         raise HTTPException(status_code=404, detail="Client not found")
     return ClientResponse(**updated_client)
 
-@router.post("/{client_id}/activate", response_model=ClientResponse)
+@router.post("/{client_id}/activate", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def activate_client(client_id: str, db: Session = Depends(get_db)):
     client = ClientService.activate_client(client_id, db)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     return ClientResponse(**client)
 
-@router.post("/{client_id}/deactivate", response_model=ClientResponse)
+@router.post("/{client_id}/deactivate", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def deactivate_client(client_id: str, db: Session = Depends(get_db)):
     client = ClientService.deactivate_client(client_id, db)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     return ClientResponse(**client)
 
-@router.post("/users/{user_id}/assign")
+@router.post("/users/{user_id}/assign", dependencies=[Depends(Permission("clients", "MANAGE"))])
 async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db: Session = Depends(get_db)):
     ClientService.assign_clients_to_user(user_id, request.client_ids, request.assigned_by, db)
     return {"message": "Clients assigned successfully"}
 
-@router.get("/users/{user_id}", response_model=List[ClientResponse])
+@router.get("/users/{user_id}", response_model=List[ClientResponse], dependencies=[Depends(Permission("clients", "READ"))])
 async def get_user_clients(user_id: str, db: Session = Depends(get_db)):
     clients = ClientService.get_user_clients(user_id, db)
     return [ClientResponse(**client) for client in clients]
