@@ -185,29 +185,40 @@ import json
 import base64
 import asyncio
 from typing import List, Dict, Any
-from openai import AsyncAzureOpenAI
+from openai import AsyncOpenAI
 from pdf2image import convert_from_bytes
 from PIL import Image
 
 
 class AIService:
     def __init__(self):
-        self.api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        self.azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
         self.endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         self.deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
         self.api_version = os.getenv(
             "AZURE_OPENAI_API_VERSION", "2024-02-15-preview"
         )
 
-        self.client = AsyncAzureOpenAI(
-            api_key=self.api_key,
-            api_version=self.api_version,
-            azure_endpoint=self.endpoint
+        # self.client = AsyncAzureOpenAI(
+        #     api_key=self.azure_api_key,
+        #     api_version=self.api_version,
+        #     azure_endpoint=self.endpoint
+        # )
+        self.client = AsyncOpenAI(
+            api_key=os.getenv("OPENAI_API_KEY")
         )
-
     # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
+    def _format_document_types(self, document_types: List[Dict[str, str]]) -> str:
+        lines = []
+        for dt in document_types:
+            if not isinstance(dt, dict):
+                continue
+            name = dt.get("name", "UNKNOWN")
+            desc = dt.get("description") or "No description provided"
+            lines.append(f"- {name}: {desc}")
+        return "\n".join(lines)
 
     def _encode_image(self, image: Image.Image) -> str:
         buf = io.BytesIO()
@@ -228,116 +239,171 @@ class AIService:
     # ------------------------------------------------------------------
     # Phase 1 — Structure detection (chunked + domain aware)
     # ------------------------------------------------------------------
+    async def _classify_pages_batched(
+    self,
+    images: List[str],
+    document_types: List[Dict[str, str]],
+    batch_size: int = 2
+):
+        all_pages = []
+        doc_type_block = self._format_document_types(document_types)
 
-    async def _detect_structure_chunked(
-        self,
-        images: List[str],
-        document_types: List[str],
-        window_size: int = 2
-    ) -> List[Dict[str, str]]:
+        system_prompt = f"""
+You are classifying individual medical document pages.
 
-        documents: List[Dict[str, str]] = []
-        page_cursor = 1
+DOCUMENT TYPES (AUTHORITATIVE — USE DESCRIPTIONS):
+{doc_type_block}
 
-        for i in range(0, len(images), window_size):
-            chunk = images[i:i + window_size]
+HARD CONSTRAINTS (NON-NEGOTIABLE):
+- EACH page MUST be assigned EXACTLY ONE document type
+- NEVER assign more than one document type to a page
+- NEVER return multiple entries for the same page
+- If uncertain between two types, choose the BEST match based on description
 
-            system_prompt = f"""
-You are identifying logical documents in medical paperwork.
+DECISION RULES:
+- CPT/ICD codes, procedures, radiology, medical services → Superbill
+- Totals, balances, amounts due, invoice numbers → Invoice
+- Patient info only (name, DOB, insurance) → Demographics
 
-Allowed document types:
-{", ".join(document_types)}
-
-CRITICAL RULES:
-- Superbills often span multiple pages.
-- Page 1 may contain patient/insurance info.
-- Following pages may contain CPT/ICD codes.
-- If pages share patient, provider, date, or layout,
-  they MUST be merged into ONE document.
-
-When uncertain, prefer MERGING over splitting.
-
-Page numbering starts at {page_cursor}.
-
-Output JSON strictly:
+OUTPUT FORMAT (STRICT JSON ONLY):
 {{
-  "documents": [
-    {{ "type": "<DocumentType>", "page_range": "start-end" }}
+  "pages": [
+    {{
+      "page": <page_number>,
+      "type": "<DocumentType>",
+      "patient_name": "<string|null>",
+      "dob": "<YYYY-MM-DD|null>",
+      "insurance": "<string|null>"
+    }}
   ]
 }}
+
+DO NOT add explanations.
+DO NOT add confidence.
+DO NOT add extra keys.
 """
 
-            user_content = [{"type": "text", "text": "Analyze these pages."}]
-            for img in chunk:
+        for i in range(0, len(images), batch_size):
+            batch = images[i:i + batch_size]
+
+            user_content = [{"type": "text", "text": "Analyze the following pages."}]
+
+            for idx, img in enumerate(batch):
                 user_content.append({
                     "type": "image_url",
                     "image_url": {"url": f"data:image/jpeg;base64,{img}"}
                 })
 
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                max_tokens=512,
+                response_format={"type": "json_object"}
+            )
+
+            result = json.loads(response.choices[0].message.content)
+
+            # Fix page numbers
+            for p in result.get("pages", []):
+                p["page"] += i
+
+            all_pages.extend(result.get("pages", []))
+
+            # ✅ SHORT sleep, not 60s
+            await asyncio.sleep(30)
+
+        return all_pages
+    async def safe_call(fn):
+        for attempt in range(3):
             try:
-                response = await self.client.chat.completions.create(
-                    model=self.deployment_name,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content}
-                    ],
-                    max_tokens=256,
-                    response_format={"type": "json_object"}
-                )
-
-                result = json.loads(response.choices[0].message.content)
-                documents.extend(result.get("documents", []))
-
+                return await fn()
             except Exception as e:
-                if "RateLimitReached" in str(e):
-                    await asyncio.sleep(60)
-                    continue
-                raise
+                if "RateLimit" in str(e):
+                    await asyncio.sleep(15 * (attempt + 1))
+                else:
+                    raise
+        raise RuntimeError("Azure rate limit not recovered")
 
-            page_cursor += len(chunk)
-            await asyncio.sleep(60)  # Azure S0 safety
 
-        return self._normalize_documents(documents)
+    def _group_pages_into_documents(self, pages: List[Dict[str, Any]]):
+        documents = []
+        current = None
+
+        def signature(p):
+            return (
+                p["type"],
+                p.get("patient_name"),
+                p.get("dob"),
+                p.get("insurance")
+            )
+
+        for p in sorted(pages, key=lambda x: x["page"]):
+            sig = signature(p)
+
+            if current is None or current["signature"] != sig:
+                current = {
+                    "type": p["type"],
+                    "page_range": [p["page"], p["page"]],
+                    "signature": sig
+                }
+                documents.append(current)
+            else:
+                current["page_range"][1] = p["page"]
+
+        # cleanup
+        for d in documents:
+            d["page_range"] = f"{d['page_range'][0]}-{d['page_range'][1]}"
+            del d["signature"]
+
+        return documents
 
     # ------------------------------------------------------------------
     # Normalize & merge overlapping / adjacent documents
     # ------------------------------------------------------------------
 
-    def _normalize_documents(
-    self,
-    docs: List[Dict[str, str]]
-) -> List[Dict[str, str]]:
-
-        def parse(r):
-            return tuple(map(int, r.split("-")))
-
+    def _normalize_documents(self, docs: List[Dict[str, str]]) -> List[Dict[str, str]]:
         if not docs:
             return []
 
-        # Sort by start asc, end desc (larger ranges first)
+        def parse_range(r):
+            s, e = map(int, r.split("-"))
+            return s, e
+
+        # Sort by start asc, end desc (longer ranges win)
         docs_sorted = sorted(
             docs,
-            key=lambda d: (parse(d["page_range"])[0], -parse(d["page_range"])[1])
+            key=lambda d: (parse_range(d["page_range"])[0], -parse_range(d["page_range"])[1])
         )
 
+        page_owner = {}  # page -> doc index
         final_docs = []
 
         for doc in docs_sorted:
-            start, end = parse(doc["page_range"])
+            start, end = parse_range(doc["page_range"])
+            doc_type = doc["type"]
 
-            is_subset = False
-            for kept in final_docs:
-                ks, ke = parse(kept["page_range"])
+            # Check if ANY page already assigned
+            overlapping = [p for p in range(start, end + 1) if p in page_owner]
 
-                # FULLY contained → discard
-                if start >= ks and end <= ke:
-                    is_subset = True
-                    break
+            if overlapping:
+                # ❌ Reject duplicate / weaker document
+                continue
 
-            if not is_subset:
-                final_docs.append(doc)
+            # Assign ownership
+            doc_index = len(final_docs)
+            for p in range(start, end + 1):
+                page_owner[p] = doc_index
+
+            final_docs.append({
+                "type": doc_type,
+                "page_range": f"{start}-{end}"
+            })
 
         return final_docs
+
 
 
     # ------------------------------------------------------------------
@@ -351,20 +417,57 @@ Output JSON strictly:
         images: List[str],
         schema: Dict[str, Any]
     ) -> Dict[str, Any]:
-
+        schema_payload = {
+            "type_name": schema["type_name"],
+            "fields": schema.get("fields", [])
+        }
         start, end = map(int, page_range.split("-"))
         selected_images = images[start - 1:end]
 
         system_prompt = f"""
-Extract data for document type: {doc_type}
+You are extracting structured data from a medical document.
 
-Schema:
-{json.dumps(schema, separators=(",", ":"))}
+IMPORTANT CONTEXT (DO NOT VIOLATE):
+- The document has ALREADY been classified.
+- The document type is FINAL and MUST NOT be changed.
+- The page range provided belongs to ONE and ONLY ONE document.
+- Do NOT infer, split, or reclassify documents.
 
-Rules:
-- Extract ONLY defined fields
-- Missing fields → null
-- Output JSON only
+DOCUMENT TYPE:
+{doc_type}
+
+AUTHORITATIVE PAGE RANGE:
+{page_range}
+
+SCHEMA (STRICT):
+{json.dumps(schema_payload, separators=(",", ":"))}
+
+EXTRACTION RULES (NON-NEGOTIABLE):
+1. Extract ONLY the fields defined in the schema above.
+2. Do NOT invent new fields.
+3. Do NOT rename fields.
+4. Do NOT output arrays of duplicate fields.
+5. Each field must appear EXACTLY ONCE.
+6. If a field is missing or unclear, return null.
+7. Do NOT infer values from other documents or pages.
+8. Use ONLY the provided pages — ignore anything else.
+
+OUTPUT FORMAT (STRICT JSON ONLY):
+{{
+  "<field_name>": "<value or null>"
+}}
+
+FORBIDDEN:
+- Reclassifying the document
+- Returning multiple objects
+- Returning nested structures
+- Adding confidence, explanations, or metadata
+- Markdown or comments
+
+OUTPUT JSON ONLY.
+NO TEXT.
+NO EXPLANATION.
+
 """
 
         user_content = [{"type": "text", "text": "Extract fields."}]
@@ -389,6 +492,14 @@ Rules:
     # ------------------------------------------------------------------
     # Public API (UNCHANGED)
     # ------------------------------------------------------------------
+    def assert_extraction_shape(data: Dict[str, Any], schema: Dict[str, Any]):
+        expected_fields = {f["name"] for f in schema.get("fields", [])}
+        received_fields = set(data.keys())
+
+        if received_fields != expected_fields:
+            raise ValueError(
+                f"Extraction mismatch. Expected {expected_fields}, got {received_fields}"
+            )
 
     async def analyze_document(
         self,
@@ -407,13 +518,27 @@ Rules:
         if progress_callback:
             await progress_callback("Detecting document structure", 30)
 
-        schema_map = {s["type_name"]: s for s in schemas}
+        schema_map = {}
 
-        structure = await self._detect_structure_chunked(
+        for s in schemas:
+            if isinstance(s, dict) and "type_name" in s:
+                schema_map[s["type_name"]] = s
+ 
+
+        pages = await self._classify_pages_batched(
             images,
-            list(schema_map.keys()),
-            window_size=2
+            [
+                {
+                    "name": s["type_name"],
+                    "description": s.get("description", "")
+                }
+                for s in schema_map.values()
+            ],
+            batch_size=5
         )
+
+        structure = self._group_pages_into_documents(pages)
+
 
         findings = []
 
@@ -428,8 +553,13 @@ Rules:
                 )
 
             schema = schema_map.get(doc["type"])
-            if not schema:
-                continue
+
+            if not schema or not isinstance(schema, dict):
+                raise RuntimeError(
+                    f"Invalid schema for document type '{doc['type']}'. "
+                    f"Expected dict, got {type(schema)}"
+                )
+
 
             data = await self._extract_fields(
                 doc["type"],
@@ -445,7 +575,7 @@ Rules:
                 "confidence": 1.0
             })
 
-            await asyncio.sleep(60)  # S0 throttle
+            await asyncio.sleep(2)  # S0 throttle
 
         if progress_callback:
             await progress_callback("Finalizing analysis", 95)

@@ -13,8 +13,11 @@ from ..models.client import Client
 from ..models.document_type import DocumentType
 import asyncio
 # from app.services.document_service import build_derived_document_counts
+
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+
 document_service= DocumentService()
+
 @router.post("/upload", response_model=List[dict])
 async def upload_documents(
     files: List[UploadFile] = File(...),
@@ -615,29 +618,12 @@ async def delete_document(
     return {"message": "Document deleted successfully"}
 
 @router.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
+async def websocket_endpoint(websocket: WebSocket, user_id: str = "ae5b4fa6-44bb-45ce-beac-320bb4e21697"):
     """WebSocket endpoint for real-time document status updates"""
+    await websocket_manager.connect(websocket, user_id)
     try:
-        print(f"WebSocket connection attempt for user_id: {user_id}")
-        print(f"WebSocket headers: {websocket.headers}")
-        print(f"WebSocket query params: {websocket.query_params}")
-        
-        await websocket_manager.connect(websocket, user_id)
-        print(f"WebSocket connected successfully for user_id: {user_id}")
-        
         while True:
             # Keep connection alive
-            message = await websocket.receive_text()
-            print(f"WebSocket received message: {message}")
+            await websocket.receive_text()
     except WebSocketDisconnect:
-        print(f"WebSocket disconnected for user_id: {user_id}")
         websocket_manager.disconnect(websocket, user_id)
-    except Exception as e:
-        print(f"WebSocket error for user_id {user_id}: {str(e)}")
-        print(f"WebSocket error type: {type(e)}")
-        import traceback
-        print(f"WebSocket traceback: {traceback.format_exc()}")
-        try:
-            await websocket.close(code=1011, reason=str(e))
-        except:
-            pass
