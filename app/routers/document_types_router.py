@@ -31,7 +31,7 @@ class DocumentTypeResponse(BaseModel):
     class Config:
         from_attributes = True
 
-@router.get("/", response_model=List[DocumentTypeResponse])
+@router.get("", response_model=List[DocumentTypeResponse])
 def get_document_types(
     db: Session = Depends(get_db)
 ):
@@ -47,7 +47,7 @@ def get_active_document_types(
     service = DocumentTypeService(db)
     return service.get_active()
 
-@router.post("/", response_model=DocumentTypeResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=DocumentTypeResponse, status_code=status.HTTP_201_CREATED)
 def create_document_type(
     document_type_data: DocumentTypeCreate,
     db: Session = Depends(get_db)
