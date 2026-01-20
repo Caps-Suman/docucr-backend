@@ -10,9 +10,31 @@ from app.models.status import Status
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.models.role_module import RoleModule
+from app.models.printer import Printer
 from app.core.security import get_password_hash
 
 class MigrationService:
+    @staticmethod
+    def initialize_printer_table(db: Session):
+        """
+        Initializes the printer table if it doesn't exist.
+        """
+        try:
+            # Ensure Printer model is loaded (imported above)
+            # Create schema if not exists (handled generally but good to be safe)
+            db.execute(text("CREATE SCHEMA IF NOT EXISTS docucr"))
+            db.commit()
+            
+            # Create specific table using target metadata
+            # Using create_all with checking is standard
+            Printer.__table__.create(db.get_bind(), checkfirst=True)
+            db.commit()
+            
+            return {"message": "Printer table initialized successfully"}
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Printer initialization failed: {str(e)}")
+
     @staticmethod
     def initialize_system(db: Session, super_admin_email: str, super_admin_password: str):
         """
