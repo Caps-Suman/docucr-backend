@@ -1,9 +1,10 @@
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+from typing import Optional
 import os
 
 from app.core.database import get_db
@@ -55,3 +56,13 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     
     return user
+
+def get_current_role_id(request: Request = None, credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[str]:
+    # We can get token from credentials
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        role_id = payload.get("role_id")
+        return role_id
+    except JWTError:
+        return None

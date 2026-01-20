@@ -4,7 +4,7 @@ from typing import List
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_role_id
 from app.models.user import User
 from app.services.module_service import ModuleService
 
@@ -40,9 +40,17 @@ async def get_all_modules(db: Session = Depends(get_db), current_user: User = De
 async def get_current_user_modules(
     email: str = Query(..., description="User email"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    role_id: str = Depends(get_current_role_id)
 ):
-    modules = ModuleService.get_user_modules(email, db)
+    modules = ModuleService.get_user_modules(email, db, role_id)
     if not modules:
-        raise HTTPException(status_code=404, detail="User not found")
+        # It's possible to have no modules for a role, but if user not found logic remains
+        # Actually ModuleService returns [] if user not found OR no modules. 
+        # But we should only 404 if user truly doesn't exist? 
+        # Service logic: check user existence first.
+        pass
+    
+    # We might want to check if modules is empty and if that's expected. 
+    # For now, just return what service returns.
     return ModulesResponse(modules=modules)

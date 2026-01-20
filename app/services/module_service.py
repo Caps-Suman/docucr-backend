@@ -28,7 +28,7 @@ class ModuleService:
         } for m in modules]
 
     @staticmethod
-    def get_user_modules(email: str, db: Session) -> List[Dict]:
+    def get_user_modules(email: str, db: Session, role_id: str = None) -> List[Dict]:
         user = db.query(User).filter(User.email == email).first()
         if not user:
             return []
@@ -53,7 +53,12 @@ class ModuleService:
             Privilege, RoleModule.privilege_id == Privilege.id
         ).filter(
             UserRole.user_id == user.id
-        ).order_by(Module.display_order)
+        )
+
+        if role_id:
+            query = query.filter(RoleModule.role_id == role_id)
+
+        query = query.order_by(Module.display_order)
         
         results = query.all()
         
