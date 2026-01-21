@@ -16,10 +16,11 @@ from .form import Form
 from .status import Status
 from .document_list_config import DocumentListConfig
 from .printer import Printer
+from .activity_log import ActivityLog
 
 __all__ = [
     'Base', 'Module', 'Privilege', 'Role', 'RoleModule', 'User', 'UserRole', 
     'UserRoleModule', 'UserSupervisor', 'DocumentType', 'Template', 'Document',
     'DocumentFormData', 'ExtractedDocument', 'UnverifiedDocument', 'Form', 'Status',
-    'DocumentListConfig', 'Printer'
+    'DocumentListConfig', 'Printer', 'ActivityLog'
 ]

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..core.permissions import Permission
@@ -6,6 +6,9 @@ from ..services.openai_document_ai import OpenAIDocumentAI
 from ..services.ai_client import openai_client
 from ..models.template import Template
 from ..models.document_type import DocumentType
+from ..services.activity_service import ActivityService
+from ..models.user import User
+from ..core.security import get_current_user
 import os
 
 router = APIRouter( tags=["AI"])
@@ -15,8 +18,20 @@ router = APIRouter( tags=["AI"])
 async def classify_and_extract_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "CREATE"))
+    current_user: User = Depends(get_current_user),
+    permission: bool = Depends(Permission("documents", "CREATE")),
+    req: Request = None,
+    background_tasks: BackgroundTasks = None
 ):
+    ActivityService.log(
+        db,
+        action="PROCESS",
+        entity_type="document",
+        user_id=current_user.id,
+        details={"filename": file.filename, "ai_model": os.getenv("OPEN_AI_MODEL", "gpt-4o-mini")},
+        request=req,
+        background_tasks=background_tasks
+    )
     file_bytes = await file.read()
 
     # Build schemas from DB

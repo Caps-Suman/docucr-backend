@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from app.services.activity_service import ActivityService
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List
 from pydantic import BaseModel, Field
@@ -41,6 +42,8 @@ async def get_config(
 @router.put("/")
 async def update_config(
     config_request: DocumentListConfigRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "READ"))
@@ -54,6 +57,16 @@ async def update_config(
             db, current_user.id, configuration
         )
         
+        ActivityService.log(
+            db=db,
+            action="UPDATE",
+            entity_type="document_list_config",
+            entity_id=current_user.id,
+            user_id=current_user.id,
+            request=request,
+            background_tasks=background_tasks
+        )
+        
         return {
             "message": "Configuration updated successfully", 
             "configuration": saved_config
@@ -64,6 +77,8 @@ async def update_config(
 @router.delete("")
 @router.delete("/")
 async def delete_config(
+    request: Request,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "READ"))
@@ -73,6 +88,15 @@ async def delete_config(
         deleted = DocumentListConfigService.delete_user_config(db, current_user.id)
         
         if deleted:
+            ActivityService.log(
+                db=db,
+                action="DELETE",
+                entity_type="document_list_config",
+                entity_id=current_user.id,
+                user_id=current_user.id,
+                request=request,
+                background_tasks=background_tasks
+            )
             return {"message": "Configuration reset to default"}
         else:
             return {"message": "No configuration found to delete"}

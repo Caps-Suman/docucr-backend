@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional
@@ -8,6 +8,8 @@ from app.core.security import get_current_user
 from app.core.permissions import Permission
 from app.models.user import User
 from app.services.external_share_service import ExternalShareService
+from ..services.activity_service import ActivityService
+from fastapi import Request
 
 router = APIRouter(tags=["external-sharing"])
 
@@ -35,7 +37,9 @@ async def create_external_share(
     request: CreateExternalShareRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "SHARE"))
+    permission: bool = Depends(Permission("documents", "SHARE")),
+    req: Request = None,
+    background_tasks: BackgroundTasks = None
 ):
     """Create a password-protected share link for an external user."""
     service = ExternalShareService(db)
@@ -46,6 +50,22 @@ async def create_external_share(
         shared_by=current_user.id,
         expires_in_days=request.expires_in_days
     )
+
+    ActivityService.log(
+        db,
+        action="SHARE",
+        entity_type="document",
+        entity_id=str(request.document_id),
+        user_id=current_user.id,
+        details={
+            "sub_action": "EXTERNAL_SHARE", 
+            "email": request.email, 
+            "expires_days": request.expires_in_days
+        },
+        request=req,
+        background_tasks=background_tasks
+    )
+
     return {
         "message": "External share created successfully",
         "token": share.token,
@@ -57,7 +77,9 @@ async def create_external_share_batch(
     request: CreateBatchExternalShareRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "SHARE"))
+    permission: bool = Depends(Permission("documents", "SHARE")),
+    req: Request = None,
+    background_tasks: BackgroundTasks = None
 ):
     """Create multiple password-protected share links and send ONE email."""
     service = ExternalShareService(db)
@@ -68,6 +90,23 @@ async def create_external_share_batch(
         shared_by=current_user.id,
         expires_in_days=request.expires_in_days
     )
+    
+    for doc_id in request.document_ids:
+        ActivityService.log(
+            db,
+            action="SHARE",
+            entity_type="document",
+            entity_id=str(doc_id),
+            user_id=current_user.id,
+            details={
+                "sub_action": "EXTERNAL_SHARE", 
+                "email": request.email, 
+                "expires_days": request.expires_in_days
+            },
+            request=req,
+            background_tasks=background_tasks
+        )
+        
     return {
         "message": f"Successfully created {len(shares)} share links",
         "shares": [

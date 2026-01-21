@@ -36,6 +36,26 @@ class MigrationService:
             raise Exception(f"Printer initialization failed: {str(e)}")
 
     @staticmethod
+    def initialize_activity_log_table(db: Session):
+        """
+        Initializes the activity_log table if it doesn't exist.
+        """
+        try:
+            # Lazy import to avoid circular dependency if any, but regular import is fine too
+            from app.models.activity_log import ActivityLog
+            
+            db.execute(text("CREATE SCHEMA IF NOT EXISTS docucr"))
+            db.commit()
+            
+            ActivityLog.__table__.create(db.get_bind(), checkfirst=True)
+            db.commit()
+            
+            return {"message": "Activity Log table initialized successfully"}
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Activity log initialization failed: {str(e)}")
+
+    @staticmethod
     def initialize_system(db: Session, super_admin_email: str, super_admin_password: str):
         """
         Initializes the system by:
@@ -191,6 +211,18 @@ class MigrationService:
             "display_order": 9,
             "color_from": "#ff9a9e",
             "color_to": "#fecfef"
+          },
+          {
+            "id": "a9d7e3c1-5b7f-4f7d-8e5a-1c7a334bb7ef",
+            "name": "activity_log",
+            "label": "Activity Logs",
+            "description": "View system activity logs",
+            "route": "/activity-logs",
+            "icon": "Activity",
+            "category": "admin",
+            "display_order": 10,
+            "color_from": "#89f7fe",
+            "color_to": "#66a6ff"
           }
             ]
             

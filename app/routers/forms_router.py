@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from app.services.activity_service import ActivityService
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
@@ -104,6 +105,8 @@ def get_form(
 @router.post("/", response_model=FormDetailResponse)
 def create_form(
     form: FormCreate,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
     permission: bool = Depends(Permission("templates", "CREATE"))
@@ -114,6 +117,18 @@ def create_form(
     try:
         form_data = form.model_dump()
         created_form = FormService.create_form(form_data, current_user.id, db)
+        
+        ActivityService.log(
+            db=db,
+            action="CREATE",
+            entity_type="form",
+            entity_id=created_form.id,
+            user_id=current_user.id,
+            details={"name": created_form.name},
+            request=request,
+            background_tasks=background_tasks
+        )
+        
         return created_form
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -122,6 +137,8 @@ def create_form(
 def update_form(
     form_id: str,
     form: FormUpdate,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
     permission: bool = Depends(Permission("templates", "UPDATE"))
@@ -134,6 +151,18 @@ def update_form(
         updated_form = FormService.update_form(form_id, form_data, db)
         if not updated_form:
             raise HTTPException(status_code=404, detail="Form not found")
+            
+        ActivityService.log(
+            db=db,
+            action="UPDATE",
+            entity_type="form",
+            entity_id=form_id,
+            user_id=current_user.id,
+            details={"updated_fields": list(form_data.keys())},
+            request=request,
+            background_tasks=background_tasks
+        )
+            
         return updated_form
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -141,6 +170,8 @@ def update_form(
 @router.delete("/{form_id}")
 def delete_form(
     form_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
     permission: bool = Depends(Permission("templates", "DELETE"))
@@ -148,4 +179,15 @@ def delete_form(
     success = FormService.delete_form(form_id, db)
     if not success:
         raise HTTPException(status_code=404, detail="Form not found")
+        
+    ActivityService.log(
+        db=db,
+        action="DELETE",
+        entity_type="form",
+        entity_id=form_id,
+        user_id=current_user.id,
+        request=request,
+        background_tasks=background_tasks
+    )
+    
     return {"message": "Form deleted successfully"}
