@@ -36,3 +36,14 @@ async def initialize_printers(db: Session = Depends(get_db)):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/initialize-activity-logs")
+async def initialize_activity_logs(db: Session = Depends(get_db)):
+    """
+    Initializes the activity_log table in the database.
+    """
+    try:
+        result = MigrationService.initialize_activity_log_table(db)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from app.services.activity_service import ActivityService
+from app.models.user import User
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel, Field, field_validator
@@ -141,22 +143,40 @@ async def get_role_modules(
 @router.post("/", response_model=RoleResponse)
 async def create_role(
     role: RoleCreate, 
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("roles", "CREATE"))
+    permission: bool = Depends(Permission("roles", "CREATE")),
+    current_user: User = Depends(get_current_user)
 ):
     if RoleService.check_role_name_exists(role.name, None, db):
         raise HTTPException(status_code=400, detail="Role with this name already exists")
     
     role_data = role.model_dump()
     created_role = RoleService.create_role(role_data, db)
+    
+    ActivityService.log(
+        db=db,
+        action="CREATE",
+        entity_type="role",
+        entity_id=str(created_role.id),
+        user_id=current_user.id,
+        details={"name": created_role.name},
+        request=request,
+        background_tasks=background_tasks
+    )
+    
     return RoleResponse(**created_role)
 
 @router.put("/{role_id}", response_model=RoleResponse)
 async def update_role(
     role_id: str, 
     role: RoleUpdate, 
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("roles", "UPDATE"))
+    permission: bool = Depends(Permission("roles", "UPDATE")),
+    current_user: User = Depends(get_current_user)
 ):
     if role.name and RoleService.check_role_name_exists(role.name, role_id, db):
         raise HTTPException(status_code=400, detail="Role with this name already exists")
@@ -165,15 +185,41 @@ async def update_role(
     updated_role = RoleService.update_role(role_id, role_data, db)
     if not updated_role:
         raise HTTPException(status_code=404, detail="Role not found")
+        
+    ActivityService.log(
+        db=db,
+        action="UPDATE",
+        entity_type="role",
+        entity_id=role_id,
+        user_id=current_user.id,
+        details={"updated_fields": list(role_data.keys())},
+        request=request,
+        background_tasks=background_tasks
+    )
+        
     return RoleResponse(**updated_role)
 
 @router.delete("/{role_id}")
 async def delete_role(
     role_id: str, 
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("roles", "DELETE"))
+    permission: bool = Depends(Permission("roles", "DELETE")),
+    current_user: User = Depends(get_current_user)
 ):
     success, error = RoleService.delete_role(role_id, db)
     if not success:
         raise HTTPException(status_code=400, detail=error)
+        
+    ActivityService.log(
+        db=db,
+        action="DELETE",
+        entity_type="role",
+        entity_id=role_id,
+        user_id=current_user.id,
+        request=request,
+        background_tasks=background_tasks
+    )
+        
     return {"message": "Role deleted successfully"}

@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from app.services.activity_service import ActivityService
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
@@ -7,6 +8,8 @@ import re
 from app.core.database import get_db
 from app.services.user_service import UserService
 from app.core.permissions import Permission
+from app.core.security import get_current_user
+from app.models.user import User
 
 router = APIRouter()
 
@@ -137,7 +140,10 @@ async def get_user(
 async def create_user(
     user: UserCreate, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "CREATE"))
+    permission: bool = Depends(Permission("users", "CREATE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None,
+    current_user: User = Depends(get_current_user)
 ):
     if UserService.check_email_exists(user.email, None, db):
         raise HTTPException(status_code=400, detail="Email already exists")
@@ -146,6 +152,19 @@ async def create_user(
     
     user_data = user.model_dump()
     created_user = UserService.create_user(user_data, db)
+    
+    # Log activity
+    ActivityService.log(
+        db=db,
+        action="CREATE",
+        entity_type="user",
+        entity_id=created_user.id,
+        user_id=current_user.id,
+        details={"username": created_user.username, "email": created_user.email},
+        request=request,
+        background_tasks=background_tasks
+    )
+    
     return UserResponse(**created_user)
 
 @router.put("/{user_id}", response_model=UserResponse)
@@ -153,7 +172,10 @@ async def update_user(
     user_id: str, 
     user: UserUpdate, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "UPDATE"))
+    permission: bool = Depends(Permission("users", "UPDATE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None,
+    current_user: User = Depends(get_current_user)
 ):
     if user.email and UserService.check_email_exists(user.email, user_id, db):
         raise HTTPException(status_code=400, detail="Email already exists")
@@ -166,31 +188,81 @@ async def update_user(
             raise HTTPException(status_code=400, detail="Phone number must be 10-15 digits")
     
     user_data = user.model_dump(exclude_unset=True)
+    
+    # Capture potential changes before update
+    changes = {}
+    existing_user = UserService.get_user_by_id(user_id, db)
+    if existing_user:
+        changes = ActivityService.calculate_changes(existing_user, user_data, exclude=["password"])
+
     updated_user = UserService.update_user(user_id, user_data, db)
     if not updated_user:
         raise HTTPException(status_code=404, detail="User not found")
+        
+    # Log activity
+    ActivityService.log(
+        db=db,
+        action="UPDATE",
+        entity_type="user",
+        entity_id=user_id,
+        user_id=current_user.id,
+        details={"changes": changes},
+        request=request,
+        background_tasks=background_tasks
+    )
+        
     return UserResponse(**updated_user)
 
 @router.post("/{user_id}/activate", response_model=UserResponse)
 async def activate_user(
     user_id: str, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "UPDATE"))
+    permission: bool = Depends(Permission("users", "UPDATE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None,
+    current_user: User = Depends(get_current_user)
 ):
     user = UserService.activate_user(user_id, db)
     if not user:
         raise HTTPException(status_code=400, detail="Cannot activate user")
+        
+    # Log activity
+    ActivityService.log(
+        db=db,
+        action="ACTIVATE",
+        entity_type="user",
+        entity_id=user_id,
+        user_id=current_user.id,
+        request=request,
+        background_tasks=background_tasks
+    )
+    
     return UserResponse(**user)
 
 @router.post("/{user_id}/deactivate", response_model=UserResponse)
 async def deactivate_user(
     user_id: str, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "UPDATE"))
+    permission: bool = Depends(Permission("users", "UPDATE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None,
+    current_user: User = Depends(get_current_user)
 ):
     user = UserService.deactivate_user(user_id, db)
     if not user:
         raise HTTPException(status_code=400, detail="Cannot deactivate user")
+        
+    # Log activity
+    ActivityService.log(
+        db=db,
+        action="DEACTIVATE",
+        entity_type="user",
+        entity_id=user_id,
+        user_id=current_user.id,
+        request=request,
+        background_tasks=background_tasks
+    )
+        
     return UserResponse(**user)
 
 class ChangePasswordRequest(BaseModel):
@@ -199,11 +271,26 @@ class ChangePasswordRequest(BaseModel):
 @router.post("/{user_id}/change-password")
 async def change_user_password(
     user_id: str, 
-    request: ChangePasswordRequest, 
+    password_request: ChangePasswordRequest, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "ADMIN"))
+    permission: bool = Depends(Permission("users", "ADMIN")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None,
+    current_user: User = Depends(get_current_user)
 ):
-    success = UserService.change_password(user_id, request.new_password, db)
+    success = UserService.change_password(user_id, password_request.new_password, db)
     if not success:
         raise HTTPException(status_code=404, detail="User not found")
+        
+    # Log activity
+    ActivityService.log(
+        db=db,
+        action="CHANGE_PASSWORD",
+        entity_type="user",
+        entity_id=user_id,
+        user_id=current_user.id,
+        request=request,
+        background_tasks=background_tasks
+    )
+        
     return {"message": "Password changed successfully"}

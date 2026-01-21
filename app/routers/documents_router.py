@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
@@ -12,6 +12,8 @@ from ..models.user import User
 from ..models.form import FormField
 from ..models.client import Client
 from ..models.document_type import DocumentType
+from ..services.activity_service import ActivityService
+from fastapi import Request
 import asyncio
 # from app.services.document_service import build_derived_document_counts
 
@@ -29,7 +31,9 @@ async def upload_documents(
     form_data: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "CREATE"))
+    permission: bool = Depends(Permission("documents", "CREATE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None
 ):
     """Upload multiple documents - returns immediately with queued status"""
     if not files:
@@ -44,6 +48,19 @@ async def upload_documents(
     documents = await document_service.process_multiple_uploads(
         db, files, current_user.id, enable_ai, document_type_id, template_id, form_id, form_data
     )
+
+    # Activity Log
+    for doc in documents:
+        ActivityService.log(
+            db,
+            action="CREATE",
+            entity_type="document",
+            entity_id=str(doc.id),
+            user_id=current_user.id,
+            details={"filename": doc.filename, "size": doc.file_size},
+            request=request,
+            background_tasks=background_tasks
+        )
     
     return [
         {
@@ -248,6 +265,7 @@ def get_documents(
     date_to: Optional[str] = None,
     search_query: Optional[str] = None,
     form_filters: Optional[str] = None,
+    shared_only: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "READ"))
@@ -255,7 +273,8 @@ def get_documents(
     """Get user documents with filters"""
     documents, total_count = document_service.get_user_documents(
         db, current_user.id, skip, limit,
-        status_id, date_from, date_to, search_query, form_filters
+        status_id, date_from, date_to, search_query, form_filters,
+        shared_only=shared_only
     )
     
     # Get all form fields for this user's scope (simplified to all for now as it's small)
@@ -431,7 +450,9 @@ async def get_document_download_url(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "EXPORT"))
+    permission: bool = Depends(Permission("documents", "EXPORT")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None
 ):
     """Get secure download URL with role-based access control"""
     from ..models.user_role import UserRole
@@ -494,6 +515,17 @@ async def get_document_download_url(
     if not presigned_url:
         raise HTTPException(status_code=500, detail="Failed to generate download URL")
         
+    ActivityService.log(
+        db,
+        action="DOWNLOAD",
+        entity_type="document",
+        entity_id=str(document_id),
+        user_id=current_user.id,
+        details={"filename": filename},
+        request=request,
+        background_tasks=background_tasks
+    )
+        
     return {"url": presigned_url}
 
 @router.get("/{document_id}/report-url")
@@ -501,7 +533,9 @@ async def get_document_report_url(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "EXPORT"))
+    permission: bool = Depends(Permission("documents", "EXPORT")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None
 ):
     """Get secure download URL for the analysis report with role-based access control"""
     from ..models.user_role import UserRole
@@ -564,6 +598,17 @@ async def get_document_report_url(
     if not presigned_url:
         raise HTTPException(status_code=500, detail="Failed to generate report URL")
         
+    ActivityService.log(
+        db,
+        action="DOWNLOAD_REPORT",
+        entity_type="document",
+        entity_id=str(document_id),
+        user_id=current_user.id,
+        details={"filename": filename},
+        request=request,
+        background_tasks=background_tasks
+    )
+        
     return {"url": presigned_url}
 
 @router.post("/{document_id}/cancel")
@@ -598,12 +643,25 @@ async def archive_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "UPDATE"))
+    permission: bool = Depends(Permission("documents", "UPDATE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None
 ):
     """Archive a document"""
     success = await document_service.archive_document(db, document_id, current_user.id)
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
+    
+    ActivityService.log(
+        db,
+        action="UPDATE",
+        entity_type="document",
+        entity_id=str(document_id),
+        user_id=current_user.id,
+        details={"sub_action": "ARCHIVE"},
+        request=request,
+        background_tasks=background_tasks
+    )
     return {"message": "Document archived successfully"}
 
 @router.post("/{document_id}/unarchive")
@@ -611,12 +669,25 @@ async def unarchive_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "UPDATE"))
+    permission: bool = Depends(Permission("documents", "UPDATE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None
 ):
     """Unarchive a document"""
     success = await document_service.unarchive_document(db, document_id, current_user.id)
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
+        
+    ActivityService.log(
+        db,
+        action="UPDATE",
+        entity_type="document",
+        entity_id=str(document_id),
+        user_id=current_user.id,
+        details={"sub_action": "UNARCHIVE"},
+        request=request,
+        background_tasks=background_tasks
+    )
     return {"message": "Document unarchived successfully"}
 
 @router.delete("/{document_id}")
@@ -624,12 +695,25 @@ async def delete_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "DELETE"))
+    permission: bool = Depends(Permission("documents", "DELETE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None
 ):
     """Delete a document"""
     success = await document_service.delete_document(db, document_id, current_user.id)
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
+    
+    ActivityService.log(
+        db,
+        action="DELETE",
+        entity_type="document",
+        entity_id=str(document_id),
+        user_id=current_user.id,
+        details={"filename": "Document deleted"},
+        request=request,
+        background_tasks=background_tasks
+    )
     return {"message": "Document deleted successfully"}
 
 @router.websocket("/ws/{user_id}")

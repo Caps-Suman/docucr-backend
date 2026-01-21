@@ -594,8 +594,10 @@ class DocumentService:
     @staticmethod
     def get_user_documents(db: Session, user_id: str, skip: int = 0, limit: int = 100,
                          status_id: str = None, date_from: str = None, date_to: str = None,
-                         search_query: str = None, form_filters: str = None) -> tuple[List[Document], int]:
+                         search_query: str = None, form_filters: str = None,
+                         shared_only: bool = False) -> tuple[List[Document], int]:
         """Get documents for a user with role-based access control"""
+        from ..models.document_share import DocumentShare
         # Get user's roles to determine access level - optimized query
         role_names = [r[0] for r in db.query(Role.name).join(UserRole).filter(
             UserRole.user_id == user_id,
@@ -609,15 +611,27 @@ class DocumentService:
             .options(joinedload(Document.form_data_relation))\
             .options(joinedload(Document.status))
         
-        if is_admin:
+        if shared_only:
+            # ONLY documents shared with the user
+            shared_ids = db.query(DocumentShare.document_id).filter(
+                DocumentShare.user_id == user_id
+            ).subquery()
+            query = query.filter(Document.id.in_(shared_ids))
+        elif is_admin:
             # Admin users see all documents - no user filter
             pass
         else:
             # Non-admin users see only:
             # 1. Documents they uploaded
             # 2. Documents from clients assigned to them
+            # 3. Documents shared with them via DocumentShare
             assigned_client_ids = db.query(UserClient.client_id).filter(
                 UserClient.user_id == user_id
+            ).subquery()
+            
+            # Documents shared via DocumentShare
+            shared_ids = db.query(DocumentShare.document_id).filter(
+                DocumentShare.user_id == user_id
             ).subquery()
             
             # Get documents from assigned clients by joining with form data
@@ -632,7 +646,8 @@ class DocumentService:
             query = query.filter(
                 or_(
                     Document.user_id == user_id,  # Documents uploaded by user
-                    Document.id.in_(client_documents_query)  # Documents from assigned clients
+                    Document.id.in_(client_documents_query),  # Documents from assigned clients
+                    Document.id.in_(shared_ids) # Documents shared with user
                 )
             )
 

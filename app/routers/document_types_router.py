@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
 from pydantic import BaseModel
@@ -6,6 +6,9 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.permissions import Permission
 from app.services.document_type_service import DocumentTypeService
+from app.services.activity_service import ActivityService
+from app.models.user import User
+from fastapi import Request
 
 router = APIRouter(prefix="/api/document-types", tags=["document-types"], dependencies=[Depends(get_current_user)])
 
@@ -53,12 +56,28 @@ def get_active_document_types(
 @router.post("", response_model=DocumentTypeResponse, status_code=status.HTTP_201_CREATED)
 def create_document_type(
     document_type_data: DocumentTypeCreate,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("document_types", "CREATE"))
+    permission: bool = Depends(Permission("document_types", "CREATE")),
+    current_user: User = Depends(get_current_user)
 ):
     """Create a new document type"""
     service = DocumentTypeService(db)
-    return service.create(document_type_data.name, document_type_data.description, document_type_data.status_id)
+    result = service.create(document_type_data.name, document_type_data.description, document_type_data.status_id)
+    
+    ActivityService.log(
+        db=db,
+        action="CREATE",
+        entity_type="document_type",
+        entity_id=result.id,
+        user_id=current_user.id,
+        details={"name": result.name},
+        request=request,
+        background_tasks=background_tasks
+    )
+    
+    return result
 
 @router.get("/{document_type_id}", response_model=DocumentTypeResponse)
 def get_document_type(
@@ -74,40 +93,100 @@ def get_document_type(
 def update_document_type(
     document_type_id: str,
     document_type_data: DocumentTypeUpdate,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("document_types", "UPDATE"))
+    permission: bool = Depends(Permission("document_types", "UPDATE")),
+    current_user: User = Depends(get_current_user)
 ):
     """Update a document type"""
     service = DocumentTypeService(db)
-    return service.update(document_type_id, document_type_data.name, document_type_data.description, document_type_data.status_id)
+    result = service.update(document_type_id, document_type_data.name, document_type_data.description, document_type_data.status_id)
+    
+    ActivityService.log(
+        db=db,
+        action="UPDATE",
+        entity_type="document_type",
+        entity_id=document_type_id,
+        user_id=current_user.id,
+        details={"name": result.name},
+        request=request,
+        background_tasks=background_tasks
+    )
+    
+    return result
 
 @router.patch("/{document_type_id}/activate", response_model=DocumentTypeResponse)
 def activate_document_type(
     document_type_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("document_types", "UPDATE"))
+    permission: bool = Depends(Permission("document_types", "UPDATE")),
+    current_user: User = Depends(get_current_user)
 ):
     """Activate a document type"""
     service = DocumentTypeService(db)
-    return service.activate(document_type_id)
+    result = service.activate(document_type_id)
+    
+    ActivityService.log(
+        db=db,
+        action="ACTIVATE",
+        entity_type="document_type",
+        entity_id=document_type_id,
+        user_id=current_user.id,
+        request=request,
+        background_tasks=background_tasks
+    )
+    
+    return result
 
 @router.patch("/{document_type_id}/deactivate", response_model=DocumentTypeResponse)
 def deactivate_document_type(
     document_type_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("document_types", "UPDATE"))
+    permission: bool = Depends(Permission("document_types", "UPDATE")),
+    current_user: User = Depends(get_current_user)
 ):
     """Deactivate a document type"""
     service = DocumentTypeService(db)
-    return service.deactivate(document_type_id)
+    result = service.deactivate(document_type_id)
+    
+    ActivityService.log(
+        db=db,
+        action="DEACTIVATE",
+        entity_type="document_type",
+        entity_id=document_type_id,
+        user_id=current_user.id,
+        request=request,
+        background_tasks=background_tasks
+    )
+    
+    return result
 
 @router.delete("/{document_type_id}")
 def delete_document_type(
     document_type_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("document_types", "DELETE"))
+    permission: bool = Depends(Permission("document_types", "DELETE")),
+    current_user: User = Depends(get_current_user)
 ):
     """Delete a document type"""
     service = DocumentTypeService(db)
     service.delete(document_type_id)
+    
+    ActivityService.log(
+        db=db,
+        action="DELETE",
+        entity_type="document_type",
+        entity_id=document_type_id,
+        user_id=current_user.id,
+        request=request,
+        background_tasks=background_tasks
+    )
+    
     return {"message": "Document type deleted successfully"}

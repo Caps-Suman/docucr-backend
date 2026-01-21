@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from app.services.activity_service import ActivityService
 from app.core.permissions import Permission
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -108,37 +109,115 @@ async def get_client(client_id: str, db: Session = Depends(get_db)):
     return ClientResponse(**client)
 
 @router.post("/", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "CREATE"))])
-async def create_client(client: ClientCreate, db: Session = Depends(get_db)):
+async def create_client(
+    client: ClientCreate, 
+    db: Session = Depends(get_db), 
+    request: Request = None,
+    background_tasks: BackgroundTasks = None,
+    current_user: User = Depends(get_current_user)
+):
     if client.npi and ClientService.check_npi_exists(client.npi, None, db):
         raise HTTPException(status_code=400, detail="NPI already exists")
     
     client_data = client.model_dump()
     created_client = ClientService.create_client(client_data, db)
+    
+    ActivityService.log(
+        db=db,
+        action="CREATE",
+        entity_type="client",
+        entity_id=str(created_client.id),
+        user_id=current_user.id,
+        details={"name": created_client.business_name},
+        request=request,
+        background_tasks=background_tasks
+    )
+    
     return ClientResponse(**created_client)
 
 @router.put("/{client_id}", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
-async def update_client(client_id: str, client: ClientUpdate, db: Session = Depends(get_db)):
+async def update_client(
+    client_id: str, 
+    client: ClientUpdate, 
+    db: Session = Depends(get_db), 
+    request: Request = None,
+    background_tasks: BackgroundTasks = None,
+    current_user: User = Depends(get_current_user)
+):
     if client.npi and ClientService.check_npi_exists(client.npi, client_id, db):
         raise HTTPException(status_code=400, detail="NPI already exists")
     
     client_data = client.model_dump(exclude_unset=True)
+
+    # Capture changes
+    changes = {}
+    existing_client = ClientService.get_client_by_id(client_id, db)
+    if existing_client:
+        changes = ActivityService.calculate_changes(existing_client, client_data)
+
     updated_client = ClientService.update_client(client_id, client_data, db)
     if not updated_client:
         raise HTTPException(status_code=404, detail="Client not found")
+        
+    ActivityService.log(
+        db=db,
+        action="UPDATE",
+        entity_type="client",
+        entity_id=client_id,
+        user_id=current_user.id,
+        details={"changes": changes},
+        request=request,
+        background_tasks=background_tasks
+    )
+        
     return ClientResponse(**updated_client)
 
 @router.post("/{client_id}/activate", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
-async def activate_client(client_id: str, db: Session = Depends(get_db)):
+async def activate_client(
+    client_id: str, 
+    db: Session = Depends(get_db), 
+    request: Request = None,
+    background_tasks: BackgroundTasks = None,
+    current_user: User = Depends(get_current_user)
+):
     client = ClientService.activate_client(client_id, db)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+        
+    ActivityService.log(
+        db=db,
+        action="ACTIVATE",
+        entity_type="client",
+        entity_id=client_id,
+        user_id=current_user.id,
+        request=request,
+        background_tasks=background_tasks
+    )
+        
     return ClientResponse(**client)
 
 @router.post("/{client_id}/deactivate", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
-async def deactivate_client(client_id: str, db: Session = Depends(get_db)):
+async def deactivate_client(
+    client_id: str, 
+    db: Session = Depends(get_db), 
+    request: Request = None,
+    background_tasks: BackgroundTasks = None,
+    current_user: User = Depends(get_current_user)
+):
     client = ClientService.deactivate_client(client_id, db)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+        
+    ActivityService.log(
+        db=db,
+        action="DEACTIVATE",
+        entity_type="client",
+        entity_id=client_id,
+        user_id=current_user.id,
+        request=request,
+        background_tasks=background_tasks
+    )
+        
     return ClientResponse(**client)
 
 @router.post("/users/{user_id}/assign", dependencies=[Depends(Permission("clients", "ADMIN"))])

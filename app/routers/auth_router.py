@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from datetime import timedelta
 from pydantic import BaseModel
@@ -7,6 +7,7 @@ from typing import Optional
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.services.auth_service import AuthService
+from app.services.activity_service import ActivityService
 from app.models.user import User
 
 router = APIRouter()
@@ -30,13 +31,32 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 @router.post("/login")
-async def login(request: LoginRequest, db: Session = Depends(get_db)):
+async def login(request: LoginRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user = AuthService.authenticate_user(request.email, request.password, db)
     if not user:
+        # Optional: Log failed login attempt
+        ActivityService.log(
+            db, 
+            action="LOGIN_FAILED", 
+            entity_type="user", 
+            details={"email": request.email}, 
+            request=req,
+            background_tasks=background_tasks
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     if not AuthService.check_user_active(user, db):
         raise HTTPException(status_code=403, detail="Account is inactive")
+        
+    ActivityService.log(
+        db,
+        action="LOGIN",
+        entity_type="user",
+        entity_id=user.id,
+        user_id=user.id,
+        request=req,
+        background_tasks=background_tasks
+    )
 
     roles = AuthService.get_user_roles(user.id, db)
     
@@ -97,29 +117,49 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
     }
 
 @router.post("/forgot-password")
-async def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(get_db)):
+async def forgot_password(request: ForgotPasswordRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     from app.services.user_service import UserService
     from app.utils.email import send_otp_email
     
     user = UserService.get_user_by_email(request.email, db)
     if not user:
+        # Log attempt for non-existent user? Maybe strictly for security auditing but optional here.
         raise HTTPException(status_code=404, detail="User not found")
 
     otp_code = AuthService.generate_otp(request.email, db)
     sent = send_otp_email(request.email, otp_code)
     
     if sent:
+        ActivityService.log(
+            db,
+            action="FORGOT_PASSWORD_REQUEST",
+            entity_type="user",
+            entity_id=user["id"], # UserService returns dict
+            user_id=user["id"],
+            details={"email": request.email},
+            request=req,
+            background_tasks=background_tasks
+        )
         return {"message": "OTP sent to your email"}
     else:
         raise HTTPException(status_code=500, detail="Failed to send email")
 
 @router.post("/reset-password")
-async def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db)):
+async def reset_password(request: ResetPasswordRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     if not AuthService.verify_otp(request.email, request.otp, db):
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     
     if not AuthService.reset_user_password(request.email, request.otp, request.new_password, db):
         raise HTTPException(status_code=404, detail="User not found")
+        
+    ActivityService.log(
+        db,
+        action="RESET_PASSWORD",
+        entity_type="user",
+        details={"email": request.email},
+        request=req,
+        background_tasks=background_tasks
+    )
     
     return {"message": "Password reset successfully"}
 

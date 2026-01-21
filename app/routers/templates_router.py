@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, field_serializer
@@ -8,6 +8,8 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.permissions import Permission
 from app.services.template_service import TemplateService
+from ..services.activity_service import ActivityService
+from ..models.user import User
 
 router = APIRouter(prefix="/api/templates", tags=["templates"], dependencies=[Depends(get_current_user)])
 
@@ -74,18 +76,35 @@ def get_templates(
 @router.post("/", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
 def create_template(
     template_data: TemplateCreate,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("templates", "CREATE"))
 ):
     """Create a new template"""
     service = TemplateService(db)
-    return service.create(
+    template = service.create(
         template_data.template_name,
         template_data.document_type_id,
         template_data.description,
         template_data.extraction_fields,
-        template_data.status_id
+        template_data.status_id,
+        user_id=current_user.id
     )
+    
+    ActivityService.log(
+        db,
+        action="CREATE",
+        entity_type="template",
+        entity_id=str(template.id),
+        user_id=current_user.id,
+        details={"name": template.template_name},
+        request=req,
+        background_tasks=background_tasks
+    )
+    
+    return template
 
 @router.get("/{template_id}", response_model=TemplateResponse)
 def get_template(
@@ -101,12 +120,15 @@ def get_template(
 def update_template(
     template_id: str,
     template_data: TemplateUpdate,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("templates", "UPDATE"))
 ):
     """Update a template"""
     service = TemplateService(db)
-    return service.update(
+    template = service.update(
         template_id,
         template_data.template_name,
         template_data.description,
@@ -114,26 +136,91 @@ def update_template(
         template_data.extraction_fields,
         template_data.status_id
     )
+    
+    if template:
+         ActivityService.log(
+            db,
+            action="UPDATE",
+            entity_type="template",
+            entity_id=str(template_id),
+            user_id=current_user.id,
+            request=req,
+            background_tasks=background_tasks
+        )
+    
+    return template
+
+@router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_template(
+    template_id: str,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("templates", "DELETE"))
+):
+    """Delete a template"""
+    service = TemplateService(db)
+    service.delete(template_id)
+
+    ActivityService.log(
+        db,
+        action="DELETE",
+        entity_type="template",
+        entity_id=str(template_id),
+        user_id=current_user.id,
+        request=req,
+        background_tasks=background_tasks
+    )
+    return {"message": "Template deleted successfully"}
 
 @router.patch("/{template_id}/activate")
 def activate_template(
     template_id: str,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("templates", "UPDATE"))
 ):
     """Activate a template"""
     service = TemplateService(db)
-    return service.activate(template_id)
+    result = service.activate(template_id)
+    
+    ActivityService.log(
+        db,
+        action="ACTIVATE",
+        entity_type="template",
+        entity_id=str(template_id),
+        user_id=current_user.id,
+        request=req,
+        background_tasks=background_tasks
+    )
+    return result
 
 @router.patch("/{template_id}/deactivate")
 def deactivate_template(
     template_id: str,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("templates", "UPDATE"))
 ):
     """Deactivate a template"""
     service = TemplateService(db)
-    return service.deactivate(template_id)
+    result = service.deactivate(template_id)
+    
+    ActivityService.log(
+        db,
+        action="DEACTIVATE",
+        entity_type="template",
+        entity_id=str(template_id),
+        user_id=current_user.id,
+        request=req,
+        background_tasks=background_tasks
+    )
+    return result
 
 @router.get("/by-document-type/{document_type_id}", response_model=List[TemplateResponse])
 def get_templates_by_document_type(
