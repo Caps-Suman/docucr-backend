@@ -184,7 +184,7 @@ class DocumentTypeService:
             )
         return self.update(document_type_id, status_id=inactive_status.id)
 
-    def delete(self, document_type_id: str) -> bool:
+    def delete(self, document_type_id: str) -> Optional[str]:
         """Delete a document type and all associated templates"""
         document_type = self.db.query(DocumentType).filter(DocumentType.id == document_type_id).first()
         if not document_type:
@@ -193,12 +193,10 @@ class DocumentTypeService:
                 detail="Document type not found"
             )
         
-        # Check if there are associated templates (for informational purposes)
-        from app.models.template import Template
-        template_count = self.db.query(Template).filter(Template.document_type_id == document_type_id).count()
+        name = document_type.name
         
         # Delete the document type (templates will be deleted automatically due to cascade)
         self.db.delete(document_type)
         self.db.commit()
         
-        return True
+        return name

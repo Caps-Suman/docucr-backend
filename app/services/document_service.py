@@ -885,7 +885,7 @@ class DocumentService:
         return True
 
     @staticmethod
-    async def delete_document(db: Session, document_id: int, user_id: str) -> bool:
+    async def delete_document(db: Session, document_id: int, user_id: str) -> Optional[str]:
         """Delete a document and its S3 file with role-based access control"""
         from ..models.user import User
         from ..models.user_role import UserRole
@@ -931,7 +931,9 @@ class DocumentService:
         
         document = query.first()
         if not document:
-            return False
+            return None
+        
+        filename = document.original_filename or document.filename
         
         # Delete from S3 if exists
         if document.s3_key:
@@ -951,13 +953,13 @@ class DocumentService:
             "document.deleted",
             {
                 "document_id": document_id,
-                "filename": document.filename
+                "filename": filename
             },
             str(user_id),
             SessionLocal
         ))
         
-        return True
+        return filename
 
     @staticmethod
     async def cancel_document_analysis(db: Session, document_id: int, user_id: str):

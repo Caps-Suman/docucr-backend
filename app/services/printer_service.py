@@ -41,14 +41,15 @@ class PrinterService:
         return printer
 
     @staticmethod
-    def delete_printer(db: Session, printer_id: str) -> bool:
+    def delete_printer(db: Session, printer_id: str) -> Optional[str]:
         printer = db.query(Printer).filter(Printer.id == printer_id).first()
         if not printer:
-            return False
+            return None
             
+        printer_name = printer.name
         db.delete(printer)
         db.commit()
-        return True
+        return printer_name
 
     @staticmethod
     def test_connection(ip_address: str, port: int, timeout: int = 3) -> Dict:

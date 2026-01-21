@@ -161,7 +161,7 @@ def delete_template(
 ):
     """Delete a template"""
     service = TemplateService(db)
-    service.delete(template_id)
+    name = service.delete(template_id)
 
     ActivityService.log(
         db,
@@ -169,6 +169,7 @@ def delete_template(
         entity_type="template",
         entity_id=str(template_id),
         user_id=current_user.id,
+        details={"name": name},
         request=req,
         background_tasks=background_tasks
     )

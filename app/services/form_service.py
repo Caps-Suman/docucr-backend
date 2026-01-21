@@ -196,14 +196,15 @@ class FormService:
 
     
     @staticmethod
-    def delete_form(form_id: str, db: Session) -> bool:
+    def delete_form(form_id: str, db: Session) -> Optional[str]:
         form = db.query(Form).filter(Form.id == form_id).first()
         if not form:
-            return False
+            return None
         
+        name = form.name
         db.delete(form)
         db.commit()
-        return True
+        return name
     
     @staticmethod
     def check_form_name_exists(name: str, exclude_id: Optional[str], db: Session) -> bool:

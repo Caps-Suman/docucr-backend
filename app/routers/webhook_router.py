@@ -82,8 +82,8 @@ async def delete_webhook(
     permission: bool = Depends(Permission("profile", "UPDATE"))
 ):
     """Delete a webhook"""
-    success = webhook_service.delete_webhook(db, webhook_id, current_user.id)
-    if not success:
+    url = webhook_service.delete_webhook(db, webhook_id, current_user.id)
+    if not url:
         raise HTTPException(status_code=404, detail="Webhook not found")
         
     ActivityService.log(
@@ -92,6 +92,7 @@ async def delete_webhook(
         entity_type="webhook",
         entity_id=webhook_id,
         user_id=current_user.id,
+        details={"url": url},
         request=request,
         background_tasks=background_tasks
     )

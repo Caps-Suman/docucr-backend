@@ -700,8 +700,8 @@ async def delete_document(
     request: Request = None
 ):
     """Delete a document"""
-    success = await document_service.delete_document(db, document_id, current_user.id)
-    if not success:
+    filename = await document_service.delete_document(db, document_id, current_user.id)
+    if not filename:
         raise HTTPException(status_code=404, detail="Document not found")
     
     ActivityService.log(
@@ -710,7 +710,7 @@ async def delete_document(
         entity_type="document",
         entity_id=str(document_id),
         user_id=current_user.id,
-        details={"filename": "Document deleted"},
+        details={"filename": filename},
         request=request,
         background_tasks=background_tasks
     )

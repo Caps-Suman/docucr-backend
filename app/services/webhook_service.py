@@ -43,14 +43,15 @@ class WebhookService:
         return webhook
 
     @staticmethod
-    def delete_webhook(db: Session, webhook_id: str, user_id: str) -> bool:
+    def delete_webhook(db: Session, webhook_id: str, user_id: str) -> Optional[str]:
         webhook = db.query(Webhook).filter(Webhook.id == webhook_id, Webhook.user_id == user_id).first()
         if not webhook:
-            return False
+            return None
         
+        url = webhook.url
         db.delete(webhook)
         db.commit()
-        return True
+        return url
 
     @staticmethod
     def trigger_webhook_background(event_type: str, payload: Dict[str, Any], user_id: str, db_session_factory):

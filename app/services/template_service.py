@@ -164,3 +164,17 @@ class TemplateService:
     def deactivate(self, template_id: str) -> Template:
         """Deactivate a template"""
         return self._update_status(template_id, 'INACTIVE')
+
+    def delete(self, template_id: str) -> Optional[str]:
+        """Delete a template"""
+        template = self.db.query(Template).filter(Template.id == template_id).first()
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Template not found"
+            )
+        
+        name = template.template_name
+        self.db.delete(template)
+        self.db.commit()
+        return name

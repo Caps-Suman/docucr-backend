@@ -110,8 +110,9 @@ def delete_printer(
     permission: bool = Depends(Permission("settings", "ADMIN")),
     current_user: User = Depends(get_current_user)
 ):
-    success = PrinterService.delete_printer(db, printer_id)
-    if not success:
+    """Delete a printer"""
+    name = PrinterService.delete_printer(db, printer_id)
+    if not name:
         raise HTTPException(status_code=404, detail="Printer not found")
         
     ActivityService.log(
@@ -120,6 +121,7 @@ def delete_printer(
         entity_type="printer",
         entity_id=printer_id,
         user_id=current_user.id,
+        details={"name": name},
         request=request,
         background_tasks=background_tasks
     )
