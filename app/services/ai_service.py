@@ -68,63 +68,29 @@ class AIService:
         return [self._encode_image(image)]
     
     def build_document_instances(self, pages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-        """
-        Deterministic document instance builder.
-        ZERO AI decisions here.
-        """
-
         documents = []
         current = None
         prev = None
 
-        def normalize(v):
-            return v.strip().upper() if isinstance(v, str) else None
-
         def should_split(prev, curr):
-            # 1. Document type change
             if curr["type"] != prev["type"]:
                 return True
 
-            s1 = prev.get("signals", {})
             s2 = curr.get("signals", {})
 
-            # 2. Patient identity change (HARD STOP)
-            if normalize(s1.get("patient_name")) != normalize(s2.get("patient_name")):
-                return True
-
-            if normalize(s1.get("dob")) != normalize(s2.get("dob")):
-                return True
-
-            # 3. Claim / invoice boundary
-            if s1.get("claim_number") and s2.get("claim_number"):
-                if s1["claim_number"] != s2["claim_number"]:
-                    return True
-
-            if s1.get("invoice_number") and s2.get("invoice_number"):
-                if s1["invoice_number"] != s2["invoice_number"]:
-                    return True
-
-            # 4. Date of service change
-            if s1.get("date_of_service") and s2.get("date_of_service"):
-                if s1["date_of_service"] != s2["date_of_service"]:
-                    return True
-
-            # 5. Header restart explicitly detected
             if s2.get("header_restart") is True:
                 return True
 
-            # 6. Page numbering sanity
-            if curr["page"] != prev["page"] + 1:
-                return True
-
+            # default: CONTINUE
             return False
+
 
         for page in pages:
             if not current:
                 current = {
                     "type": page["type"],
                     "start": page["page"],
-                    "end": page["page"]
+                    "end": page["page"],
                 }
                 prev = page
                 continue
@@ -134,7 +100,7 @@ class AIService:
                 current = {
                     "type": page["type"],
                     "start": page["page"],
-                    "end": page["page"]
+                    "end": page["page"],
                 }
             else:
                 current["end"] = page["page"]
@@ -151,6 +117,7 @@ class AIService:
             }
             for d in documents
         ]
+
 
 
 
@@ -413,47 +380,50 @@ Rules:
         async def process_page(img: str, page_no: int):
 
             system_prompt = f"""
-    You are classifying ONE page of a medical document.
+    You are classifying pages of medical documents.
 
-    DOCUMENT TYPES:
-    {document_type_block}
+DOCUMENT TYPES:
+{document_type_block}
 
-    TASKS (STRICT):
-    1. Identify document TYPE using DESCRIPTION.
-    2. Extract PATIENT identity and instance signals.
+Your job is NOT to create documents.
+Your job is ONLY to analyze ONE page and emit signals.
 
-    YOU MUST TRY TO EXTRACT PATIENT INFO.
-    If not visible, return null.
+STRICT RULES:
 
-    Set header_restart = true IF:
-    - CPT / ICD table header repeats
-    - Patient info block restarts
-    - Provider + patient section repeats
-    - Charges table starts again
+1. Identify document type USING DESCRIPTION, not keywords.
+2. Detect whether this page STARTS a new document or CONTINUES the previous one.
 
-    SIGNALS TO EXTRACT:
-    - patient_name
-    - dob
-    - member_id
-    - page_label
-    - header_restart
+CONTINUATION RULES (CRITICAL):
+- If a page contains diagnosis tables, ICD codes, CPT codes, or procedure lists
+  AND does NOT contain patient name, DOB, or insurance header,
+  THEN this page is a CONTINUATION of the previous page’s document.
+- Such pages MUST NOT start a new document.
 
-    OUTPUT JSON ONLY:
-    {{
-    "page": {page_no},
-    "type": "<DocumentTypeName>",
-    "signals": {{
-        "patient_name": null,
-        "dob": null,
-        "member_id": null,
-        "page_label": null,
-        "header_restart": false
-    }}
-    }}
-    """
+HEADER RESTART = true ONLY if:
+- Patient name or DOB is visible
+- OR the page explicitly says "Page 1"
+- OR a new patient/provider block starts
 
+CRITICAL CONTINUATION RULE:
+If this page visually continues tables, line items, or billing rows
+from the previous page (same columns, same layout),
+then:
+  - continues_previous = true
+  - header_restart = false
+Even if patient name or DOB is not visible.
+OUTPUT JSON ONLY:
 
-
+{{
+  "type": "<DocumentTypeName>",
+  "signals": {{
+    "has_patient_header": boolean,
+    "continues_previous": boolean,
+    "header_restart": boolean,
+    "patient_name": null or string,
+    "dob": null or string
+  }}
+}}  
+"""
             user_content = [
                 {"type": "text", "text": "Analyze this page."},
                 {
@@ -472,9 +442,14 @@ Rules:
                 response_format={"type": "json_object"}
             )
 
-            page = json.loads(response.choices[0].message.content)
-            page["type"] = page["type"].strip().upper()
-            return page
+            raw = json.loads(response.choices[0].message.content)
+
+            return {
+                "page": page_no,                      # 🔒 YOU control this
+                "type": raw.get("type", "UNKNOWN").strip().upper(),
+                "signals": raw.get("signals", {})
+            }
+
 
         pages = []
 
@@ -486,7 +461,7 @@ Rules:
 
             results = await asyncio.gather(*batch)
             pages.extend(results)
-            await asyncio.sleep(3)
+            await asyncio.sleep(1.5)
 
         return pages
 
@@ -496,24 +471,36 @@ Rules:
     # ------------------------------------------------------------------
 
     async def analyze_document(
-        self,
-        file_content: bytes,
-        filename: str,
-        schemas: List[Dict],
-        db:Session,
-        document_id: int,   # ← REQUIRED
-        progress_callback=None,
-        check_cancelled_callback=None
-    ) -> Dict[str, Any]:
+    self,
+    file_content: bytes,
+    filename: str,
+    schemas: List[Dict],
+    db: Session,
+    document_id: int,
+    progress_callback=None,
+    check_cancelled_callback=None
+) -> Dict[str, Any]:
 
+        # --------------------------------------------------
+        # 0. HARD RESET (IDEMPOTENCY GUARANTEE)
+        # --------------------------------------------------
+        db.query(UnverifiedDocument).filter(
+            UnverifiedDocument.document_id == document_id
+        ).delete()
+        db.commit()
+
+        # --------------------------------------------------
+        # 1. IMAGE CONVERSION
+        # --------------------------------------------------
         if progress_callback:
             await progress_callback("Converting to images", 10)
 
         images = await self._convert_to_images(file_content, filename)
+        total_pages = len(images)
 
-        if progress_callback:
-            await progress_callback("Detecting document structure", 30)
-
+        # --------------------------------------------------
+        # 2. SCHEMA PREP
+        # --------------------------------------------------
         schema_map = {
             s["type_name"].strip().upper(): s
             for s in schemas
@@ -528,15 +515,49 @@ Rules:
             for s in schemas
         ]
 
-        pages = await self._detect_structure_chunked(
-            images,
-            document_types
-        )
+        # --------------------------------------------------
+        # 3. PAGE CLASSIFICATION (AI)
+        # --------------------------------------------------
+        if progress_callback:
+            await progress_callback("Detecting document structure", 30)
 
-        structure = self.build_document_instances(pages)
-        findings = []
+        pages = await self._detect_structure_chunked(images, document_types)
 
+        # --------------------------------------------------
+        # 4. PAGE NORMALIZATION (YOU OWN PAGE NUMBERS)
+        # --------------------------------------------------
+        normalized_pages = {}
+        for p in pages:
+            page_no = p["page"]
+            normalized_pages[page_no] = {
+                "page": page_no,
+                "type": p["type"],
+                "signals": p.get("signals", {})
+            }
+
+        if len(normalized_pages) != total_pages:
+            raise RuntimeError(
+                f"Page mismatch: expected {total_pages}, "
+                f"got {len(normalized_pages)}. "
+                f"Pages: {sorted(normalized_pages.keys())}"
+            )
+
+        ordered_pages = [
+            normalized_pages[i]
+            for i in range(1, total_pages + 1)
+        ]
+
+        # --------------------------------------------------
+        # 5. GROUP INTO DOCUMENT INSTANCES (DETERMINISTIC)
+        # --------------------------------------------------
+        structure = self.build_document_instances(ordered_pages)
+
+        findings: List[Dict[str, Any]] = []
+        # --------------------------------------------------
+        # 6. EXTRACTION + PERSISTENCE (ONE ROW PER INSTANCE)
+        # --------------------------------------------------
         for idx, doc in enumerate(structure, start=1):
+
             if check_cancelled_callback and await check_cancelled_callback():
                 break
 
@@ -546,56 +567,62 @@ Rules:
                     30 + int((idx / len(structure)) * 60)
                 )
 
-            schema = schema_map.get(doc["type"])
+            doc_type = doc["type"]
+            page_range = doc["page_range"]
+            schema = schema_map.get(doc_type)
+
+            # ---------- UNVERIFIED ----------
             if not schema:
-    # ALWAYS persist unverified documents
-                unverified_doc = UnverifiedDocument(
+                db.add(UnverifiedDocument(
                     document_id=document_id,
-                    suspected_type=doc["type"],
-                    page_range=doc["page_range"],
+                    suspected_type=doc_type,
+                    page_range=page_range,
                     extracted_data={},
                     status="PENDING"
-                )
-                db.add(unverified_doc)
+                ))
                 continue
 
+            # ---------- VERIFIED ----------
             data = await self._extract_fields(
-                doc["type"],
-                doc["page_range"],
+                doc_type,
+                page_range,
                 images,
                 schema
             )
 
             findings.append({
-                "type": doc["type"],
-                "page_range": doc["page_range"],
+                "type": doc_type,
+                "page_range": page_range,
                 "data": data,
                 "confidence": 1.0
             })
 
-            await asyncio.sleep(5)  # S0 throttle
+            await asyncio.sleep(1.5)  # controlled throttle
+
+        # --------------------------------------------------
+        # 7. FINALIZE
+        # --------------------------------------------------
+        derived_documents = Counter()
+        
+        rows = db.query(UnverifiedDocument).filter(
+            UnverifiedDocument.document_id == document_id
+        ).all()
+        for r in rows:
+            derived_documents[r.suspected_type] += 1
+        # derived_documents = Counter()
+
+        # for doc in structure:
+        #     derived_documents[doc["type"]] += 1
+
+        db.commit()
 
         if progress_callback:
             await progress_callback("Finalizing analysis", 95)
-        derived_documents = Counter()
 
-        # from verified docs
-        for f in findings:
-            if f.get("type"):
-                derived_documents[f["type"]] += 1
-
-        # from unverified docs (DB)
-        unverified = db.query(UnverifiedDocument).filter(
-            UnverifiedDocument.document_id == document_id
-        ).all()
-
-        for u in unverified:
-            if u.suspected_type:
-                derived_documents[u.suspected_type] += 1
-
-        db.commit()
         return {
             "derived_documents": dict(derived_documents),
-            "findings": findings}
+            "findings": findings
+        }
+
 
 ai_service = AIService()

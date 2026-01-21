@@ -44,44 +44,19 @@ class DocumentService:
         Count LOGICAL documents, not pages.
         """
 
-    # Collect ranges per document type
-        ranges_by_type = defaultdict(list)
+        counts = defaultdict(int)
 
-        # Verified
+        # Verified documents
         for ed in extracted_docs:
             if ed.document_type:
-                ranges_by_type[ed.document_type.name].append(ed.page_range)
+                counts[ed.document_type.name] += 1
 
-        # Unverified
+        # Unverified documents
         for ud in unverified_docs:
             if ud.suspected_type:
-                ranges_by_type[ud.suspected_type].append(ud.page_range)
+                counts[ud.suspected_type] += 1
 
-        # Merge contiguous ranges
-        def merge_ranges(ranges):
-            parsed = []
-            for r in ranges:
-                s, e = map(int, r.split("-"))
-                parsed.append((s, e))
-
-            parsed.sort()
-            merged = []
-
-            for s, e in parsed:
-                if not merged or s > merged[-1][1] + 1:
-                    merged.append([s, e])
-                else:
-                    merged[-1][1] = max(merged[-1][1], e)
-
-            return merged
-
-        # Count merged ranges
-        counts = {}
-        for doc_type, ranges in ranges_by_type.items():
-            merged = merge_ranges(ranges)
-            counts[doc_type] = len(merged)
-
-        return counts
+        return dict(counts)
 
 
     @staticmethod
