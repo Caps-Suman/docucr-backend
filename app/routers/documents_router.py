@@ -368,7 +368,7 @@ async def get_document_detail(
         "extracted_documents": [
             {
                 "id": str(ed.id),
-                "document_type": ed.document_type.name if ed.document_type else None,
+                "document_type": ed.document_type.name.upper() if ed.document_type else None,
                 "page_range": ed.page_range,
                 "confidence": ed.confidence,
                 "extracted_data": ed.extracted_data
