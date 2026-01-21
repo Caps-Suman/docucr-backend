@@ -379,11 +379,11 @@ Rules:
 
         async def process_page(img: str, page_no: int):
 
-            system_prompt = f"""
-    You are classifying pages of medical documents.
+            system_prompt = """
+You are classifying pages of medical documents.
 
 DOCUMENT TYPES:
-{document_type_block}
+{document_types}
 
 Your job is NOT to create documents.
 Your job is ONLY to analyze ONE page and emit signals.
@@ -397,33 +397,26 @@ CONTINUATION RULES (CRITICAL):
 - If a page contains diagnosis tables, ICD codes, CPT codes, or procedure lists
   AND does NOT contain patient name, DOB, or insurance header,
   THEN this page is a CONTINUATION of the previous page’s document.
-- Such pages MUST NOT start a new document.
 
 HEADER RESTART = true ONLY if:
 - Patient name or DOB is visible
 - OR the page explicitly says "Page 1"
 - OR a new patient/provider block starts
 
-CRITICAL CONTINUATION RULE:
-If this page visually continues tables, line items, or billing rows
-from the previous page (same columns, same layout),
-then:
-  - continues_previous = true
-  - header_restart = false
-Even if patient name or DOB is not visible.
 OUTPUT JSON ONLY:
 
 {{
   "type": "<DocumentTypeName>",
   "signals": {{
-    "has_patient_header": boolean,
-    "continues_previous": boolean,
-    "header_restart": boolean,
-    "patient_name": null or string,
-    "dob": null or string
+    "has_patient_header": true,
+    "continues_previous": false,
+    "header_restart": false,
+    "patient_name": null,
+    "dob": null
   }}
-}}  
-"""
+}}
+""".format(document_types=document_type_block)
+
             user_content = [
                 {"type": "text", "text": "Analyze this page."},
                 {
