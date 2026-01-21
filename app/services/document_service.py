@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any, Union
 import asyncio
 import json
 from io import BytesIO
-from collections import Counter
+from collections import Counter, defaultdict
 
 from sqlalchemy import and_, or_, cast, String, text, func
 from sqlalchemy.orm import Session, joinedload
@@ -31,12 +31,58 @@ class DocumentService:
         return None
 
     @staticmethod
-    def build_derived_document_counts(extracted_docs) -> Dict[str, int]:
-        counter = Counter()
+    # def build_derived_document_counts(extracted_docs) -> Dict[str, int]:
+    #     counter = Counter()
+    #     for ed in extracted_docs:
+    #         if ed.document_type:
+    #             counter[ed.document_type.name] += 1
+    #     return dict(counter)
+    
+    @staticmethod
+    def build_derived_document_counts(extracted_docs, unverified_docs):
+        """
+        Count LOGICAL documents, not pages.
+        """
+
+    # Collect ranges per document type
+        ranges_by_type = defaultdict(list)
+
+        # Verified
         for ed in extracted_docs:
             if ed.document_type:
-                counter[ed.document_type.name] += 1
-        return dict(counter)
+                ranges_by_type[ed.document_type.name].append(ed.page_range)
+
+        # Unverified
+        for ud in unverified_docs:
+            if ud.suspected_type:
+                ranges_by_type[ud.suspected_type].append(ud.page_range)
+
+        # Merge contiguous ranges
+        def merge_ranges(ranges):
+            parsed = []
+            for r in ranges:
+                s, e = map(int, r.split("-"))
+                parsed.append((s, e))
+
+            parsed.sort()
+            merged = []
+
+            for s, e in parsed:
+                if not merged or s > merged[-1][1] + 1:
+                    merged.append([s, e])
+                else:
+                    merged[-1][1] = max(merged[-1][1], e)
+
+            return merged
+
+        # Count merged ranges
+        counts = {}
+        for doc_type, ranges in ranges_by_type.items():
+            merged = merge_ranges(ranges)
+            counts[doc_type] = len(merged)
+
+        return counts
+
 
     @staticmethod
     async def create_document(db: Session, file: UploadFile, user_id: str) -> Document:
@@ -411,10 +457,11 @@ class DocumentService:
                 file_bytes, 
                 file_data['filename'], 
                 schemas,
+                db=db,
+                document_id=document.id,
                 progress_callback=report_ai_progress,
                 check_cancelled_callback=check_cancelled
             )
-            
             # Process Findings
             findings = analysis_result.get("findings", [])
             excel_rows = []

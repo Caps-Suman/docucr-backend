@@ -329,7 +329,7 @@ async def get_document_detail(
     document = document_service.get_document_detail(db, document_id, current_user.id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    derived_counts = document_service.build_derived_document_counts(document.extracted_documents)
+    derived_counts = document_service.build_derived_document_counts(document.extracted_documents,document.unverified_documents)
 
     return {
         "id": document.id,
