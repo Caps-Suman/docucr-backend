@@ -177,7 +177,7 @@ def delete_document_type(
 ):
     """Delete a document type"""
     service = DocumentTypeService(db)
-    service.delete(document_type_id)
+    name = service.delete(document_type_id)
     
     ActivityService.log(
         db=db,
@@ -185,6 +185,7 @@ def delete_document_type(
         entity_type="document_type",
         entity_id=document_type_id,
         user_id=current_user.id,
+        details={"name": name},
         request=request,
         background_tasks=background_tasks
     )

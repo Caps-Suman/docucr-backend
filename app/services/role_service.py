@@ -162,18 +162,19 @@ class RoleService:
         }
 
     @staticmethod
-    def delete_role(role_id: str, db: Session) -> Tuple[bool, Optional[str]]:
+    def delete_role(role_id: str, db: Session) -> Tuple[Optional[str], Optional[str]]:
         role = db.query(Role).filter(Role.id == role_id).first()
         if not role:
-            return False, "Role not found"
+            return None, "Role not found"
         
         users_count = db.query(UserRole).filter(UserRole.role_id == role_id).count()
         if users_count > 0:
-            return False, f"Cannot delete role with {users_count} assigned users"
+            return None, f"Cannot delete role with {users_count} assigned users"
         
+        role_name = role.name
         db.delete(role)
         db.commit()
-        return True, None
+        return role_name, None
     
     @staticmethod
     def get_role_stats(db: Session) -> Dict:

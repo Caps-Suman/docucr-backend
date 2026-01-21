@@ -176,8 +176,9 @@ def delete_form(
     current_user: dict = Depends(get_current_user),
     permission: bool = Depends(Permission("templates", "DELETE"))
 ):
-    success = FormService.delete_form(form_id, db)
-    if not success:
+    """Delete a form"""
+    name = FormService.delete_form(form_id, db)
+    if not name:
         raise HTTPException(status_code=404, detail="Form not found")
         
     ActivityService.log(
@@ -186,6 +187,7 @@ def delete_form(
         entity_type="form",
         entity_id=form_id,
         user_id=current_user.id,
+        details={"name": name},
         request=request,
         background_tasks=background_tasks
     )

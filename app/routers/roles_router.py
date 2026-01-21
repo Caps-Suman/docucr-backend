@@ -208,8 +208,9 @@ async def delete_role(
     permission: bool = Depends(Permission("roles", "DELETE")),
     current_user: User = Depends(get_current_user)
 ):
-    success, error = RoleService.delete_role(role_id, db)
-    if not success:
+    """Delete a role"""
+    name, error = RoleService.delete_role(role_id, db)
+    if error:
         raise HTTPException(status_code=400, detail=error)
         
     ActivityService.log(
@@ -218,6 +219,7 @@ async def delete_role(
         entity_type="role",
         entity_id=role_id,
         user_id=current_user.id,
+        details={"name": name},
         request=request,
         background_tasks=background_tasks
     )
