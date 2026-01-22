@@ -84,6 +84,13 @@ def update_printer(
     current_user: User = Depends(get_current_user)
 ):
     printer_data = printer.model_dump(exclude_unset=True)
+    
+    # Calculate changes BEFORE update
+    changes = {}
+    existing_printer = PrinterService.get_printer_by_id(db, printer_id)
+    if existing_printer:
+        changes = ActivityService.calculate_changes(existing_printer, printer_data)
+
     updated_printer = PrinterService.update_printer(db, printer_id, printer_data)
     if not updated_printer:
         raise HTTPException(status_code=404, detail="Printer not found")
@@ -94,7 +101,7 @@ def update_printer(
         entity_type="printer",
         entity_id=printer_id,
         user_id=current_user.id,
-        details={"updated_fields": list(printer_data.keys())},
+        details={"name": updated_printer.name, "changes": changes},
         request=request,
         background_tasks=background_tasks
     )

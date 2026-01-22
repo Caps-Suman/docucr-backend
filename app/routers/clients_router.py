@@ -173,7 +173,7 @@ async def update_client(
         entity_type="client",
         entity_id=client_id,
         user_id=current_user.id,
-        details={"changes": changes},
+        details={"name": updated_client.get('business_name'), "changes": changes},
         request=request,
         background_tasks=background_tasks
     )

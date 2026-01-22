@@ -182,6 +182,13 @@ async def update_role(
         raise HTTPException(status_code=400, detail="Role with this name already exists")
     
     role_data = role.model_dump(exclude_unset=True)
+    
+    # Calculate changes BEFORE update
+    changes = {}
+    existing_role = RoleService.get_role_by_id(role_id, db)
+    if existing_role:
+        changes = ActivityService.calculate_changes(existing_role, role_data)
+
     updated_role = RoleService.update_role(role_id, role_data, db)
     if not updated_role:
         raise HTTPException(status_code=404, detail="Role not found")
@@ -192,7 +199,7 @@ async def update_role(
         entity_type="role",
         entity_id=role_id,
         user_id=current_user.id,
-        details={"updated_fields": list(role_data.keys())},
+        details={"name": updated_role.get('name'), "changes": changes},
         request=request,
         background_tasks=background_tasks
     )

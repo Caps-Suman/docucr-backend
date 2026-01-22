@@ -128,6 +128,20 @@ def update_template(
 ):
     """Update a template"""
     service = TemplateService(db)
+    
+    # Calculate changes BEFORE update
+    update_data = {
+        "template_name": template_data.template_name,
+        "description": template_data.description,
+        "document_type_id": template_data.document_type_id,
+        "extraction_fields": template_data.extraction_fields,
+        "status_id": template_data.status_id
+    }
+    changes = {}
+    existing_template = service.get_by_id(template_id)
+    if existing_template:
+        changes = ActivityService.calculate_changes(existing_template, update_data)
+
     template = service.update(
         template_id,
         template_data.template_name,
@@ -144,6 +158,7 @@ def update_template(
             entity_type="template",
             entity_id=str(template_id),
             user_id=current_user.id,
+            details={"name": template.template_name, "changes": changes},
             request=req,
             background_tasks=background_tasks
         )
