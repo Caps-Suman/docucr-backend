@@ -12,6 +12,7 @@ from app.models.status import Status
 
 
 class RoleService:
+    
     @staticmethod
     def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size

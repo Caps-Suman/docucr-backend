@@ -97,9 +97,10 @@ async def get_users(
     search: Optional[str] = None,
     status_id: Optional[str] = None,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "READ"))
+    current_user: User = Depends(get_current_user),
+    permission: bool = Depends(Permission("users_permissions", "READ"))
 ):
-    users, total = UserService.get_users(page, page_size, search, status_id, db)
+    users, total = UserService.get_users(page, page_size, search, status_id, db, current_user)
     return UserListResponse(
         users=[UserResponse(**user) for user in users],
         total=total,
@@ -109,16 +110,17 @@ async def get_users(
 
 @router.get("/stats")
 async def get_user_stats(
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "READ"))
+    permission: bool = Depends(Permission("users_permissions", "READ"))
 ):
-    return UserService.get_user_stats(db)
+    return UserService.get_user_stats(db, current_user)
 
 @router.get("/email/{email}", response_model=UserResponse)
 async def get_user_by_email(
     email: str, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "READ"))
+    permission: bool = Depends(Permission("users_permissions", "READ"))
 ):
     user = UserService.get_user_by_email(email, db)
     if not user:
@@ -129,7 +131,7 @@ async def get_user_by_email(
 async def get_user(
     user_id: str, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "READ"))
+    permission: bool = Depends(Permission("users_permissions", "READ"))
 ):
     user = UserService.get_user_by_id(user_id, db)
     if not user:
@@ -140,7 +142,7 @@ async def get_user(
 async def create_user(
     user: UserCreate, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "CREATE")),
+    permission: bool = Depends(Permission("users_permissions", "CREATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
     current_user: User = Depends(get_current_user)
@@ -172,7 +174,7 @@ async def update_user(
     user_id: str, 
     user: UserUpdate, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "UPDATE")),
+    permission: bool = Depends(Permission("users_permissions", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
     current_user: User = Depends(get_current_user)
@@ -218,7 +220,7 @@ async def update_user(
 async def activate_user(
     user_id: str, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "UPDATE")),
+    permission: bool = Depends(Permission("users_permissions", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
     current_user: User = Depends(get_current_user)
@@ -244,7 +246,7 @@ async def activate_user(
 async def deactivate_user(
     user_id: str, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "UPDATE")),
+    permission: bool = Depends(Permission("users_permissions", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
     current_user: User = Depends(get_current_user)
@@ -274,7 +276,7 @@ async def change_user_password(
     user_id: str, 
     password_request: ChangePasswordRequest, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "ADMIN")),
+    permission: bool = Depends(Permission("users_permissions", "ADMIN")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
     current_user: User = Depends(get_current_user)

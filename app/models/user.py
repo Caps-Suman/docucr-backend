@@ -18,6 +18,7 @@ class User(Base):
     phone_country_code = Column(String(5), nullable=True)
     phone_number = Column(String(15), nullable=True)
     is_superuser = Column(Boolean, default=False)
+    is_supervisor = Column(Boolean, default=False)
     is_client = Column(Boolean, default=False)
     client_id = Column(UUID(as_uuid=True), ForeignKey('docucr.client.id'), nullable=True)
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
@@ -26,3 +27,10 @@ class User(Base):
     
     documents = relationship("Document", back_populates="user")
     status_relation = relationship("Status")
+    roles = relationship(
+    "Role",
+    secondary="docucr.user_role",
+    backref="users",
+    lazy="selectin",          # ✅ NOT joined
+    overlaps="users,user_roles,role"  # ✅ silence conflict properly
+)

@@ -3,6 +3,7 @@ from sqlalchemy import func, or_
 from typing import Optional, List, Dict, Tuple
 import uuid
 from datetime import datetime
+from sqlalchemy.dialects.postgresql import insert
 
 from app.models.client import Client
 from app.models.user import User
@@ -14,18 +15,41 @@ from app.models.status import Status
 
 class ClientService:
     @staticmethod
-    def get_client_stats(db: Session) -> Dict:
-        total_clients = db.query(func.count(Client.id)).filter(Client.deleted_at.is_(None)).scalar()
+    def get_client_stats(db: Session, current_user: User) -> Dict:
+        # Detect admin
+        user_roles = [role.name for role in current_user.roles]
+        is_admin = (
+            current_user.is_superuser or
+            'ADMIN' in user_roles or
+            'SUPER_ADMIN' in user_roles
+        )
+
+        base_query = db.query(Client).filter(Client.deleted_at.is_(None))
+
+        if not is_admin:
+            base_query = base_query.join(
+                UserClient, Client.id == UserClient.client_id
+            ).filter(
+                UserClient.user_id == current_user.id
+            )
+
+        total_clients = base_query.count()
+
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        active_clients = db.query(func.count(Client.id)).filter(
-            Client.status_id == active_status.id,
-            Client.deleted_at.is_(None)
-        ).scalar() if active_status else 0
-        
+        inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
+
+        active_clients = base_query.filter(
+            Client.status_id == active_status.id
+        ).count() if active_status else 0
+
+        inactive_clients = base_query.filter(
+            Client.status_id == inactive_status.id
+        ).count() if inactive_status else 0
+
         return {
             "total_clients": total_clients,
             "active_clients": active_clients,
-            "inactive_clients": total_clients - active_clients
+            "inactive_clients": inactive_clients
         }
 
     @staticmethod
@@ -187,18 +211,27 @@ class ClientService:
         return ClientService._format_client(client, db)
 
     @staticmethod
-    def assign_clients_to_user(user_id: str, client_ids: List[str], assigned_by: str, db: Session) -> bool:
-        db.query(UserClient).filter(UserClient.user_id == user_id).delete()
-        for client_id in client_ids:
-            user_client = UserClient(
-                id=str(uuid.uuid4()),
-                user_id=user_id,
-                client_id=client_id,
-                assigned_by=assigned_by
-            )
-            db.add(user_client)
+    def assign_clients_to_user(
+        user_id: str,
+        client_ids: List[str],
+        assigned_by: str,
+        db: Session
+    ):
+
+        stmt = insert(UserClient).values([
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "client_id": cid,
+                "assigned_by": assigned_by
+            }
+            for cid in client_ids
+        ]).on_conflict_do_nothing(
+            index_elements=["user_id", "client_id"]
+        )
+
+        db.execute(stmt)
         db.commit()
-        return True
 
     @staticmethod
     def get_user_clients(user_id: str, db: Session) -> List[Dict]:
