@@ -3,6 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
+
+from app.models.user_client import UserClient
 from ..core.database import get_db
 from ..core.security import get_current_user
 from ..core.permissions import Permission
@@ -263,7 +265,7 @@ def get_document_stats(
     """Get aggregate document statistics for the cards"""
     return document_service.get_document_stats(db, current_user.id)
 
-@router.get("/", response_model=dict)
+@router.get("", response_model=dict)
 def get_documents(
     skip: int = 0,
     limit: int = 25,
@@ -289,7 +291,19 @@ def get_documents(
     field_map = {str(f.id): f for f in fields}
     
     # Get all clients
-    clients = db.query(Client).all()
+    # Determine role
+    role_names = [r.name for r in current_user.roles]
+    is_admin = any(r in ["ADMIN", "SUPER_ADMIN"] for r in role_names)
+
+    if is_admin:
+        clients = db.query(Client).all()
+    else:
+        clients = (
+            db.query(Client)
+            .join(UserClient, UserClient.client_id == Client.id)
+            .filter(UserClient.user_id == current_user.id)
+            .all()
+        )
     client_map = {str(c.id): c for c in clients}
     
     # Get all document types

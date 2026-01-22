@@ -3,6 +3,7 @@ from sqlalchemy import func, or_
 from typing import Optional, List, Dict, Tuple
 import uuid
 from datetime import datetime
+from sqlalchemy.dialects.postgresql import insert
 
 from app.models.client import Client
 from app.models.user import User
@@ -210,18 +211,27 @@ class ClientService:
         return ClientService._format_client(client, db)
 
     @staticmethod
-    def assign_clients_to_user(user_id: str, client_ids: List[str], assigned_by: str, db: Session) -> bool:
-        db.query(UserClient).filter(UserClient.user_id == user_id).delete()
-        for client_id in client_ids:
-            user_client = UserClient(
-                id=str(uuid.uuid4()),
-                user_id=user_id,
-                client_id=client_id,
-                assigned_by=assigned_by
-            )
-            db.add(user_client)
+    def assign_clients_to_user(
+        user_id: str,
+        client_ids: List[str],
+        assigned_by: str,
+        db: Session
+    ):
+
+        stmt = insert(UserClient).values([
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
+                "client_id": cid,
+                "assigned_by": assigned_by
+            }
+            for cid in client_ids
+        ]).on_conflict_do_nothing(
+            index_elements=["user_id", "client_id"]
+        )
+
+        db.execute(stmt)
         db.commit()
-        return True
 
     @staticmethod
     def get_user_clients(user_id: str, db: Session) -> List[Dict]:

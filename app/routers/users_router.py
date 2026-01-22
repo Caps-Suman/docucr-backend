@@ -90,7 +90,7 @@ class UserListResponse(BaseModel):
     page_size: int
 
 @router.get("", response_model=UserListResponse)
-# @router.get("/", response_model=UserListResponse)
+@router.get("/", response_model=UserListResponse)
 async def get_users(
     page: int = 1,
     page_size: int = 25,
