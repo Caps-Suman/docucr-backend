@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 async def get_webhooks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("profile", "UPDATE"))
+    permission: bool = Depends(Permission("webhook_management", "READ"))
 ):
     """List all webhooks for the current user"""
     return webhook_service.get_user_webhooks(db, current_user.id)
@@ -26,7 +26,7 @@ async def create_webhook(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("profile", "UPDATE"))
+    permission: bool = Depends(Permission("webhook_management", "CREATE"))
 ):
     """Create a new webhook"""
     webhook = webhook_service.create_webhook(db, current_user.id, data)
@@ -52,7 +52,7 @@ async def update_webhook(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("profile", "UPDATE"))
+    permission: bool = Depends(Permission("webhook_management", "UPDATE"))
 ):
     # Calculate changes BEFORE update
     changes = {}
@@ -85,7 +85,7 @@ async def delete_webhook(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("profile", "UPDATE"))
+    permission: bool = Depends(Permission("webhook_management", "DELETE"))
 ):
     """Delete a webhook"""
     url = webhook_service.delete_webhook(db, webhook_id, current_user.id)

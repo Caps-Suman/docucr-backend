@@ -40,7 +40,7 @@ class DocumentTypeResponse(BaseModel):
 @router.get("", response_model=List[DocumentTypeResponse])
 def get_document_types(
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "READ"))
+    permission: bool = Depends(Permission("document_types", "READ"))
 ):
     """Get all document types"""
     service = DocumentTypeService(db)
@@ -71,7 +71,7 @@ def get_document_type_dropdown(
 @router.get("/active", response_model=List[DocumentTypeResponse])
 def get_active_document_types(
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "READ"))
+    permission: bool = Depends(Permission("document_types", "READ"))
 ):
     """Get all active document types"""
     service = DocumentTypeService(db)
@@ -83,7 +83,7 @@ def create_document_type(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "CREATE")),
+    permission: bool = Depends(Permission("document_types", "CREATE")),
     current_user: User = Depends(get_current_user)
 ):
     """Create a new document type"""
@@ -108,7 +108,7 @@ def get_document_type(
     document_type_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    permission: bool = Depends(Permission("templates", "READ"))
+    permission: bool = Depends(Permission("document_types", "READ"))
 ):
     """Get a specific document type"""
     service = DocumentTypeService(db, current_user)
@@ -121,7 +121,7 @@ def update_document_type(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "UPDATE")),
+    permission: bool = Depends(Permission("document_types", "UPDATE")),
     current_user: User = Depends(get_current_user)
 ):
     """Update a document type"""
@@ -154,7 +154,7 @@ def activate_document_type(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "UPDATE")),
+    permission: bool = Depends(Permission("document_types", "UPDATE")),
     current_user: User = Depends(get_current_user)
 ):
     """Activate a document type"""
@@ -179,7 +179,7 @@ def deactivate_document_type(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "UPDATE")),
+    permission: bool = Depends(Permission("document_types", "UPDATE")),
     current_user: User = Depends(get_current_user)
 ):
     """Deactivate a document type"""
@@ -204,7 +204,7 @@ def delete_document_type(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "DELETE")),
+    permission: bool = Depends(Permission("document_types", "DELETE")),
     current_user: User = Depends(get_current_user)
 ):
     """Delete a document type"""
