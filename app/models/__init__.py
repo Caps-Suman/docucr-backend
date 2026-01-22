@@ -1,7 +1,10 @@
 from .module import Base, Module
+from .client import Client
 from .privilege import Privilege
 from .role import Role
 from .role_module import RoleModule
+from .submodule import Submodule
+from .role_submodule import RoleSubmodule
 from .user import User
 from .user_role import UserRole
 from .user_role_module import UserRoleModule
@@ -19,7 +22,7 @@ from .printer import Printer
 from .activity_log import ActivityLog
 
 __all__ = [
-    'Base', 'Module', 'Privilege', 'Role', 'RoleModule', 'User', 'UserRole', 
+    'Base', 'Module', 'Client', 'Privilege', 'Role', 'RoleModule', 'Submodule', 'RoleSubmodule', 'User', 'UserRole', 
     'UserRoleModule', 'UserSupervisor', 'DocumentType', 'Template', 'Document',
     'DocumentFormData', 'ExtractedDocument', 'UnverifiedDocument', 'Form', 'Status',
     'DocumentListConfig', 'Printer', 'ActivityLog'

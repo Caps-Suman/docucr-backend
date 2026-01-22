@@ -14,7 +14,8 @@ from app.services.role_service import RoleService
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 class ModulePermission(BaseModel):
-    module_id: str
+    module_id: Optional[str] = None
+    submodule_id: Optional[str] = None
     privilege_id: str
 
 class RoleCreate(BaseModel):
