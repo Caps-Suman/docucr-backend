@@ -928,6 +928,13 @@ class DocumentService:
         if document.analysis_report_s3_key:
             await s3_service.delete_file(document.analysis_report_s3_key)
         
+        # Delete dependent records
+        from ..models.external_share import ExternalShare
+        from ..models.document_share import DocumentShare
+        
+        db.query(ExternalShare).filter(ExternalShare.document_id == document_id).delete()
+        db.query(DocumentShare).filter(DocumentShare.document_id == document_id).delete()
+
         # Delete from database
         db.delete(document)
         db.commit()

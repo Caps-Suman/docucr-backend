@@ -16,3 +16,10 @@ class Role(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     status_relation = relationship("Status")
+    
+    users = relationship(
+        "User",
+        secondary="docucr.user_role",
+        back_populates="roles",
+        overlaps="user_roles,role_users,user,role"
+    )

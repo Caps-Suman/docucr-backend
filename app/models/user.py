@@ -30,7 +30,7 @@ class User(Base):
     roles = relationship(
     "Role",
     secondary="docucr.user_role",
-    backref="users",
-    lazy="selectin",          # ✅ NOT joined
-    overlaps="users,user_roles,role"  # ✅ silence conflict properly
+    back_populates="users",
+    lazy="selectin",
+    overlaps="user_roles,role_users,user,role"
 )

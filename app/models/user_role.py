@@ -1,7 +1,7 @@
 from sqlalchemy import Column, String, ForeignKey, DateTime
 from sqlalchemy.sql import func
 from .module import Base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 
 class UserRole(Base):
     __tablename__ = "user_role"
@@ -13,5 +13,5 @@ class UserRole(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    user = relationship("User", backref="user_roles")
-    role = relationship("Role")
+    user = relationship("User", backref=backref("user_roles", overlaps="users,roles"), overlaps="users,roles")
+    role = relationship("Role", backref=backref("role_users", overlaps="users,roles"), overlaps="users,roles")
