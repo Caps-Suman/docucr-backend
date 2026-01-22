@@ -54,6 +54,12 @@ async def update_webhook(
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("profile", "UPDATE"))
 ):
+    # Calculate changes BEFORE update
+    changes = {}
+    existing_webhook = db.query(Webhook).filter(Webhook.id == webhook_id, Webhook.user_id == current_user.id).first()
+    if existing_webhook:
+        changes = ActivityService.calculate_changes(existing_webhook, data)
+
     """Update a webhook configuration"""
     webhook = webhook_service.update_webhook(db, webhook_id, current_user.id, data)
     if not webhook:
@@ -65,7 +71,7 @@ async def update_webhook(
         entity_type="webhook",
         entity_id=webhook_id,
         user_id=current_user.id,
-        details={"updated_fields": list(data.keys())},
+        details={"url": webhook.url, "changes": changes},
         request=request,
         background_tasks=background_tasks
     )

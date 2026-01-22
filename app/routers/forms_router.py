@@ -148,6 +148,13 @@ def update_form(
     
     try:
         form_data = form.model_dump(exclude_unset=True)
+        
+        # Calculate changes BEFORE update
+        changes = {}
+        existing_form_dict = FormService.get_form_by_id(form_id, db)
+        if existing_form_dict:
+            changes = ActivityService.calculate_changes(existing_form_dict, form_data, exclude=["fields"])
+
         updated_form = FormService.update_form(form_id, form_data, db)
         if not updated_form:
             raise HTTPException(status_code=404, detail="Form not found")
@@ -158,7 +165,7 @@ def update_form(
             entity_type="form",
             entity_id=form_id,
             user_id=current_user.id,
-            details={"updated_fields": list(form_data.keys())},
+            details={"name": updated_form.get('name'), "changes": changes},
             request=request,
             background_tasks=background_tasks
         )

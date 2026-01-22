@@ -200,13 +200,14 @@ async def update_user(
         raise HTTPException(status_code=404, detail="User not found")
         
     # Log activity
+    full_name = f"{updated_user.get('first_name', '')} {updated_user.get('last_name', '')}".strip() or updated_user.get('username')
     ActivityService.log(
         db=db,
         action="UPDATE",
         entity_type="user",
         entity_id=user_id,
         user_id=current_user.id,
-        details={"changes": changes},
+        details={"name": full_name, "changes": changes},
         request=request,
         background_tasks=background_tasks
     )

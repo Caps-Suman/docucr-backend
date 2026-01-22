@@ -101,15 +101,22 @@ def update_document_type(
 ):
     """Update a document type"""
     service = DocumentTypeService(db)
-    result = service.update(document_type_id, document_type_data.name, document_type_data.description, document_type_data.status_id)
     
+    # Calculate changes BEFORE update
+    changes = ActivityService.calculate_changes(
+        db.query(DocumentType).filter(DocumentType.id == document_type_id).first(), 
+        {"name": document_type_data.name, "description": document_type_data.description, "status_id": document_type_data.status_id}
+    )
+
+    result = service.update(document_type_id, document_type_data.name, document_type_data.description, document_type_data.status_id)
+
     ActivityService.log(
         db=db,
         action="UPDATE",
         entity_type="document_type",
         entity_id=document_type_id,
         user_id=current_user.id,
-        details={"name": result.name},
+        details={"name": result.name, "changes": changes},
         request=request,
         background_tasks=background_tasks
     )
