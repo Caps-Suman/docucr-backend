@@ -67,7 +67,7 @@ class TemplateResponse(BaseModel):
 @router.get("/", response_model=List[TemplateResponse])
 def get_templates(
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "READ"))
+    permission: bool = Depends(Permission("templates_list", "READ"))
 ):
     """Get all templates with document type info"""
     service = TemplateService(db)
@@ -80,7 +80,7 @@ def create_template(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "CREATE"))
+    permission: bool = Depends(Permission("templates_list", "CREATE"))
 ):
     """Create a new template"""
     service = TemplateService(db)
@@ -110,7 +110,7 @@ def create_template(
 def get_template(
     template_id: str,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "READ"))
+    permission: bool = Depends(Permission("templates_list", "READ"))
 ):
     """Get a specific template"""
     service = TemplateService(db)
@@ -124,7 +124,7 @@ def update_template(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "UPDATE"))
+    permission: bool = Depends(Permission("templates_list", "UPDATE"))
 ):
     """Update a template"""
     service = TemplateService(db)
@@ -172,7 +172,7 @@ def delete_template(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "DELETE"))
+    permission: bool = Depends(Permission("templates_list", "DELETE"))
 ):
     """Delete a template"""
     service = TemplateService(db)
@@ -197,7 +197,7 @@ def activate_template(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "UPDATE"))
+    permission: bool = Depends(Permission("templates_list", "UPDATE"))
 ):
     """Activate a template"""
     service = TemplateService(db)
@@ -221,7 +221,7 @@ def deactivate_template(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "UPDATE"))
+    permission: bool = Depends(Permission("templates_list", "UPDATE"))
 ):
     """Deactivate a template"""
     service = TemplateService(db)
@@ -242,7 +242,7 @@ def deactivate_template(
 def get_templates_by_document_type(
     document_type_id: str,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "READ"))
+    permission: bool = Depends(Permission("templates_list", "READ"))
 ):
     """Get all templates for a specific document type"""
     service = TemplateService(db)

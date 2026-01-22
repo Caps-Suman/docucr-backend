@@ -29,7 +29,7 @@ class DocumentListConfigRequest(BaseModel):
 async def get_config(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ"))
+    permission: bool = Depends(Permission("document_list_view_config", "READ"))
 ):
     """Get user's document list configuration"""
     try:
@@ -46,7 +46,7 @@ async def update_config(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ"))
+    permission: bool = Depends(Permission("document_list_view_config", "READ"))
 ):
     """Save or update user's document list configuration"""
     try:
@@ -60,7 +60,7 @@ async def update_config(
         ActivityService.log(
             db=db,
             action="UPDATE",
-            entity_type="document_list_config",
+            entity_type="document_list_view_config",
             entity_id=current_user.id,
             user_id=current_user.id,
             request=request,
@@ -81,7 +81,7 @@ async def delete_config(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ"))
+    permission: bool = Depends(Permission("document_list_view_config", "READ"))
 ):
     """Delete user's document list configuration (reset to default)"""
     try:
@@ -91,7 +91,7 @@ async def delete_config(
             ActivityService.log(
                 db=db,
                 action="DELETE",
-                entity_type="document_list_config",
+                entity_type="document_list_view_config",
                 entity_id=current_user.id,
                 user_id=current_user.id,
                 request=request,
