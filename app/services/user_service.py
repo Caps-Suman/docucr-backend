@@ -25,7 +25,8 @@ class UserService:
 
     @staticmethod
     def _is_supervisor(user: User) -> bool:
-        return "SUPERVISOR" in UserService._get_role_names(user)
+        return user.is_supervisor is True
+
 
     @staticmethod
     def get_users(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session, current_user: User) -> Tuple[List[Dict], int]:
@@ -242,7 +243,7 @@ class UserService:
         if current_user.is_superuser or "ADMIN" in role_names or "SUPER_ADMIN" in role_names:
             pass  # global stats
 
-        elif "SUPERVISOR" in role_names:
+        elif current_user.is_supervisor:
             subordinate_ids = (
                 db.query(UserSupervisor.user_id)
                 .filter(UserSupervisor.supervisor_id == current_user.id)
@@ -375,14 +376,36 @@ class UserService:
             db.add(user_role)
         db.commit()
 
+    # @staticmethod
+    # def _assign_supervisor(user_id: str, supervisor_id: str, db: Session):
+    #     supervisor = UserSupervisor(
+    #         id=str(uuid.uuid4()),
+    #         user_id=user_id,
+    #         supervisor_id=supervisor_id
+    #     )
+    #     db.add(supervisor)
+    #     db.commit()
     @staticmethod
     def _assign_supervisor(user_id: str, supervisor_id: str, db: Session):
-        supervisor = UserSupervisor(
+        if user_id == supervisor_id:
+            raise ValueError("User cannot be their own supervisor")
+
+        supervisor = db.query(User).filter(User.id == supervisor_id).first()
+        if not supervisor:
+            raise ValueError("Supervisor user not found")
+
+        # Create mapping
+        supervisor_link = UserSupervisor(
             id=str(uuid.uuid4()),
-            user_id=user_id,
+            user_id=user_id,           # newly created user
             supervisor_id=supervisor_id
         )
-        db.add(supervisor)
+        db.add(supervisor_link)
+
+        # Mark supervisor flag
+        if not supervisor.is_supervisor:
+            supervisor.is_supervisor = True
+
         db.commit()
 
     @staticmethod
