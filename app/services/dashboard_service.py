@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_, cast, String
+from sqlalchemy import func, and_, or_, cast, String, select
 from app.models.document import Document
 from app.models.extracted_document import ExtractedDocument
 from app.models.unverified_document import UnverifiedDocument
@@ -81,9 +81,12 @@ class DashboardService:
         # Filter logic similar to document_service.py for role-based access
         # For simplicity in first pass, we focus on documents uploaded by user or assigned via clients
         
-        assigned_client_ids = db.query(UserClient.client_id).filter(
+        # assigned_client_ids = db.query(UserClient.client_id).filter(
+        #     UserClient.user_id == user_id
+        # ).subquery()
+        assigned_client_ids = select(UserClient.client_id).where(
             UserClient.user_id == user_id
-        ).subquery()
+        )
         
         client_doc_ids = db.query(Document.id).join(
             DocumentFormData, Document.id == DocumentFormData.document_id

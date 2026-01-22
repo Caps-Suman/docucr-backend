@@ -15,9 +15,23 @@ from app.core.security import get_password_hash
 
 class UserService:
     @staticmethod
-    def get_users(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session) -> Tuple[List[Dict], int]:
+    def _get_role_names(user: User) -> List[str]:
+        return [role.name for role in user.roles]
+
+    @staticmethod
+    def _is_admin(user: User) -> bool:
+        roles = UserService._get_role_names(user)
+        return user.is_superuser or "ADMIN" in roles or "SUPER_ADMIN" in roles
+
+    @staticmethod
+    def _is_supervisor(user: User) -> bool:
+        return "SUPERVISOR" in UserService._get_role_names(user)
+
+    @staticmethod
+    def get_users(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session, current_user: User) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
-        query = db.query(User).outerjoin(UserRole).outerjoin(Role)
+        # query = db.query(User).outerjoin(UserRole).outerjoin(Role)
+        query = db.query(User)
         
         # Exclude users with SUPER_ADMIN role
         query = query.filter(
@@ -26,7 +40,23 @@ class UserService:
                 Role.name == 'SUPER_ADMIN'
             ).exists()
         )
-        
+        if UserService._is_admin(current_user):
+            pass  # full access
+
+        elif UserService._is_supervisor(current_user):
+            subordinate_ids = (
+                db.query(UserSupervisor.user_id)
+                .filter(UserSupervisor.supervisor_id == current_user.id)
+            )
+
+            query = query.filter(
+                (User.id == current_user.id) |
+                (User.id.in_(subordinate_ids))
+            )
+
+        else:
+            query = query.filter(User.id == current_user.id)
+
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
         
@@ -43,12 +73,15 @@ class UserService:
         total = query.count()
         users = query.offset(skip).limit(page_size).all()
         
-        result = []
-        for user in users:
-            user_data = UserService._format_user_response(user, db)
-            result.append(user_data)
+        # result = []
+        # for user in users:
+        #     user_data = UserService._format_user_response(user, db)
+        #     result.append(user_data)
         
-        return result, total
+        return [
+            UserService._format_user_response(u, db)
+            for u in users
+        ], total
 
     @staticmethod
     def get_user_by_id(user_id: str, db: Session) -> Optional[Dict]:
@@ -191,40 +224,90 @@ class UserService:
             db.commit()
             db.refresh(user)
         return UserService._format_user_response(user, db)
-
     @staticmethod
-    def get_user_stats(db: Session) -> Dict:
-        # Exclude SUPER_ADMIN users from all counts
-        total_users = db.query(func.count(User.id)).filter(
-            ~db.query(UserRole).join(Role).filter(
+    def get_user_stats(db: Session, current_user: User) -> Dict:
+        role_names = [role.name for role in current_user.roles]
+
+        base_query = db.query(User).filter(
+            ~db.query(UserRole)
+            .join(Role)
+            .filter(
                 UserRole.user_id == User.id,
-                Role.name == 'SUPER_ADMIN'
-            ).exists()
-        ).scalar()
-        
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        active_users = db.query(func.count(User.id)).filter(
-            User.status_id == active_status.id,
-            ~db.query(UserRole).join(Role).filter(
-                UserRole.user_id == User.id,
-                Role.name == 'SUPER_ADMIN'
-            ).exists()
-        ).scalar() if active_status else 0
-        
-        admin_users = db.query(func.count(User.id)).filter(
-            User.is_superuser == True,
-            ~db.query(UserRole).join(Role).filter(
-                UserRole.user_id == User.id,
-                Role.name == 'SUPER_ADMIN'
-            ).exists()
-        ).scalar()
-        
+                Role.name == "SUPER_ADMIN"
+            )
+            .exists()
+        )
+
+        # ---- VISIBILITY ----
+        if current_user.is_superuser or "ADMIN" in role_names or "SUPER_ADMIN" in role_names:
+            pass  # global stats
+
+        elif "SUPERVISOR" in role_names:
+            subordinate_ids = (
+                db.query(UserSupervisor.user_id)
+                .filter(UserSupervisor.supervisor_id == current_user.id)
+            )
+
+            base_query = base_query.filter(
+                (User.id == current_user.id) |
+                (User.id.in_(subordinate_ids))
+            )
+
+        else:
+            base_query = base_query.filter(User.id == current_user.id)
+
+        total_users = base_query.count()
+
+        active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+        active_users = (
+            base_query.filter(User.status_id == active_status.id).count()
+            if active_status else 0
+        )
+
+        admin_users = (
+            base_query.filter(User.is_superuser == True).count()
+        )
+
         return {
             "total_users": total_users,
             "active_users": active_users,
             "inactive_users": total_users - active_users,
             "admin_users": admin_users
         }
+
+    # @staticmethod
+    # def get_user_stats(db: Session, current_user: User) -> Dict:
+    #     # Exclude SUPER_ADMIN users from all counts
+    #     total_users = db.query(func.count(User.id)).filter(
+    #         ~db.query(UserRole).join(Role).filter(
+    #             UserRole.user_id == User.id,
+    #             Role.name == 'SUPER_ADMIN'
+    #         ).exists()
+    #     ).scalar()
+        
+    #     active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
+    #     active_users = db.query(func.count(User.id)).filter(
+    #         User.status_id == active_status.id,
+    #         ~db.query(UserRole).join(Role).filter(
+    #             UserRole.user_id == User.id,
+    #             Role.name == 'SUPER_ADMIN'
+    #         ).exists()
+    #     ).scalar() if active_status else 0
+        
+    #     admin_users = db.query(func.count(User.id)).filter(
+    #         User.is_superuser == True,
+    #         ~db.query(UserRole).join(Role).filter(
+    #             UserRole.user_id == User.id,
+    #             Role.name == 'SUPER_ADMIN'
+    #         ).exists()
+    #     ).scalar()
+        
+    #     return {
+    #         "total_users": total_users,
+    #         "active_users": active_users,
+    #         "inactive_users": total_users - active_users,
+    #         "admin_users": admin_users
+    #     }
 
     @staticmethod
     def check_email_exists(email: str, exclude_id: Optional[str], db: Session) -> bool:

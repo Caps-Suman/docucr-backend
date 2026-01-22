@@ -26,3 +26,9 @@ class User(Base):
     
     documents = relationship("Document", back_populates="user")
     status_relation = relationship("Status")
+    roles = relationship(
+        "Role",
+        secondary="docucr.user_role",
+        backref="users",
+        lazy="joined"
+    )

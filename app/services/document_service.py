@@ -6,7 +6,7 @@ import json
 from io import BytesIO
 from collections import Counter, defaultdict
 
-from sqlalchemy import and_, or_, cast, String, text, func
+from sqlalchemy import and_, or_, cast, String, select, text, func
 from sqlalchemy.orm import Session, joinedload
 
 from ..models.document import Document
@@ -600,10 +600,12 @@ class DocumentService:
             # 1. Documents they uploaded
             # 2. Documents from clients assigned to them
             # 3. Documents shared with them via DocumentShare
-            assigned_client_ids = db.query(UserClient.client_id).filter(
+            # assigned_client_ids = db.query(UserClient.client_id).filter(
+            #     UserClient.user_id == user_id
+            # ).subquery()
+            assigned_client_ids = select(UserClient.client_id).where(
                 UserClient.user_id == user_id
-            ).subquery()
-            
+            )
             # Documents shared via DocumentShare
             shared_ids = db.query(DocumentShare.document_id).filter(
                 DocumentShare.user_id == user_id
@@ -718,10 +720,12 @@ class DocumentService:
         
         if not is_admin:
             # Non-admin users can only access their own documents or assigned client documents
-            assigned_client_ids = db.query(UserClient.client_id).filter(
+            # assigned_client_ids = db.query(UserClient.client_id).filter(
+            #     UserClient.user_id == user_id
+            # ).subquery()
+            assigned_client_ids = select(UserClient.client_id).where(
                 UserClient.user_id == user_id
-            ).subquery()
-            
+            )
             client_documents_query = db.query(Document.id).join(
                 DocumentFormData, Document.id == DocumentFormData.document_id
             ).join(
@@ -765,10 +769,12 @@ class DocumentService:
         query = db.query(Document).filter(Document.id == document_id)
         
         if not is_admin:
-            assigned_client_ids = db.query(UserClient.client_id).filter(
+            # assigned_client_ids = db.query(UserClient.client_id).filter(
+            #     UserClient.user_id == user_id
+            # ).subquery()
+            assigned_client_ids = select(UserClient.client_id).where(
                 UserClient.user_id == user_id
-            ).subquery()
-            
+            )
             client_documents_query = db.query(Document.id).join(
                 DocumentFormData, Document.id == DocumentFormData.document_id
             ).join(
@@ -825,10 +831,12 @@ class DocumentService:
         query = db.query(Document).filter(Document.id == document_id)
         
         if not is_admin:
-            assigned_client_ids = db.query(UserClient.client_id).filter(
+            # assigned_client_ids = db.query(UserClient.client_id).filter(
+            #     UserClient.user_id == user_id
+            # ).subquery()
+            assigned_client_ids = select(UserClient.client_id).where(
                 UserClient.user_id == user_id
-            ).subquery()
-            
+            )
             client_documents_query = db.query(Document.id).join(
                 DocumentFormData, Document.id == DocumentFormData.document_id
             ).join(
@@ -885,10 +893,12 @@ class DocumentService:
         query = db.query(Document).filter(Document.id == document_id)
         
         if not is_admin:
-            assigned_client_ids = db.query(UserClient.client_id).filter(
+            # assigned_client_ids = db.query(UserClient.client_id).filter(
+            #     UserClient.user_id == user_id
+            # ).subquery()
+            assigned_client_ids = select(UserClient.client_id).where(
                 UserClient.user_id == user_id
-            ).subquery()
-            
+            )
             client_documents_query = db.query(Document.id).join(
                 DocumentFormData, Document.id == DocumentFormData.document_id
             ).join(
@@ -962,10 +972,12 @@ class DocumentService:
         query = db.query(Document).filter(Document.id == document_id)
         
         if not is_admin:
-            assigned_client_ids = db.query(UserClient.client_id).filter(
+            # assigned_client_ids = db.query(UserClient.client_id).filter(
+            #     UserClient.user_id == user_id
+            # ).subquery()
+            assigned_client_ids = select(UserClient.client_id).where(
                 UserClient.user_id == user_id
-            ).subquery()
-            
+            )
             client_documents_query = db.query(Document.id).join(
                 DocumentFormData, Document.id == DocumentFormData.document_id
             ).join(
@@ -1017,10 +1029,12 @@ class DocumentService:
         query = db.query(Document).filter(Document.id == document_id)
         
         if not is_admin:
-            assigned_client_ids = db.query(UserClient.client_id).filter(
+            # assigned_client_ids = db.query(UserClient.client_id).filter(
+            #     UserClient.user_id == user_id
+            # ).subquery()
+            assigned_client_ids = select(UserClient.client_id).where(
                 UserClient.user_id == user_id
-            ).subquery()
-            
+            )
             client_documents_query = db.query(Document.id).join(
                 DocumentFormData, Document.id == DocumentFormData.document_id
             ).join(
@@ -1133,10 +1147,12 @@ class DocumentService:
         
         if not is_admin:
             # Non-admin users see only their documents and assigned client documents
-            assigned_client_ids = db.query(UserClient.client_id).filter(
+            # assigned_client_ids = db.query(UserClient.client_id).filter(
+            #     UserClient.user_id == user_id
+            # ).subquery()
+            assigned_client_ids = select(UserClient.client_id).where(
                 UserClient.user_id == user_id
-            ).subquery()
-            
+            )
             client_documents_query = db.query(Document.id).join(
                 DocumentFormData, Document.id == DocumentFormData.document_id
             ).join(

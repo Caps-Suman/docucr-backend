@@ -1,6 +1,7 @@
 from sqlalchemy import Column, String, ForeignKey, DateTime
 from sqlalchemy.sql import func
 from .module import Base
+from sqlalchemy.orm import relationship
 
 class UserRole(Base):
     __tablename__ = "user_role"
@@ -11,3 +12,6 @@ class UserRole(Base):
     role_id = Column(String, ForeignKey('docucr.role.id'), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    user = relationship("User", backref="user_roles")
+    role = relationship("Role")

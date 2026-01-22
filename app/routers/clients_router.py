@@ -68,9 +68,17 @@ class AssignClientsRequest(BaseModel):
     client_ids: List[str]
     assigned_by: str
 
+# @router.get("/stats", dependencies=[Depends(Permission("clients", "READ"))])
+# async def get_client_stats(db: Session = Depends(get_db)):
+#     return ClientService.get_client_stats(db)
+
 @router.get("/stats", dependencies=[Depends(Permission("clients", "READ"))])
-async def get_client_stats(db: Session = Depends(get_db)):
-    return ClientService.get_client_stats(db)
+def get_client_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    return ClientService.get_client_stats(db, current_user)
+
 
 @router.get("", response_model=ClientListResponse, dependencies=[Depends(Permission("clients", "READ"))])
 @router.get("/", response_model=ClientListResponse, dependencies=[Depends(Permission("clients", "READ"))])

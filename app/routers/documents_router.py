@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, BackgroundTasks
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
@@ -91,7 +92,8 @@ async def get_document_form_data(
     from ..models.client import Client
     from ..models.document_form_data import DocumentFormData
     from sqlalchemy import cast, String, or_
-    
+    from sqlalchemy import select
+
     # Get user's roles to determine access level
     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
         User.id == current_user.id,
@@ -106,10 +108,12 @@ async def get_document_form_data(
     query = db.query(Document).filter(Document.id == document_id)
     
     if not is_admin:
-        assigned_client_ids = db.query(UserClient.client_id).filter(
+        # assigned_client_ids = db.query(UserClient.client_id).filter(
+        #     UserClient.user_id == current_user.id
+        # ).subquery()
+        assigned_client_ids = select(UserClient.client_id).where(
             UserClient.user_id == current_user.id
-        ).subquery()
-        
+        )
         client_documents_query = db.query(Document.id).join(
             DocumentFormData, Document.id == DocumentFormData.document_id
         ).join(
@@ -209,9 +213,12 @@ async def update_document_form_data(
     query = db.query(Document).filter(Document.id == document_id)
     
     if not is_admin:
-        assigned_client_ids = db.query(UserClient.client_id).filter(
+        # assigned_client_ids = db.query(UserClient.client_id).filter(
+        #     UserClient.user_id == current_user.id
+        # ).subquery()
+        assigned_client_ids = select(UserClient.client_id).where(
             UserClient.user_id == current_user.id
-        ).subquery()
+        )
         
         client_documents_query = db.query(Document.id).join(
             DocumentFormData, Document.id == DocumentFormData.document_id
@@ -414,10 +421,12 @@ async def get_document_preview_url(
     query = db.query(Document).filter(Document.id == document_id)
     
     if not is_admin:
-        assigned_client_ids = db.query(UserClient.client_id).filter(
+        # assigned_client_ids = db.query(UserClient.client_id).filter(
+        #     UserClient.user_id == current_user.id
+        # ).subquery()
+        assigned_client_ids = select(UserClient.client_id).where(
             UserClient.user_id == current_user.id
-        ).subquery()
-        
+        )
         client_documents_query = db.query(Document.id).join(
             DocumentFormData, Document.id == DocumentFormData.document_id
         ).join(
@@ -477,10 +486,12 @@ async def get_document_download_url(
     query = db.query(Document).filter(Document.id == document_id)
     
     if not is_admin:
-        assigned_client_ids = db.query(UserClient.client_id).filter(
+        # assigned_client_ids = db.query(UserClient.client_id).filter(
+        #     UserClient.user_id == current_user.id
+        # ).subquery()
+        assigned_client_ids = select(UserClient.client_id).where(
             UserClient.user_id == current_user.id
-        ).subquery()
-        
+        )
         client_documents_query = db.query(Document.id).join(
             DocumentFormData, Document.id == DocumentFormData.document_id
         ).join(
@@ -560,10 +571,12 @@ async def get_document_report_url(
     query = db.query(Document).filter(Document.id == document_id)
     
     if not is_admin:
-        assigned_client_ids = db.query(UserClient.client_id).filter(
+        # assigned_client_ids = db.query(UserClient.client_id).filter(
+        #     UserClient.user_id == current_user.id
+        # ).subquery()
+        assigned_client_ids = select(UserClient.client_id).where(
             UserClient.user_id == current_user.id
-        ).subquery()
-        
+        )
         client_documents_query = db.query(Document.id).join(
             DocumentFormData, Document.id == DocumentFormData.document_id
         ).join(

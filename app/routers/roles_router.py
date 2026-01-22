@@ -85,7 +85,7 @@ async def get_assignable_roles(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("roles", "READ"))
+    permission: bool = Depends(Permission("users_permissions", "READ"))
 ):
     roles, total = RoleService.get_assignable_roles(page, page_size, db)
     return RoleListResponse(
@@ -102,7 +102,7 @@ async def get_roles(
     page_size: int = 10,
     status_id: Optional[str] = None,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("roles", "READ"))
+    permission: bool = Depends(Permission("users_permissions", "READ"))
 ):
     roles, total = RoleService.get_roles(page, page_size, status_id, db)
     return RoleListResponse(
@@ -115,7 +115,7 @@ async def get_roles(
 @router.get("/stats")
 async def get_role_stats(
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("roles", "READ"))
+    permission: bool = Depends(Permission("users_permissions", "READ"))
 ):
     return RoleService.get_role_stats(db)
 
@@ -123,7 +123,7 @@ async def get_role_stats(
 async def get_role(
     role_id: str, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("roles", "READ"))
+    permission: bool = Depends(Permission("users_permissions", "READ"))
 ):
     role = RoleService.get_role_by_id(role_id, db)
     if not role:
@@ -134,7 +134,7 @@ async def get_role(
 async def get_role_modules(
     role_id: str, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("roles", "READ"))
+    permission: bool = Depends(Permission("users_permissions", "READ"))
 ):
     modules = RoleService.get_role_modules(role_id, db)
     return {"modules": modules}
@@ -146,7 +146,7 @@ async def create_role(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("roles", "CREATE")),
+    permission: bool = Depends(Permission("users_permissions", "CREATE")),
     current_user: User = Depends(get_current_user)
 ):
     if RoleService.check_role_name_exists(role.name, None, db):
@@ -175,7 +175,7 @@ async def update_role(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("roles", "UPDATE")),
+    permission: bool = Depends(Permission("users_permissions", "UPDATE")),
     current_user: User = Depends(get_current_user)
 ):
     if role.name and RoleService.check_role_name_exists(role.name, role_id, db):
@@ -205,7 +205,7 @@ async def delete_role(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("roles", "DELETE")),
+    permission: bool = Depends(Permission("users_permissions", "DELETE")),
     current_user: User = Depends(get_current_user)
 ):
     """Delete a role"""
