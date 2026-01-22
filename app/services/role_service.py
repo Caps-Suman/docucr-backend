@@ -6,6 +6,7 @@ import uuid
 from app.models.role import Role
 from app.models.user_role import UserRole
 from app.models.role_module import RoleModule
+from app.models.role_submodule import RoleSubmodule
 from app.models.user_role_module import UserRoleModule
 from app.models.status import Status
 
@@ -86,7 +87,11 @@ class RoleService:
     @staticmethod
     def get_role_modules(role_id: str, db: Session) -> List[Dict]:
         role_modules = db.query(RoleModule).filter(RoleModule.role_id == role_id).all()
-        return [{"module_id": rm.module_id, "privilege_id": rm.privilege_id} for rm in role_modules]
+        role_submodules = db.query(RoleSubmodule).filter(RoleSubmodule.role_id == role_id).all()
+        
+        result = [{"module_id": rm.module_id, "privilege_id": rm.privilege_id} for rm in role_modules]
+        result.extend([{"module_id": None, "submodule_id": rs.submodule_id, "privilege_id": rs.privilege_id} for rs in role_submodules])
+        return result
 
     @staticmethod
     def create_role(role_data: Dict, db: Session) -> Dict:
@@ -143,6 +148,7 @@ class RoleService:
             if role_module_ids:
                 db.query(UserRoleModule).filter(UserRoleModule.role_module_id.in_(role_module_ids)).delete(synchronize_session=False)
             db.query(RoleModule).filter(RoleModule.role_id == role_id).delete(synchronize_session=False)
+            db.query(RoleSubmodule).filter(RoleSubmodule.role_id == role_id).delete(synchronize_session=False)
             RoleService._assign_modules(role_id, role_data['modules'], db)
         
         db.commit()
@@ -199,11 +205,20 @@ class RoleService:
     def _assign_modules(role_id: str, modules: List[Dict], db: Session):
         for module_perm in modules:
             if module_perm.get('privilege_id'):
-                role_module = RoleModule(
-                    id=str(uuid.uuid4()),
-                    role_id=role_id,
-                    module_id=module_perm['module_id'],
-                    privilege_id=module_perm['privilege_id']
-                )
-                db.add(role_module)
+                if module_perm.get('submodule_id'):
+                    role_submodule = RoleSubmodule(
+                        id=str(uuid.uuid4()),
+                        role_id=role_id,
+                        submodule_id=module_perm['submodule_id'],
+                        privilege_id=module_perm['privilege_id']
+                    )
+                    db.add(role_submodule)
+                elif module_perm.get('module_id'):
+                    role_module = RoleModule(
+                        id=str(uuid.uuid4()),
+                        role_id=role_id,
+                        module_id=module_perm['module_id'],
+                        privilege_id=module_perm['privilege_id']
+                    )
+                    db.add(role_module)
         db.commit()

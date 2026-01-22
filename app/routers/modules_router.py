@@ -11,6 +11,17 @@ from app.services.module_service import ModuleService
 
 router = APIRouter()
 
+class SubmoduleResponse(BaseModel):
+    id: str
+    name: str
+    label: str
+    route_key: str
+    display_order: int
+    privileges: List[str] = []
+
+    class Config:
+        from_attributes = True
+
 class ModuleResponse(BaseModel):
     id: str
     name: str
@@ -23,6 +34,7 @@ class ModuleResponse(BaseModel):
     color_from: str
     color_to: str
     privileges: List[str]
+    submodules: List[SubmoduleResponse] = []
 
     class Config:
         from_attributes = True

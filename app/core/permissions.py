@@ -5,7 +5,9 @@ from app.core.database import get_db
 from app.core.security import get_current_user, SECRET_KEY, ALGORITHM
 from app.models.user import User
 from app.models.role_module import RoleModule
+from app.models.role_submodule import RoleSubmodule
 from app.models.module import Module
+from app.models.submodule import Submodule
 from app.models.privilege import Privilege
 
 class Permission:
@@ -32,7 +34,8 @@ class Permission:
             raise HTTPException(status_code=403, detail="No active role selected")
 
         # Check if user has specific privilege OR 'ADMIN' OR 'MANAGE' privilege
-        permission = (
+        # Check Module Level Permission
+        module_perm = (
             db.query(RoleModule)
             .join(Module, RoleModule.module_id == Module.id)
             .join(Privilege, RoleModule.privilege_id == Privilege.id)
@@ -43,6 +46,24 @@ class Permission:
             )
             .first()
         )
+
+        if module_perm:
+            return True
+
+        # Check Submodule Level Permission (checking against route_key or name)
+        submodule_perm = (
+            db.query(RoleSubmodule)
+            .join(Submodule, RoleSubmodule.submodule_id == Submodule.id)
+            .join(Privilege, RoleSubmodule.privilege_id == Privilege.id)
+            .filter(
+                RoleSubmodule.role_id == role_id,
+                (Submodule.name == self.module_name) | (Submodule.route_key == self.module_name),
+                Privilege.name.in_([self.privilege_name, "MANAGE", "ADMIN"])
+            )
+            .first()
+        )
+        
+        permission = module_perm or submodule_perm
 
         if not permission:
             raise HTTPException(

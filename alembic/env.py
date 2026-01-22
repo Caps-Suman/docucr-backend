@@ -10,7 +10,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 load_dotenv()
 
 config = context.config
-config.set_main_option('sqlalchemy.url', os.getenv('DATABASE_URL'))
+if "DATABASE_URL" in os.environ:
+    db_url = os.environ["DATABASE_URL"].replace("%", "%%")
+    config.set_main_option('sqlalchemy.url', db_url)
+
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
