@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
 from uuid import UUID
+import io
 
 from app.core.database import get_db
 from app.services.sop_service import SOPService
@@ -49,6 +51,18 @@ class StatusInfo(BaseModel):
     class Config:
         from_attributes = True
 
+class SOPShortResponse(BaseModel):
+    id: UUID
+    title: str
+    category: str
+    provider_info: Optional[Dict[str, Any]] = None
+    status_id: Optional[int] = None
+    status: Optional[StatusInfo] = None
+    updated_at: Any
+
+    class Config:
+        from_attributes = True
+
 class SOPResponse(SOPBase):
     id: UUID
     status: Optional[StatusInfo] = None
@@ -57,6 +71,10 @@ class SOPResponse(SOPBase):
 
     class Config:
         from_attributes = True
+
+class SOPListResponse(BaseModel):
+    sops: List[SOPShortResponse]
+    total: int
 
 # --- Endpoints ---
 
@@ -68,14 +86,17 @@ def create_sop(
 ):
     return SOPService.create_sop(sop.model_dump(), db)
 
-@router.get("", response_model=List[SOPResponse])
+@router.get("", response_model=SOPListResponse)
 def get_sops(
     skip: int = 0, 
     limit: int = 100, 
+    search: Optional[str] = None,
+    status_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    return SOPService.get_sops(db, skip=skip, limit=limit)
+    sops, total = SOPService.get_sops(db, skip=skip, limit=limit, search=search, status_id=status_id)
+    return {"sops": sops, "total": total}
 
 @router.get("/{sop_id}", response_model=SOPResponse)
 def get_sop(
@@ -122,3 +143,20 @@ def delete_sop(
     if not success:
         raise HTTPException(status_code=404, detail="SOP not found")
     return None
+
+@router.get("/{sop_id}/pdf")
+def download_sop_pdf(
+    sop_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    sop = SOPService.get_sop_by_id(sop_id, db)
+    if not sop:
+        raise HTTPException(status_code=404, detail="SOP not found")
+    
+    pdf_buffer = SOPService.generate_sop_pdf(sop)
+    return StreamingResponse(
+        io.BytesIO(pdf_buffer),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={sop.title.replace(' ', '_')}.pdf"}
+    )
