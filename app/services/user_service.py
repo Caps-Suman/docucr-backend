@@ -113,7 +113,7 @@ class UserService:
         
         status_id_val = active_status.id if active_status else None
 
-        new_user = User(
+        user = User(
             id=str(uuid.uuid4()),
             email=user_data['email'].lower(),
             username=user_data['username'].lower(),
@@ -127,20 +127,20 @@ class UserService:
             status_id=status_id_val
         )
         
-        db.add(new_user)
+        db.add(user)
         db.commit()
-        db.refresh(new_user)
+        db.refresh(user)
         
         if user_data.get('role_ids'):
-            UserService._assign_roles(new_user.id, user_data['role_ids'], db)
+            UserService._assign_roles(user.id, user_data['role_ids'], db)
         
         if user_data.get('supervisor_id'):
-            UserService._assign_supervisor(new_user.id, user_data['supervisor_id'], db)
+            UserService._assign_supervisor(user.id, user_data['supervisor_id'], db)
 
         if user_data.get('client_id'):
-            UserService._link_client(new_user, user_data['client_id'], db)
-        
-        return UserService._format_user_response(new_user, db)
+            UserService._link_client(user, user_data['client_id'], db)
+        return user
+        # return UserService._format_user_response(user, db)
     
     @staticmethod
     def _link_client(user: User, client_id: str, db: Session):

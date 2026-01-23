@@ -167,7 +167,10 @@ async def create_user(
         background_tasks=background_tasks
     )
     
-    return UserResponse(**created_user)
+    return UserResponse(
+    **UserService._format_user_response(created_user, db)
+    )
+
 
 @router.put("/{user_id}", response_model=UserResponse)
 async def update_user(

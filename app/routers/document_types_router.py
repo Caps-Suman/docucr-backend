@@ -6,6 +6,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.permissions import Permission
 from app.models.document_type import DocumentType
+from app.models.status import Status
 from app.services.document_type_service import DocumentTypeService
 from app.services.activity_service import ActivityService
 from app.models.user import User
@@ -44,6 +45,28 @@ def get_document_types(
     """Get all document types"""
     service = DocumentTypeService(db)
     return service.get_all()
+
+@router.get("/dropdown", response_model=List[dict])
+def get_document_type_dropdown(
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("templates", "READ"))
+):
+    """
+    Lightweight API for dropdowns
+    - ACTIVE only
+    - id + name only
+    """
+    active_status = db.query(Status).filter(Status.code == "Active").first()
+
+    query = db.query(DocumentType.id, DocumentType.name)
+
+    if active_status:
+        query = query.filter(DocumentType.status_id == active_status.id)
+
+    return [
+        {"id": str(id), "name": name}
+        for id, name in query.order_by(DocumentType.name).all()
+    ]
 
 @router.get("/active", response_model=List[DocumentTypeResponse])
 def get_active_document_types(
