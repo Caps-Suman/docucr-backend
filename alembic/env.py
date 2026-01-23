@@ -21,6 +21,12 @@ if config.config_file_name is not None:
 from app.models import Base
 target_metadata = Base.metadata
 
+def include_object(object, name, type_, reflected, compare_to):
+    if type_ == "table":
+        return object.schema == "docucr"
+    else:
+        return True
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
@@ -28,7 +34,9 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        version_table_schema=os.getenv('DB_SCHEMA', 'docucr')
+        version_table_schema=os.getenv('DB_SCHEMA', 'docucr'),
+        include_schemas=True,
+        include_object=include_object
     )
 
     with context.begin_transaction():
@@ -45,7 +53,9 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            version_table_schema=os.getenv('DB_SCHEMA', 'docucr')
+            version_table_schema=os.getenv('DB_SCHEMA', 'docucr'),
+            include_schemas=True,
+            include_object=include_object
         )
 
         with context.begin_transaction():
