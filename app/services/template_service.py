@@ -56,7 +56,8 @@ class TemplateService:
         return self.db.query(Template).filter(Template.document_type_id == document_type_id).all()
 
     def create(self, template_name: str, document_type_id: str, description: Optional[str] = None, 
-               extraction_fields: Optional[List[Dict[str, Any]]] = None, status_id: Optional[str] = None) -> Template:
+               extraction_fields: Optional[List[Dict[str, Any]]] = None, status_id: Optional[str] = None,
+               user_id: Optional[str] = None) -> Template:
         """Create a new template"""
         # Get inactive status if not provided (default)
         if status_id is None:
@@ -96,8 +97,9 @@ class TemplateService:
             description=description,
             document_type_id=document_type_id,
             status_id=status_id_val,
-            extraction_fields=extraction_fields or []
-        )
+            extraction_fields=extraction_fields or [],
+            created_by=user_id  # assuming column exists
+)
         
         self.db.add(template)
         self.db.commit()

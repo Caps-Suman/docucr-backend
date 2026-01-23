@@ -64,6 +64,17 @@ class TemplateResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+@router.get("/by-document-type/{document_type_id}", response_model=List[TemplateResponse])
+def get_templates_by_document_type(
+    document_type_id: str,
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("templates_list", "READ"))
+):
+    """Get all templates for a specific document type"""
+    service = TemplateService(db)
+    return service.get_by_document_type(document_type_id)
+
 @router.get("/", response_model=List[TemplateResponse])
 def get_templates(
     db: Session = Depends(get_db),
@@ -237,13 +248,3 @@ def deactivate_template(
         background_tasks=background_tasks
     )
     return result
-
-@router.get("/by-document-type/{document_type_id}", response_model=List[TemplateResponse])
-def get_templates_by_document_type(
-    document_type_id: str,
-    db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates_list", "READ"))
-):
-    """Get all templates for a specific document type"""
-    service = TemplateService(db)
-    return service.get_by_document_type(document_type_id)
