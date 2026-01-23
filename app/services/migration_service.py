@@ -56,6 +56,25 @@ class MigrationService:
             raise Exception(f"Activity log initialization failed: {str(e)}")
 
     @staticmethod
+    def initialize_sop_table(db: Session):
+        """
+        Initializes the SOP table if it doesn't exist.
+        """
+        try:
+            from app.models.sop import SOP
+            
+            db.execute(text("CREATE SCHEMA IF NOT EXISTS docucr"))
+            db.commit()
+            
+            SOP.__table__.create(db.get_bind(), checkfirst=True)
+            db.commit()
+            
+            return {"message": "SOP table initialized successfully"}
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"SOP table initialization failed: {str(e)}")
+
+    @staticmethod
     def initialize_system(db: Session, super_admin_email: str, super_admin_password: str):
         """
         Initializes the system by:

@@ -47,3 +47,14 @@ async def initialize_activity_logs(db: Session = Depends(get_db)):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/initialize-sop")
+async def initialize_sop(db: Session = Depends(get_db)):
+    """
+    Initializes the SOP table in the database.
+    """
+    try:
+        result = MigrationService.initialize_sop_table(db)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

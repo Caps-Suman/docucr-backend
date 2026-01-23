@@ -16,7 +16,7 @@ class RoleService:
     @staticmethod
     def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
-        query = db.query(Role)
+        query = db.query(Role).filter(func.upper(Role.name) != 'SUPER_ADMIN')
         
         if status_id:
             query = query.join(Role.status_relation).filter(Status.code == status_id)

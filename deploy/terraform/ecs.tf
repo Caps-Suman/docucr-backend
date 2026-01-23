@@ -142,6 +142,10 @@ resource "aws_ecs_task_definition" "app" {
         {
           name      = "SENDER_EMAIL"
           valueFrom = "${data.aws_secretsmanager_secret.app.arn}:SENDER_EMAIL::"
+        },
+        {
+          name      = "OPENAI_API_KEY"
+          valueFrom = "${data.aws_secretsmanager_secret.app.arn}:OPENAI_API_KEY::"
         }
       ]
       

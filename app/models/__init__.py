@@ -20,10 +20,11 @@ from .status import Status
 from .document_list_config import DocumentListConfig
 from .printer import Printer
 from .activity_log import ActivityLog
+from .sop import SOP
 
 __all__ = [
     'Base', 'Module', 'Client', 'Privilege', 'Role', 'RoleModule', 'Submodule', 'RoleSubmodule', 'User', 'UserRole', 
     'UserRoleModule', 'UserSupervisor', 'DocumentType', 'Template', 'Document',
     'DocumentFormData', 'ExtractedDocument', 'UnverifiedDocument', 'Form', 'Status',
-    'DocumentListConfig', 'Printer', 'ActivityLog'
+    'DocumentListConfig', 'Printer', 'ActivityLog', 'SOP'
 ]
