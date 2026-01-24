@@ -122,9 +122,9 @@ def create_form(
             db=db,
             action="CREATE",
             entity_type="form",
-            entity_id=created_form.id,
+            entity_id=created_form["id"],
             user_id=current_user.id,
-            details={"name": created_form.name},
+            details={"name": created_form["name"]},
             request=request,
             background_tasks=background_tasks
         )

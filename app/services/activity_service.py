@@ -6,6 +6,16 @@ import uuid
 
 class ActivityService:
     @staticmethod
+    def _normalize_value(value: Any) -> Any:
+        if value is None:
+            return None
+        if hasattr(value, "isoformat"):  # datetime
+            return value.isoformat()
+        if hasattr(value, "__str__") and not isinstance(value, (int, float, bool, str)):
+            return str(value)
+        return value
+
+    @staticmethod
     def log_task(
         action: str,
         entity_type: str,
@@ -102,7 +112,9 @@ class ActivityService:
         Calculates changes between an SQLAlchemy object (or dict) and a dictionary of new data.
         Returns a dictionary of changes: {field: {'from': old_val, 'to': new_val}}
         """
-        exclude = exclude or []
+        if exclude is None:
+            exclude = []
+
         changes = {}
         
         is_dict = isinstance(old_obj, dict)
@@ -125,6 +137,10 @@ class ActivityService:
             if has_field:
                 # Handle simple comparison
                 if old_val != new_val:
-                    changes[key] = {"from": old_val, "to": new_val}
+                    changes[key] = {
+                        "from": ActivityService._normalize_value(old_val),
+                        "to": ActivityService._normalize_value(new_val)
+                    }
+
                     
         return changes

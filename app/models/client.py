@@ -23,5 +23,13 @@ class Client(Base):
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+
     status_relation = relationship("Status")
+
+    @property
+    def statusCode(self):
+        return self.status_relation.code if self.status_relation else None
+
+    @property
+    def assigned_users(self):
+        return [f"{u.first_name} {u.last_name}" for u in self.users]

@@ -12,15 +12,17 @@ class DocumentTypeService:
     def get_all(self) -> List[Dict]:
         """Get all document types"""
         document_types = self.db.query(DocumentType).join(Status).all()
-        return [{
-            "id": str(dt.id),
-            "name": dt.name,
-            "description": dt.description or "",
-            "status_id": dt.status_id,
-            "statusCode": dt.status.code if dt.status else "",
-            "created_at": dt.created_at.isoformat(),
-            "updated_at": dt.updated_at.isoformat()
-        } for dt in document_types]
+        # return [{
+        #     "id": str(dt.id),
+        #     "name": dt.name,
+        #     "description": dt.description or "",
+        #     "status_id": dt.status_id,
+        #     "statusCode": dt.status.code if dt.status else "",
+        #     "created_at": dt.created_at.isoformat(),
+        #     "updated_at": dt.updated_at.isoformat()
+        # } for dt in document_types]
+        return self.db.query(DocumentType).join(Status).all()
+
 
     def get_active(self) -> List[Dict]:
         """Get all active document types"""
@@ -32,16 +34,20 @@ class DocumentTypeService:
         else:
             # Filter by status ID (foreign key)
             document_types = self.db.query(DocumentType).join(Status).filter(DocumentType.status_id == active_status.id).all()
-            
-        return [{
-            "id": str(dt.id),
-            "name": dt.name,
-            "description": dt.description or "",
-            "status_id": dt.status_id,
-            "statusCode": dt.status.code if dt.status else "",
-            "created_at": dt.created_at.isoformat(),
-            "updated_at": dt.updated_at.isoformat()
-        } for dt in document_types]
+        query = self.db.query(DocumentType).join(Status)
+        if active_status:
+            query = query.filter(DocumentType.status_id == active_status.id)
+        return query.all()
+        # return [{
+        #     "id": str(dt.id),
+        #     "name": dt.name,
+        #     "description": dt.description or "",
+        #     "status_id": dt.status_id,
+        #     "statusCode": dt.status.code if dt.status else "",
+        #     "created_at": dt.created_at.isoformat(),
+        #     "updated_at": dt.updated_at.isoformat()
+        # } for dt in document_types]
+
 
     def get_by_id(self, document_type_id: str) -> Dict:
         """Get document type by ID"""
@@ -51,16 +57,16 @@ class DocumentTypeService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document type not found"
             )
-        return {
-            "id": str(document_type.id),
-            "name": document_type.name,
-            "description": document_type.description or "",
-            "status_id": document_type.status_id,
-            "statusCode": document_type.status.code if document_type.status else "",
-            "created_at": document_type.created_at.isoformat(),
-            "updated_at": document_type.updated_at.isoformat()
-        }
-
+        # return {
+        #     "id": str(document_type.id),
+        #     "name": document_type.name,
+        #     "description": document_type.description or "",
+        #     "status_id": document_type.status_id,
+        #     "statusCode": document_type.status.code if document_type.status else "",
+        #     "created_at": document_type.created_at.isoformat(),
+        #     "updated_at": document_type.updated_at.isoformat()
+        # }
+        return document_type
     def create(self, name: str, description: Optional[str] = None, status_id: Optional[str] = None) -> Dict:
         """Create a new document type"""
         # Handle status_id conversion from code to ID
@@ -89,16 +95,17 @@ class DocumentTypeService:
             self.db.commit()
             self.db.refresh(document_type)
             # Need to reload status relationship to get code, or query it
-            self.db.refresh(document_type, ['status']) # force load
-            return {
-                "id": str(document_type.id),
-                "name": document_type.name,
-                "description": document_type.description or "",
-                "status_id": document_type.status_id,
-                "statusCode": document_type.status.code if document_type.status else "",
-                "created_at": document_type.created_at.isoformat(),
-                "updated_at": document_type.updated_at.isoformat()
-            }
+            self.db.refresh(document_type) # force load
+            # return {
+            #     "id": str(document_type.id),
+            #     "name": document_type.name,
+            #     "description": document_type.description or "",
+            #     "status_id": document_type.status_id,
+            #     "statusCode": document_type.status.code if document_type.status else "",
+            #     "created_at": document_type.created_at.isoformat(),
+            #     "updated_at": document_type.updated_at.isoformat()
+            # }
+            return document_type
         except IntegrityError:
             self.db.rollback()
             raise HTTPException(
@@ -147,16 +154,19 @@ class DocumentTypeService:
             
             self.db.commit()
             self.db.refresh(document_type)
-            self.db.refresh(document_type, ['status'])
-            return {
-                "id": str(document_type.id),
-                "name": document_type.name,
-                "description": document_type.description or "",
-                "status_id": document_type.status_id,
-                "statusCode": document_type.status.code if document_type.status else "",
-                "created_at": document_type.created_at.isoformat(),
-                "updated_at": document_type.updated_at.isoformat()
-            }
+            self.db.refresh(document_type)
+            # self.db.refresh(document_type, ['status'])
+            # return {
+            #     "id": str(document_type.id),
+            #     "name": document_type.name,
+            #     "description": document_type.description or "",
+            #     "status_id": document_type.status_id,
+            #     "statusCode": document_type.status.code if document_type.status else "",
+            #     "created_at": document_type.created_at.isoformat(),
+            #     "updated_at": document_type.updated_at.isoformat()
+            # }
+            return document_type
+
         except IntegrityError:
             self.db.rollback()
             raise HTTPException(

@@ -116,7 +116,8 @@ class ClientService:
         if user_id:
             ClientService._link_user(new_client, user_id, db)
 
-        return ClientService._format_client(new_client, db)
+        # return ClientService._format_client(new_client, db)
+        return new_client
 
     @staticmethod
     def _link_user(client: Client, user_id: str, db: Session):
@@ -158,8 +159,7 @@ class ClientService:
         
         db.commit()
         db.refresh(client)
-        return ClientService._format_client(client, db)
-
+        return client
     @staticmethod
     def activate_client(client_id: str, db: Session) -> Optional[Dict]:
         client = db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
@@ -171,8 +171,7 @@ class ClientService:
             client.status_id = active_status.id
             db.commit()
             db.refresh(client)
-        return ClientService._format_client(client, db)
-
+        return client
     @staticmethod
     def deactivate_client(client_id: str, db: Session) -> Optional[Dict]:
         client = db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
@@ -208,8 +207,7 @@ class ClientService:
             
             db.commit()
             db.refresh(client)
-        return ClientService._format_client(client, db)
-
+        return client
     @staticmethod
     def assign_clients_to_user(
         user_id: str,

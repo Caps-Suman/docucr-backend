@@ -11,7 +11,9 @@ from app.services.document_type_service import DocumentTypeService
 from app.services.activity_service import ActivityService
 from app.models.user import User
 from fastapi import Request
-
+from uuid import UUID
+from datetime import datetime
+from typing import Optional
 router = APIRouter(prefix="/api/document-types", tags=["document-types"], dependencies=[Depends(get_current_user)])
 
 # Pydantic models
@@ -26,13 +28,13 @@ class DocumentTypeUpdate(BaseModel):
     status_id: str = None
 
 class DocumentTypeResponse(BaseModel):
-    id: str
+    id: UUID
     name: str
-    description: str = ""
+    description: Optional[str]
     status_id: int
-    statusCode: str = ""
-    created_at: str
-    updated_at: str
+    statusCode: Optional[str]
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True

@@ -19,5 +19,8 @@ class DocumentType(Base):
     templates = relationship("Template", back_populates="document_type", cascade="all, delete-orphan")
     status = relationship("Status")
     
+    @property
+    def statusCode(self) -> str | None:
+        return self.status.code if self.status else None
     def __repr__(self):
         return f"<DocumentType(id={self.id}, name='{self.name}')>"

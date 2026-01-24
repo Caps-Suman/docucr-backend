@@ -75,6 +75,7 @@ class RoleResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class RoleListResponse(BaseModel):
     roles: List[RoleResponse]
     total: int
@@ -160,9 +161,9 @@ async def create_role(
         db=db,
         action="CREATE",
         entity_type="role",
-        entity_id=str(created_role.id),
+        entity_id=str(created_role["id"]),
         user_id=current_user.id,
-        details={"name": created_role.name},
+        details={"name": created_role["name"]},
         request=request,
         background_tasks=background_tasks
     )
@@ -188,7 +189,12 @@ async def update_role(
     changes = {}
     existing_role = RoleService.get_role_by_id(role_id, db)
     if existing_role:
-        changes = ActivityService.calculate_changes(existing_role, role_data)
+        changes = ActivityService.calculate_changes(
+            existing_role,
+            role_data,
+            exclude=["modules"]
+        )
+
 
     updated_role = RoleService.update_role(role_id, role_data, db)
     if not updated_role:
@@ -200,12 +206,16 @@ async def update_role(
         entity_type="role",
         entity_id=role_id,
         user_id=current_user.id,
-        details={"name": updated_role.get('name'), "changes": changes},
+        details={
+            "name": updated_role["name"],
+            "changes": changes
+        },
         request=request,
         background_tasks=background_tasks
     )
         
     return RoleResponse(**updated_role)
+
 
 @router.delete("/{role_id}")
 async def delete_role(

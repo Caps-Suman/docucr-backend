@@ -84,7 +84,6 @@ class RoleService:
             "can_edit": role.can_edit,
             "users_count": users_count
         }
-
     @staticmethod
     def get_role_modules(role_id: str, db: Session) -> List[Dict]:
         role_modules = db.query(RoleModule).filter(RoleModule.role_id == role_id).all()
@@ -123,7 +122,6 @@ class RoleService:
             "can_edit": new_role.can_edit,
             "users_count": 0
         }
-
     @staticmethod
     def update_role(role_id: str, role_data: Dict, db: Session) -> Optional[Dict]:
         role = db.query(Role).filter(Role.id == role_id).first()

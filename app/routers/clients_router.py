@@ -13,7 +13,7 @@ from app.models.user import User
 from app.models.user_client import UserClient
 from app.models.user_role import UserRole
 from app.models.role import Role
-
+from uuid import UUID
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 class ClientCreate(BaseModel):
@@ -40,7 +40,7 @@ class ClientUpdate(BaseModel):
     description: Optional[str] = None
 
 class ClientResponse(BaseModel):
-    id: str
+    id: UUID
     business_name: Optional[str]
     first_name: Optional[str]
     middle_name: Optional[str]
@@ -51,10 +51,10 @@ class ClientResponse(BaseModel):
     status_id: Optional[int]
     statusCode: Optional[str]
     description: Optional[str]
-    assigned_users: List[str]
-    created_at: Optional[str]
-    updated_at: Optional[str]
-    
+    assigned_users: List[str] = []
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
     class Config:
         from_attributes = True
 
@@ -141,7 +141,8 @@ async def create_client(
         background_tasks=background_tasks
     )
     
-    return ClientResponse(**created_client)
+    # return ClientResponse(**created_client)
+    return created_client
 
 @router.put("/{client_id}", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def update_client(
@@ -173,13 +174,16 @@ async def update_client(
         entity_type="client",
         entity_id=client_id,
         user_id=current_user.id,
-        details={"name": updated_client.get('business_name'), "changes": changes},
+        details={
+            "name": updated_client.business_name,
+            "changes": changes
+        },
         request=request,
         background_tasks=background_tasks
     )
         
-    return ClientResponse(**updated_client)
-
+    # return ClientResponse(**updated_client)
+    return updated_client
 @router.post("/{client_id}/activate", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def activate_client(
     client_id: str, 
@@ -226,8 +230,8 @@ async def deactivate_client(
         background_tasks=background_tasks
     )
         
-    return ClientResponse(**client)
-
+    # return ClientResponse(**client)
+    return client
 @router.post("/users/{user_id}/assign", dependencies=[Depends(Permission("clients", "ADMIN"))])
 async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db: Session = Depends(get_db)):
     ClientService.assign_clients_to_user(user_id, request.client_ids, request.assigned_by, db)
