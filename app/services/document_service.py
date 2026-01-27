@@ -6,7 +6,7 @@ import json
 from io import BytesIO
 from collections import Counter, defaultdict
 
-from sqlalchemy import and_, or_, cast, String, select, text, func
+from sqlalchemy import UUID, and_, or_, cast, String, select, text, func
 from sqlalchemy.orm import Session, joinedload
 
 from ..models.document import Document
@@ -570,6 +570,7 @@ class DocumentService:
     def get_user_documents(db: Session, user_id: str, skip: int = 0, limit: int = 100,
                          status_id: str = None, date_from: str = None, date_to: str = None,
                          search_query: str = None, form_filters: str = None,
+                         document_type_id: UUID = None,  # ✅ ADD
                          shared_only: bool = False) -> tuple[List[Document], int]:
         """Get documents for a user with role-based access control"""
         from ..models.document_share import DocumentShare
@@ -659,7 +660,8 @@ class DocumentService:
         # Search Query (General - filename)
         if search_query:
             query = query.filter(Document.filename.ilike(f"%{search_query}%"))
-
+        if document_type_id:
+            query = query.filter(Document.document_type_id == document_type_id)
         # Dynamic Form Filters
         if form_filters:
             try:
