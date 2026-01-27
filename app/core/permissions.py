@@ -68,7 +68,8 @@ class Permission:
         if not permission:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"You do not have permission to {self.privilege_name.lower()} {self.module_name}."
+                # detail=f"You do not have permission to {self.privilege_name.lower()} {self.module_name}."
+                detail=f"You do not have enough access permission!"
             )
 
         return True

@@ -190,7 +190,9 @@ async def update_document_form_data(
     form_data: dict, 
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "UPDATE"))
+    permission: bool = Depends(Permission("documents", "UPDATE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None
 ):
     """Update form data for a document with role-based access control"""
     from ..models.user_role import UserRole
@@ -242,7 +244,53 @@ async def update_document_form_data(
         raise HTTPException(status_code=404, detail="Document not found")
     
     from ..models.document_form_data import DocumentFormData
+    from ..models.form import FormField
+    from ..models.client import Client
+    from ..models.document_type import DocumentType
     
+    # Helper for resolving data with human-readable labels and values
+    def resolve_resolved_data(data_dict):
+        resolved = {}
+        for field_id, value in data_dict.items():
+            field = db.query(FormField).filter(FormField.id == field_id).first()
+            if field:
+                display_value = value
+                
+                # Check for specific field types or labels for system fields
+                is_client = field.field_type == 'client_dropdown' or field.label == 'Client'
+                is_doc_type = field.field_type == 'document_type_dropdown' or field.label == 'Document Type'
+                
+                if field.field_type == 'dropdown' and field.options:
+                    for option in field.options:
+                        if option.get('value') == value:
+                            display_value = option.get('label', value)
+                            break
+                elif is_client:
+                    try:
+                        client = db.query(Client).filter(Client.id == value).first()
+                        if client:
+                            display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
+                    except Exception:
+                        pass
+                elif is_doc_type:
+                    try:
+                        doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
+                        if doc_type:
+                            display_value = doc_type.name
+                    except Exception:
+                        pass
+                resolved[field.label] = display_value
+            else:
+                resolved[field_id] = value
+        return resolved
+
+    # Capture old and new resolved data to calculate changes
+    old_data_raw = document.form_data_relation.data if document.form_data_relation else {}
+    resolved_old = resolve_resolved_data(old_data_raw)
+    resolved_new = resolve_resolved_data(form_data)
+    
+    changes = ActivityService.calculate_changes(resolved_old, resolved_new)
+
     if not document.form_data_relation:
         # Create if not exists (though typically created on upload)
         new_record = DocumentFormData(
@@ -254,6 +302,23 @@ async def update_document_form_data(
         document.form_data_relation.data = form_data
         
     db.commit()
+
+    # Activity Log
+    ActivityService.log(
+        db,
+        action="UPDATE",
+        entity_type="document",
+        entity_id=str(document_id),
+        user_id=current_user.id,
+        details={
+            "sub_action": "METADATA_UPDATE",
+            "filename": document.filename,
+            "changes": changes
+        },
+        request=request,
+        background_tasks=background_tasks
+    )
+
     return {"message": "Form data updated"}
 
 @router.get("/stats")
@@ -274,7 +339,7 @@ def get_documents(
     date_to: Optional[str] = None,
     search_query: Optional[str] = None,
     form_filters: Optional[str] = None,
-    document_type_id: Optional[UUID] = None,  # ✅ ADD
+    document_type_id: Optional[UUID] = None,  # ADD
     shared_only: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -284,7 +349,7 @@ def get_documents(
     documents, total_count = document_service.get_user_documents(
         db, current_user.id, skip, limit,
         status_id, date_from, date_to, search_query, form_filters,
-        document_type_id=document_type_id,  # ✅ PASS
+        document_type_id=document_type_id,  # PASS
         shared_only=shared_only
     )
     
@@ -713,15 +778,22 @@ async def get_document_report_data(
             if pd.isna(extracted_data_raw) or not extracted_data_raw:
                 extracted_data_raw = "{}"
             
+            extracted_data = {}
             try:
                 # If it's already a dict (pandas might parse stringified JSON if it looks like one)
                 if isinstance(extracted_data_raw, dict):
                     extracted_data = extracted_data_raw
+                elif isinstance(extracted_data_raw, str):
+                    import ast
+                    try:
+                        # Safely evaluate Python literal structures (handles single quotes and None)
+                        extracted_data = ast.literal_eval(extracted_data_raw)
+                    except (ValueError, SyntaxError):
+                        # Fallback to standard JSON if literal_eval fails
+                        extracted_data = json.loads(extracted_data_raw.replace("'", '"'))
                 else:
-                    # Replace single quotes with double quotes for JSON parsing if needed
-                    # but pandas/openpyxl should have given us a clean string
-                    extracted_data = json.loads(str(extracted_data_raw).replace("'", '"'))
-            except:
+                    extracted_data = {"raw_data": str(extracted_data_raw)}
+            except Exception:
                 extracted_data = {"raw_data": str(extracted_data_raw)}
                 
             findings.append({
@@ -741,12 +813,27 @@ async def cancel_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "UPDATE"))
+    permission: bool = Depends(Permission("documents", "UPDATE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None
 ):
     """Cancel document analysis"""
     success = await document_service.cancel_document_analysis(db, document_id, current_user.id)
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Activity Log
+    ActivityService.log(
+        db,
+        action="UPDATE",
+        entity_type="document",
+        entity_id=str(document_id),
+        user_id=current_user.id,
+        details={"sub_action": "CANCEL_ANALYSIS"},
+        request=request,
+        background_tasks=background_tasks
+    )
+
     return {"message": "Analysis cancelled"}
 
 @router.post("/{document_id}/reanalyze")
@@ -754,11 +841,26 @@ async def reanalyze_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "UPDATE"))
+    permission: bool = Depends(Permission("documents", "UPDATE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None
 ):
     """Re-analyze document"""
     try:
         await document_service.reanalyze_document(db, document_id, current_user.id)
+        
+        # Activity Log
+        ActivityService.log(
+            db,
+            action="UPDATE",
+            entity_type="document",
+            entity_id=str(document_id),
+            user_id=current_user.id,
+            details={"sub_action": "REANALYZE"},
+            request=request,
+            background_tasks=background_tasks
+        )
+        
         return {"message": "Document queued for re-analysis"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
