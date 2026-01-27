@@ -27,7 +27,7 @@ document_service= DocumentService()
 @router.post("/upload", response_model=List[dict])
 async def upload_documents(
     files: List[UploadFile] = File(...),
-    enable_ai: bool = Form(False),
+    enable_ai: bool = Form(True),
     document_type_id: Optional[UUID] = Form(None),
     template_id: Optional[UUID] = Form(None),
     form_id: Optional[UUID] = Form(None),
