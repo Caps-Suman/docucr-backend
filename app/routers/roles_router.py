@@ -189,12 +189,24 @@ async def update_role(
     changes = {}
     existing_role = RoleService.get_role_by_id(role_id, db)
     if existing_role:
+<<<<<<< HEAD
         changes = ActivityService.calculate_changes(
             existing_role,
             role_data,
             exclude=["modules"]
         )
 
+=======
+        # Normalize status_id to statusCode for readable logs
+        if 'status_id' in role_data and existing_role.get('statusCode'):
+            existing_role['status_id'] = existing_role['statusCode']
+            
+        changes = ActivityService.calculate_changes(existing_role, role_data)
+        
+        # Rename status_id to Status
+        if 'status_id' in changes:
+            changes['Status'] = changes.pop('status_id')
+>>>>>>> f2051ed83fa890d0119473f513e7e6175eef6d1b
 
     updated_role = RoleService.update_role(role_id, role_data, db)
     if not updated_role:

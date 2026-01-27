@@ -36,7 +36,8 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         version_table_schema=os.getenv('DB_SCHEMA', 'docucr'),
         include_schemas=True,
-        include_object=include_object
+        include_object=include_object,
+        compare_server_default=True
     )
 
     with context.begin_transaction():
@@ -55,7 +56,8 @@ def run_migrations_online() -> None:
             target_metadata=target_metadata,
             version_table_schema=os.getenv('DB_SCHEMA', 'docucr'),
             include_schemas=True,
-            include_object=include_object
+            include_object=include_object,
+            compare_server_default=True
         )
 
         with context.begin_transaction():

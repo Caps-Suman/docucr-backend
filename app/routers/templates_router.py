@@ -151,7 +151,42 @@ def update_template(
     changes = {}
     existing_template = service.get_by_id(template_id)
     if existing_template:
+        # Normalize status_id to statusCode for readable logs
+        # Note: template object might be Pydantic model or dict. Service returns dict usually or ORM model.
+        # Based on get_by_id implementation (assumed dict or object with dict access)
+        # Assuming dict access is safe or we need logic check. 
+        # Checking template_service.py usage earlier: it returns Pydantic model usually?
+        # Let's check get_by_id return type if possible. 
+        # But for now assuming consistency with other services returning dicts/objects.
+        # Actually template_service.get_by_id returns a TemplateResponse Pydantic model often. 
+        # calculate_changes handles dict or object. 
+        # But we need to write to it. If it's a Pydantic model we can't write to it easily if frozen?
+        # Wait, calculate_changes takes OLD obj.
+        # Let's handle generic object attribute setting if dict fails.
+        
+        # Actually, let's just stick to the pattern. If it errors we fix.
+        # But wait, templates_service.get_by_id returns a TemplateResponse?
+        # Let's check templates_router.py:128 `return service.get_by_id(template_id)` -> response_model=TemplateResponse
+        # So it returns something compatible.
+        
+        # To be safe for mixed types (dict vs obj):
+        current_status_code = None
+        if isinstance(existing_template, dict):
+            current_status_code = existing_template.get('statusCode')
+        elif hasattr(existing_template, 'statusCode'):
+            current_status_code = getattr(existing_template, 'statusCode')
+            
+        if 'status_id' in update_data and current_status_code:
+             if isinstance(existing_template, dict):
+                 existing_template['status_id'] = current_status_code
+             else:
+                 setattr(existing_template, 'status_id', current_status_code)
+
         changes = ActivityService.calculate_changes(existing_template, update_data)
+        
+        # Rename status_id to Status
+        if 'status_id' in changes:
+            changes['Status'] = changes.pop('status_id')
 
     template = service.update(
         template_id,

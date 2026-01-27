@@ -197,7 +197,15 @@ async def update_user(
     changes = {}
     existing_user = UserService.get_user_by_id(user_id, db)
     if existing_user:
+        # Normalize status_id to statusCode for readable logs
+        if 'status_id' in user_data and existing_user.get('statusCode'):
+            existing_user['status_id'] = existing_user['statusCode']
+            
         changes = ActivityService.calculate_changes(existing_user, user_data, exclude=["password"])
+        
+        # Rename status_id to Status
+        if 'status_id' in changes:
+            changes['Status'] = changes.pop('status_id')
 
     updated_user = UserService.update_user(user_id, user_data, db)
     if not updated_user:
