@@ -42,7 +42,7 @@ class Document(Base):
     # New Columns for Processing Context
     document_type_id = Column(UUID(as_uuid=True), ForeignKey("docucr.document_types.id"), nullable=True)
     template_id = Column(UUID(as_uuid=True), ForeignKey("docucr.templates.id"), nullable=True)
-    enable_ai = Column(Boolean, default=False)
+    enable_ai = Column(Boolean, default=True, nullable=False)
 
     # Relationships to new tables
     extracted_documents = relationship("ExtractedDocument", back_populates="document", cascade="all, delete-orphan")

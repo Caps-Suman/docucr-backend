@@ -68,6 +68,14 @@ class AssignClientsRequest(BaseModel):
     client_ids: List[str]
     assigned_by: str
 
+def _is_admin_user(user: User) -> bool:
+    role_names = [r.name for r in user.roles]
+    return (
+        user.is_superuser or
+        "ADMIN" in role_names or
+        "SUPER_ADMIN" in role_names
+    )
+
 @router.get("/stats", dependencies=[Depends(Permission("clients", "READ"))])
 def get_client_stats(
     db: Session = Depends(get_db),
@@ -194,18 +202,33 @@ async def update_client(
         
     # return ClientResponse(**updated_client)
     return updated_client
-@router.post("/{client_id}/activate", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
+@router.post("/{client_id}/activate", response_model=ClientResponse,
+             dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def activate_client(
-    client_id: str, 
-    db: Session = Depends(get_db), 
+    client_id: str,
+    db: Session = Depends(get_db),
     request: Request = None,
     background_tasks: BackgroundTasks = None,
     current_user: User = Depends(get_current_user)
 ):
-    client = ClientService.activate_client(client_id, db)
+    # ---- ROLE CHECK ----
+    if not _is_admin_user(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not allowed to activate clients"
+        )
+
+    # ---- TARGET VALIDATION ----
+    client = ClientService.get_client_by_id(client_id, db)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
-        
+
+    # ---- ACTIVATE ----
+    updated_client = ClientService.activate_client(client_id, db)
+    if not updated_client:
+        raise HTTPException(status_code=400, detail="Cannot activate client")
+
+    # ---- LOG ----
     ActivityService.log(
         db=db,
         action="ACTIVATE",
@@ -215,21 +238,35 @@ async def activate_client(
         request=request,
         background_tasks=background_tasks
     )
-        
-    return ClientResponse(**client)
 
-@router.post("/{client_id}/deactivate", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
+    return ClientResponse(**updated_client)
+@router.post("/{client_id}/deactivate", response_model=ClientResponse,
+             dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def deactivate_client(
-    client_id: str, 
-    db: Session = Depends(get_db), 
+    client_id: str,
+    db: Session = Depends(get_db),
     request: Request = None,
     background_tasks: BackgroundTasks = None,
     current_user: User = Depends(get_current_user)
 ):
-    client = ClientService.deactivate_client(client_id, db)
+    # ---- ROLE CHECK ----
+    if not _is_admin_user(current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not allowed to deactivate clients"
+        )
+
+    # ---- TARGET VALIDATION ----
+    client = ClientService.get_client_by_id(client_id, db)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
-        
+
+    # ---- DEACTIVATE ----
+    updated_client = ClientService.deactivate_client(client_id, db)
+    if not updated_client:
+        raise HTTPException(status_code=400, detail="Cannot deactivate client")
+
+    # ---- LOG ----
     ActivityService.log(
         db=db,
         action="DEACTIVATE",
@@ -239,9 +276,9 @@ async def deactivate_client(
         request=request,
         background_tasks=background_tasks
     )
-        
-    # return ClientResponse(**client)
-    return client
+
+    return ClientResponse(**updated_client)
+
 @router.post("/users/{user_id}/assign", dependencies=[Depends(Permission("clients", "ADMIN"))])
 async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db: Session = Depends(get_db)):
     ClientService.assign_clients_to_user(user_id, request.client_ids, request.assigned_by, db)
