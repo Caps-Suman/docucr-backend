@@ -67,45 +67,44 @@ class DocumentTypeService:
         #     "updated_at": document_type.updated_at.isoformat()
         # }
         return document_type
-    def create(self, name: str, description: Optional[str] = None, status_id: Optional[str] = None) -> Dict:
-        """Create a new document type"""
-        # Handle status_id conversion from code to ID
+    def create(self, name: str, description: Optional[str] = None, status_id: Optional[str] = None):
+
+    # ✅ NORMALIZE FIRST
+        name = name.strip().upper()
+
+        # Resolve status
         if status_id is None or isinstance(status_id, str):
-            # If status_id is a string, treat it as a status code
             status_code = status_id if status_id else 'INACTIVE'
             status_obj = self.db.query(Status).filter(Status.code == status_code.upper()).first()
             if not status_obj:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Status '{status_code}' not found in status table"
+                    detail=f"Status '{status_code}' not found"
                 )
             status_id = status_obj.id
-        
-        # Check for case-sensitive duplicate
-        existing = self.db.query(DocumentType).filter(DocumentType.name == name).first()
+
+        # ✅ CASE-INSENSITIVE DUPLICATE CHECK
+        existing = self.db.query(DocumentType).filter(
+            DocumentType.name == name
+        ).first()
+
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Document type with this name already exists"
             )
-        
+
         try:
-            document_type = DocumentType(name=name, description=description, status_id=status_id)
+            document_type = DocumentType(
+                name=name,          # 🔥 already uppercase
+                description=description,
+                status_id=status_id
+            )
             self.db.add(document_type)
             self.db.commit()
             self.db.refresh(document_type)
-            # Need to reload status relationship to get code, or query it
-            self.db.refresh(document_type) # force load
-            # return {
-            #     "id": str(document_type.id),
-            #     "name": document_type.name,
-            #     "description": document_type.description or "",
-            #     "status_id": document_type.status_id,
-            #     "statusCode": document_type.status.code if document_type.status else "",
-            #     "created_at": document_type.created_at.isoformat(),
-            #     "updated_at": document_type.updated_at.isoformat()
-            # }
             return document_type
+
         except IntegrityError:
             self.db.rollback()
             raise HTTPException(
@@ -113,64 +112,61 @@ class DocumentTypeService:
                 detail="Document type with this name already exists"
             )
 
-    def update(self, document_type_id: str, name: Optional[str] = None, description: Optional[str] = None, status_id: Optional[str] = None) -> Dict:
-        """Update a document type"""
-        document_type = self.db.query(DocumentType).filter(DocumentType.id == document_type_id).first()
+
+    def update(self, document_type_id: str, name: Optional[str] = None,
+           description: Optional[str] = None, status_id: Optional[str] = None):
+
+        document_type = self.db.query(DocumentType).filter(
+            DocumentType.id == document_type_id
+        ).first()
+
         if not document_type:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Document type not found"
-            )
-        
-        # Check for case-sensitive duplicate when updating name
-        if name is not None and name != document_type.name:
+            raise HTTPException(status_code=404, detail="Document type not found")
+
+        # ✅ NORMALIZE NAME
+        if name is not None:
+            name = name.strip().upper()
+
+            # ✅ DUPLICATE CHECK (CASE-SAFE)
             existing = self.db.query(DocumentType).filter(
                 DocumentType.name == name,
                 DocumentType.id != document_type_id
             ).first()
+
             if existing:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Document type with this name already exists"
                 )
-        
-        # Handle status_id conversion from code to ID
-        if status_id is not None and isinstance(status_id, str) and not status_id.isdigit():
-            status_obj = self.db.query(Status).filter(Status.code == status_id.upper()).first()
-            if not status_obj:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Status '{status_id}' not found in status table"
-                )
-            status_id = status_obj.id
-        
+
+            document_type.name = name
+
+        if description is not None:
+            document_type.description = description
+
+        if status_id is not None:
+            if isinstance(status_id, str) and not status_id.isdigit():
+                status_obj = self.db.query(Status).filter(
+                    Status.code == status_id.upper()
+                ).first()
+                if not status_obj:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Status '{status_id}' not found"
+                    )
+                status_id = status_obj.id
+
+            document_type.status_id = status_id
+
         try:
-            if name is not None:
-                document_type.name = name
-            if description is not None:
-                document_type.description = description
-            if status_id is not None:
-                document_type.status_id = status_id
-            
             self.db.commit()
             self.db.refresh(document_type)
-            self.db.refresh(document_type)
-            # self.db.refresh(document_type, ['status'])
-            # return {
-            #     "id": str(document_type.id),
-            #     "name": document_type.name,
-            #     "description": document_type.description or "",
-            #     "status_id": document_type.status_id,
-            #     "statusCode": document_type.status.code if document_type.status else "",
-            #     "created_at": document_type.created_at.isoformat(),
-            #     "updated_at": document_type.updated_at.isoformat()
-            # }
             return document_type
 
         except IntegrityError:
             self.db.rollback()
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=400,
                 detail="Document type with this name already exists"
             )
 

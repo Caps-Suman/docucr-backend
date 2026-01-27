@@ -63,6 +63,11 @@ class SOPShortResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class SOPStatsResponse(BaseModel):
+    total_sops: int
+    active_sops: int
+    inactive_sops: int
+
 class SOPResponse(SOPBase):
     id: UUID
     status: Optional[StatusInfo] = None
@@ -85,18 +90,31 @@ def create_sop(
     current_user = Depends(get_current_user)
 ):
     return SOPService.create_sop(sop.model_dump(), db)
-
-@router.get("", response_model=SOPListResponse)
-def get_sops(
-    skip: int = 0, 
-    limit: int = 100, 
-    search: Optional[str] = None,
-    status_id: Optional[int] = None,
+@router.get("/stats", response_model=SOPStatsResponse)
+def get_sop_stats(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    sops, total = SOPService.get_sops(db, skip=skip, limit=limit, search=search, status_id=status_id)
+    return SOPService.get_sop_stats(db)
+
+@router.get("", response_model=SOPListResponse)
+def get_sops(
+    skip: int = 0,
+    limit: int = 100,
+    search: Optional[str] = None,
+    status_code: Optional[str] = None,   # FIX
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    sops, total = SOPService.get_sops(
+        db,
+        skip=skip,
+        limit=limit,
+        search=search,
+        status_code=status_code
+    )
     return {"sops": sops, "total": total}
+
 
 @router.get("/{sop_id}", response_model=SOPResponse)
 def get_sop(

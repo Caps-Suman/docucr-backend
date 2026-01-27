@@ -13,32 +13,88 @@ from reportlab.lib import colors
 from io import BytesIO
 
 class SOPService:
+
     @staticmethod
-    def get_sops(db: Session, skip: int = 0, limit: int = 100, search: Optional[str] = None, status_id: Optional[int] = None) -> Tuple[List[SOP], int]:
-        query = db.query(SOP).options(
+    def _base_visible_sops_query(db: Session):
+        active = db.query(Status).filter(
+            Status.code == "ACTIVE",
+            Status.type == "GENERAL"
+        ).first()
+
+        inactive = db.query(Status).filter(
+            Status.code == "INACTIVE",
+            Status.type == "GENERAL"
+        ).first()
+
+        allowed_ids = [s.id for s in (active, inactive) if s]
+
+        if not allowed_ids:
+            return db.query(SOP).filter(False)  # explicit empty
+
+        return db.query(SOP).filter(SOP.status_id.in_(allowed_ids))
+
+    @staticmethod
+    def get_sops(
+        db: Session,
+        skip: int = 0,
+        limit: int = 100,
+        search: Optional[str] = None,
+        status_code: Optional[str] = None
+    ) -> Tuple[List[SOP], int]:
+
+        query = SOPService._base_visible_sops_query(db).options(
             defer(SOP.workflow_process),
             defer(SOP.billing_guidelines),
             defer(SOP.coding_rules)
         )
-        
-        if status_id is not None:
-            query = query.filter(SOP.status_id == status_id)
-            
+
+        if status_code:
+            status = db.query(Status).filter(
+                Status.code == status_code,
+                Status.type == "GENERAL"
+            ).first()
+            if status:
+                query = query.filter(SOP.status_id == status.id)
+
         if search:
-            search_pattern = f"%{search}%"
+            p = f"%{search}%"
             query = query.filter(
-                (SOP.title.ilike(search_pattern)) |
-                (SOP.category.ilike(search_pattern)) |
-                (SOP.provider_info["providerName"].astext.ilike(search_pattern)) |
-                (SOP.provider_info["practiceName"].astext.ilike(search_pattern)) |
-                (SOP.provider_info["billingProviderNPI"].astext.ilike(search_pattern)) |
-                (SOP.provider_info["software"].astext.ilike(search_pattern))
+                SOP.title.ilike(p) |
+                SOP.category.ilike(p) |
+                SOP.provider_info["providerName"].astext.ilike(p)
             )
 
         total = query.count()
         sops = query.order_by(desc(SOP.created_at)).offset(skip).limit(limit).all()
         return sops, total
+    @staticmethod
+    def get_sop_stats(db: Session) -> Dict[str, int]:
+        """
+        Visibility stats ONLY.
+        workflow_status_id is intentionally ignored.
+        """
 
+        q = (
+            db.query(
+                func.count(SOP.id).label("total"),
+                func.count(SOP.id)
+                    .filter(Status.code == "ACTIVE")
+                    .label("active"),
+                func.count(SOP.id)
+                    .filter(Status.code == "INACTIVE")
+                    .label("inactive"),
+            )
+            .join(Status, Status.id == SOP.status_id)
+            .filter(Status.type == "GENERAL")
+        )
+
+        row = q.one()
+
+        return {
+            "total_sops": row.total,
+            "active_sops": row.active,
+            "inactive_sops": row.inactive,
+        }
     @staticmethod
     def get_sop_by_id(sop_id: str, db: Session) -> Optional[SOP]:
         return db.query(SOP).filter(SOP.id == sop_id).first()
@@ -58,6 +114,12 @@ class SOPService:
             active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
             if active_status:
                 sop_data['status_id'] = active_status.id
+        if not sop_data.get("status_id"):
+            active = db.query(Status).filter(
+                Status.code == "ACTIVE",
+                Status.type == "GENERAL"
+            ).first()
+            sop_data["status_id"] = active.id
 
         db_sop = SOP(**sop_data)
         db.add(db_sop)

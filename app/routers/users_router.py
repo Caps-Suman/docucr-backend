@@ -171,7 +171,6 @@ async def create_user(
     **UserService._format_user_response(created_user, db)
     )
 
-
 @router.put("/{user_id}", response_model=UserResponse)
 async def update_user(
     user_id: str, 

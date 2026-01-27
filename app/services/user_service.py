@@ -15,6 +15,35 @@ from app.core.security import get_password_hash
 
 class UserService:
     @staticmethod
+    def _base_visible_users_query(db: Session, current_user: User):
+        query = db.query(User).filter(
+            ~db.query(UserRole)
+            .join(Role)
+            .filter(
+                UserRole.user_id == User.id,
+                Role.name == "SUPER_ADMIN"
+            )
+            .exists()
+        )
+
+        role_names = [role.name for role in current_user.roles]
+
+        if current_user.is_superuser or "ADMIN" in role_names or "SUPER_ADMIN" in role_names:
+            return query
+
+        if current_user.is_supervisor:
+            subordinate_ids = (
+                db.query(UserSupervisor.user_id)
+                .filter(UserSupervisor.supervisor_id == current_user.id)
+            )
+            return query.filter(
+                (User.id == current_user.id) |
+                (User.id.in_(subordinate_ids))
+            )
+
+        return query.filter(User.id == current_user.id)
+
+    @staticmethod
     def _get_role_names(user: User) -> List[str]:
         return [role.name for role in user.roles]
 
@@ -241,40 +270,42 @@ class UserService:
 
         # ---- VISIBILITY ----
         if current_user.is_superuser or "ADMIN" in role_names or "SUPER_ADMIN" in role_names:
-            pass  # global stats
-
+            pass
         elif current_user.is_supervisor:
             subordinate_ids = (
                 db.query(UserSupervisor.user_id)
                 .filter(UserSupervisor.supervisor_id == current_user.id)
             )
-
             base_query = base_query.filter(
                 (User.id == current_user.id) |
                 (User.id.in_(subordinate_ids))
             )
-
         else:
             base_query = base_query.filter(User.id == current_user.id)
 
         total_users = base_query.count()
 
         active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+        inactive_status = db.query(Status).filter(Status.code == "INACTIVE").first()
+
         active_users = (
             base_query.filter(User.status_id == active_status.id).count()
             if active_status else 0
         )
 
-        admin_users = (
-            base_query.filter(User.is_superuser == True).count()
+        inactive_users = (
+            base_query.filter(User.status_id == inactive_status.id).count()
+            if inactive_status else 0
         )
 
         return {
             "total_users": total_users,
             "active_users": active_users,
-            "inactive_users": total_users - active_users,
-            "admin_users": admin_users
+            "inactive_users": inactive_users,
+            "admin_users": base_query.filter(User.is_superuser == True).count()
         }
+
+
 
     # @staticmethod
     # def get_user_stats(db: Session, current_user: User) -> Dict:
