@@ -274,6 +274,7 @@ def get_documents(
     date_to: Optional[str] = None,
     search_query: Optional[str] = None,
     form_filters: Optional[str] = None,
+    document_type_id: Optional[UUID] = None,  # ✅ ADD
     shared_only: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -283,6 +284,7 @@ def get_documents(
     documents, total_count = document_service.get_user_documents(
         db, current_user.id, skip, limit,
         status_id, date_from, date_to, search_query, form_filters,
+        document_type_id=document_type_id,  # ✅ PASS
         shared_only=shared_only
     )
     

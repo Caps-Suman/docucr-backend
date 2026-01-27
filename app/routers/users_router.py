@@ -235,11 +235,44 @@ async def activate_user(
     request: Request = None,
     current_user: User = Depends(get_current_user)
 ):
+    # ---- SELF-ACTION BLOCK ----
+    if current_user.id == user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="You cannot activate your own account"
+        )
+
+    # ---- ROLE CHECK ----
+    role_names = [role.name for role in current_user.roles]
+    is_admin = (
+        current_user.is_superuser or
+        "ADMIN" in role_names or
+        "SUPER_ADMIN" in role_names
+    )
+
+    if not is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not allowed to activate users"
+        )
+
+    # ---- TARGET USER VALIDATION ----
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if target_user.is_superuser:
+        raise HTTPException(
+            status_code=403,
+            detail="Super admin cannot be activated via API"
+        )
+
+    # ---- ACTIVATE ----
     user = UserService.activate_user(user_id, db)
     if not user:
         raise HTTPException(status_code=400, detail="Cannot activate user")
-        
-    # Log activity
+
+    # ---- ACTIVITY LOG ----
     ActivityService.log(
         db=db,
         action="ACTIVATE",
@@ -249,8 +282,9 @@ async def activate_user(
         request=request,
         background_tasks=background_tasks
     )
-    
+
     return UserResponse(**user)
+
 
 @router.post("/{user_id}/deactivate", response_model=UserResponse)
 async def deactivate_user(
@@ -261,11 +295,44 @@ async def deactivate_user(
     request: Request = None,
     current_user: User = Depends(get_current_user)
 ):
+    # ---- SELF-DEACTIVATION BLOCK ----
+    if current_user.id == user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="You cannot deactivate your own account"
+        )
+
+    # ---- ROLE CHECK ----
+    role_names = [role.name for role in current_user.roles]
+    is_admin = (
+        current_user.is_superuser or
+        "ADMIN" in role_names or
+        "SUPER_ADMIN" in role_names
+    )
+
+    if not is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not allowed to deactivate users"
+        )
+
+    # ---- TARGET USER SAFETY ----
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if target_user.is_superuser:
+        raise HTTPException(
+            status_code=403,
+            detail="Super admin cannot be deactivated"
+        )
+
+    # ---- DEACTIVATE ----
     user = UserService.deactivate_user(user_id, db)
     if not user:
         raise HTTPException(status_code=400, detail="Cannot deactivate user")
-        
-    # Log activity
+
+    # ---- ACTIVITY LOG ----
     ActivityService.log(
         db=db,
         action="DEACTIVATE",
@@ -275,7 +342,7 @@ async def deactivate_user(
         request=request,
         background_tasks=background_tasks
     )
-        
+
     return UserResponse(**user)
 
 class ChangePasswordRequest(BaseModel):
