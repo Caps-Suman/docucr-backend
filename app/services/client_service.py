@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, select
 from typing import Optional, List, Dict, Tuple
 import uuid
 from datetime import datetime
@@ -14,6 +14,61 @@ from app.models.status import Status
 
 
 class ClientService:
+
+    @staticmethod
+    def get_visible_clients(db: Session, current_user):
+        # Fetch active status
+        active_status = db.query(Status.id).filter(
+            Status.code == "ACTIVE"
+        ).scalar()
+
+        # Get role names
+        role_names = [
+            r[0] for r in db.query(Role.name)
+            .join(UserRole)
+            .filter(UserRole.user_id == current_user.id)
+            .all()
+        ]
+
+        is_admin = any(r in ["ADMIN", "SUPER_ADMIN"] for r in role_names)
+        is_supervisor = "SUPERVISOR" in role_names
+
+        # --- ADMIN: ALL CLIENTS ---
+        if is_admin:
+            return db.query(Client).filter(
+                Client.status_id == active_status
+            ).order_by(Client.business_name).all()
+
+        # --- SUPERVISOR ---
+        if is_supervisor:
+            # Clients directly assigned to supervisor
+            direct_clients = select(UserClient.client_id).where(
+                UserClient.user_id == current_user.id
+            )
+
+            # Users under supervisor
+            subordinate_users = select(UserClient.user_id).where(
+                UserClient.supervisor_id == current_user.id
+            )
+
+            subordinate_clients = select(UserClient.client_id).where(
+                UserClient.user_id.in_(subordinate_users)
+            )
+
+            return db.query(Client).filter(
+                Client.status_id == active_status,
+                Client.id.in_(direct_clients.union(subordinate_clients))
+            ).order_by(Client.business_name).all()
+
+        # --- REGULAR USER / CLIENT ---
+        assigned_clients = select(UserClient.client_id).where(
+            UserClient.user_id == current_user.id
+        )
+
+        return db.query(Client).filter(
+            Client.status_id == active_status,
+            Client.id.in_(assigned_clients)
+        ).order_by(Client.business_name).all()
     @staticmethod
     def get_client_stats(db: Session, current_user: User) -> Dict:
         # Detect admin

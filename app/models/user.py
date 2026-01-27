@@ -21,7 +21,7 @@ class User(Base):
     is_supervisor = Column(Boolean, default=False)
     is_client = Column(Boolean, default=False)
     client_id = Column(UUID(as_uuid=True), ForeignKey('docucr.client.id'), nullable=True)
-    status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
+    status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
