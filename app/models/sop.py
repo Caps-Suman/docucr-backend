@@ -24,7 +24,7 @@ class SOP(Base):
     coding_rules = Column(JSONB, nullable=True)
 
     # 🔒 Lifecycle status (ONLY ACTIVE / INACTIVE)
-    status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=False)
+    status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)
 
     # 🔁 Workflow / processing status
     workflow_status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)

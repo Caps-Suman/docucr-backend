@@ -638,6 +638,102 @@ async def get_document_report_url(
         
     return {"url": presigned_url}
 
+@router.get("/{document_id}/report-data")
+async def get_document_report_data(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("documents", "READ"))
+):
+    """Get parsed data from the analysis report XLSX with role-based access control"""
+    from ..models.user_role import UserRole
+    from ..models.role import Role
+    from ..models.status import Status
+    from ..models.user_client import UserClient
+    from ..models.client import Client
+    from ..models.document_form_data import DocumentFormData
+    from sqlalchemy import cast, String, or_
+    import pandas as pd
+    import io
+    import json
+    
+    # Get user's roles to determine access level
+    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+        User.id == current_user.id,
+        Role.status_id.in_(
+            db.query(Status.id).filter(Status.code == 'ACTIVE')
+        )
+    ).all()
+    
+    role_names = [role.name for role in user_roles]
+    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+    
+    query = db.query(Document).filter(Document.id == document_id)
+    
+    if not is_admin:
+        assigned_client_ids = select(UserClient.client_id).where(
+            UserClient.user_id == current_user.id
+        )
+        client_documents_query = db.query(Document.id).join(
+            DocumentFormData, Document.id == DocumentFormData.document_id
+        ).join(
+            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+        ).filter(
+            Client.id.in_(assigned_client_ids)
+        )
+        
+        query = query.filter(
+            or_(
+                Document.user_id == current_user.id,
+                Document.id.in_(client_documents_query)
+            )
+        )
+    
+    document = query.first()
+    if not document or not document.analysis_report_s3_key:
+        raise HTTPException(status_code=404, detail="Analysis report not found")
+        
+    from ..services.s3_service import s3_service
+    
+    try:
+        # Download XLSX from S3
+        file_bytes = await s3_service.download_file(document.analysis_report_s3_key)
+        
+        # Read XLSX using pandas
+        df = pd.read_excel(io.BytesIO(file_bytes))
+        
+        # Parse data
+        findings = []
+        for _, row in df.iterrows():
+            extracted_data_raw = row.get("Extracted Data", "{}")
+            
+            # Handle potential nan or empty
+            if pd.isna(extracted_data_raw) or not extracted_data_raw:
+                extracted_data_raw = "{}"
+            
+            try:
+                # If it's already a dict (pandas might parse stringified JSON if it looks like one)
+                if isinstance(extracted_data_raw, dict):
+                    extracted_data = extracted_data_raw
+                else:
+                    # Replace single quotes with double quotes for JSON parsing if needed
+                    # but pandas/openpyxl should have given us a clean string
+                    extracted_data = json.loads(str(extracted_data_raw).replace("'", '"'))
+            except:
+                extracted_data = {"raw_data": str(extracted_data_raw)}
+                
+            findings.append({
+                "document_type": row.get("Document Type", "Unknown"),
+                "page_range": row.get("Page Range", "Unknown"),
+                "extracted_data": extracted_data
+            })
+            
+        return {"findings": findings}
+        
+    except Exception as e:
+        print(f"Error parsing report data: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to parse report data: {str(e)}")
+
 @router.post("/{document_id}/cancel")
 async def cancel_document(
     document_id: int,

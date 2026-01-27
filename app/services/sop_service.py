@@ -207,7 +207,7 @@ class SOPService:
             [
                 mk_field('Address', p_info.get('billingAddress')),
                 mk_field('Clearinghouse', p_info.get('clearinghouse')),
-                mk_field('Status', sop.status.code if sop.status else 'Active')
+                mk_field('Status', sop.lifecycle_status.code if sop.lifecycle_status else 'Active')
             ]
         ]
         
