@@ -68,6 +68,14 @@ class AssignClientsRequest(BaseModel):
     client_ids: List[str]
     assigned_by: str
 
+class BulkClientCreateRequest(BaseModel):
+    clients: List[ClientCreate]
+
+class BulkClientCreateResponse(BaseModel):
+    success: int
+    failed: int
+    errors: List[str]
+
 @router.get("/stats", dependencies=[Depends(Permission("clients", "READ"))])
 def get_client_stats(
     db: Session = Depends(get_db),
@@ -251,3 +259,43 @@ async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db
 async def get_user_clients(user_id: str, db: Session = Depends(get_db)):
     clients = ClientService.get_user_clients(user_id, db)
     return [ClientResponse(**client) for client in clients]
+
+@router.post("/bulk", response_model=BulkClientCreateResponse, dependencies=[Depends(Permission("clients", "CREATE"))])
+async def create_clients_bulk(
+    request: BulkClientCreateRequest,
+    db: Session = Depends(get_db),
+    request_obj: Request = None,
+    background_tasks: BackgroundTasks = None,
+    current_user: User = Depends(get_current_user)
+):
+    success = 0
+    failed = 0
+    errors = []
+    
+    for client_data in request.clients:
+        try:
+            client = ClientService.create_client(client_data.dict(), db)
+            if client:
+                success += 1
+                
+                ActivityService.log(
+                    db=db,
+                    action="CREATE",
+                    entity_type="client",
+                    entity_id=client.id,
+                    user_id=current_user.id,
+                    request=request_obj,
+                    background_tasks=background_tasks
+                )
+            else:
+                failed += 1
+                errors.append(f"Failed to create client with data: {client_data}")
+        except Exception as e:
+            failed += 1
+            errors.append(f"Error creating client: {str(e)}")
+    
+    return BulkClientCreateResponse(
+        success=success,
+        failed=failed,
+        errors=errors
+    )
