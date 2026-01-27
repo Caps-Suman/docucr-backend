@@ -153,7 +153,15 @@ def update_form(
         changes = {}
         existing_form_dict = FormService.get_form_by_id(form_id, db)
         if existing_form_dict:
+            # Normalize status_id to statusCode for readable logs
+            if 'status_id' in form_data and existing_form_dict.get('statusCode'):
+                existing_form_dict['status_id'] = existing_form_dict['statusCode']
+                
             changes = ActivityService.calculate_changes(existing_form_dict, form_data, exclude=["fields"])
+            
+            # Rename status_id to Status
+            if 'status_id' in changes:
+                changes['Status'] = changes.pop('status_id')
 
         updated_form = FormService.update_form(form_id, form_data, db)
         if not updated_form:

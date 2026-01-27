@@ -161,7 +161,15 @@ async def update_client(
     changes = {}
     existing_client = ClientService.get_client_by_id(client_id, db)
     if existing_client:
+        # Normalize status_id to statusCode for readable logs
+        if 'status_id' in client_data and existing_client.get('statusCode'):
+            existing_client['status_id'] = existing_client['statusCode']
+            
         changes = ActivityService.calculate_changes(existing_client, client_data)
+        
+        # Rename status_id to Status
+        if 'status_id' in changes:
+            changes['Status'] = changes.pop('status_id')
 
     updated_client = ClientService.update_client(client_id, client_data, db)
     if not updated_client:
