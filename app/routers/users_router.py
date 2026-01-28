@@ -79,6 +79,7 @@ class UserResponse(BaseModel):
     is_superuser: bool
     roles: List[dict]
     supervisor_id: Optional[str]
+    client_count: int = 0
     
     class Config:
         from_attributes = True

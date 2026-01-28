@@ -379,6 +379,7 @@ class UserService:
              status_obj = db.query(Status).filter(Status.id == user.status_id).first()
              if status_obj:
                  status_code = status_obj.code
+        client_count = db.query(UserClient).filter(UserClient.user_id == user.id).count()
 
         return {
             "id": user.id,
@@ -393,7 +394,8 @@ class UserService:
             "statusCode": status_code,   # String
             "is_superuser": user.is_superuser,
             "roles": roles,
-            "supervisor_id": supervisor_id
+            "supervisor_id": supervisor_id,
+            "client_count": client_count
         }
 
     @staticmethod
