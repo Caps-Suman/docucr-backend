@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+import tempfile
+import uuid
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any, Dict
@@ -7,6 +10,7 @@ from uuid import UUID
 import io
 
 from app.core.database import get_db
+from app.services.ai_sop_service import AISOPService
 from app.services.sop_service import SOPService
 from app.core.security import get_current_user
 # Assuming generic permissions or skipping for now as per "simple integration" request, but better to be safe.
@@ -23,6 +27,9 @@ router = APIRouter()
 # So schemas are likely inside routers or models or separate files? 
 # Clients router defined models inline. I will do the same.
 
+class BillingGuideline(BaseModel):
+    title: str
+    description: str
 class SOPBase(BaseModel):
     title: str
     category: str
@@ -30,7 +37,8 @@ class SOPBase(BaseModel):
     client_id: Optional[UUID] = None
     provider_info: Optional[Dict[str, Any]] = None
     workflow_process: Optional[Dict[str, Any]] = None
-    billing_guidelines: Optional[List[Dict[str, Any]]] = None
+    # billing_guidelines: Optional[List[Dict[str, Any]]] = None
+    billing_guidelines: Optional[List[BillingGuideline]]=None
     coding_rules: Optional[List[Dict[str, Any]]] = None
     status_id: Optional[int] = None
 
@@ -80,6 +88,9 @@ class SOPResponse(SOPBase):
 class SOPListResponse(BaseModel):
     sops: List[SOPShortResponse]
     total: int
+class AISOPExtractResponse(BaseModel):
+    source_file: str
+    extracted_data: Dict[str, Any]
 
 # --- Endpoints ---
 
@@ -115,6 +126,56 @@ def get_sops(
     )
     return {"sops": sops, "total": total}
 
+@router.post("/ai/extract-sop", response_model=AISOPExtractResponse, status_code=200)
+async def ai_extract_sop(
+    file: UploadFile = File(...),
+    current_user = Depends(get_current_user)
+):
+    allowed_types = {
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    }
+
+    if file.content_type not in allowed_types:
+        raise HTTPException(400, "Unsupported file type")
+
+    temp_file_path = None
+
+    try:
+        # ✅ OS-safe temp file
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=f"_{uuid.uuid4().hex}"
+        ) as tmp:
+            temp_file_path = tmp.name
+            tmp.write(await file.read())
+
+        # ---- extract raw text ----
+        text = AISOPService.extract_text(
+            temp_file_path,
+            file.content_type
+        )
+
+        if not text.strip():
+            raise HTTPException(422, "No readable text found")
+
+        # ---- AI extraction ----
+        structured = await AISOPService.ai_extract_sop_structured(text)
+
+        return {
+            "source_file": file.filename,
+            "extracted_data": structured
+        }
+
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+    finally:
+        # ✅ guaranteed cleanup
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
 
 @router.get("/{sop_id}", response_model=SOPResponse)
 def get_sop(
