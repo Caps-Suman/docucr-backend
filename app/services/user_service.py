@@ -46,6 +46,36 @@ class UserService:
     @staticmethod
     def _get_role_names(user: User) -> List[str]:
         return [role.name for role in user.roles]
+    @staticmethod
+    def get_users_by_role(role_id: str, db: Session, current_user: User) -> List[Dict]:
+        query = (
+            db.query(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .filter(UserRole.role_id == role_id)
+            .filter(
+                ~db.query(UserRole)
+                .join(Role)
+                .filter(
+                    UserRole.user_id == User.id,
+                    Role.name == "SUPER_ADMIN"
+                )
+                .exists()
+            )
+        )
+
+        # Visibility rules
+        if not UserService._is_admin(current_user):
+            if current_user.is_supervisor:
+                subordinate_ids = (
+                    db.query(UserSupervisor.user_id)
+                    .filter(UserSupervisor.supervisor_id == current_user.id)
+                )
+                query = query.filter(User.id.in_(subordinate_ids))
+            else:
+                query = query.filter(False)
+
+        users = query.all()
+        return [UserService._format_user_response(u, db) for u in users]
 
     @staticmethod
     def _is_admin(user: User) -> bool:
@@ -423,21 +453,27 @@ class UserService:
 
         supervisor = db.query(User).filter(User.id == supervisor_id).first()
         if not supervisor:
-            raise ValueError("Supervisor user not found")
+            raise ValueError("Supervisor not found")
 
-        # Create mapping
-        supervisor_link = UserSupervisor(
+        # Validate shared role
+        user_roles = {
+            r.role_id for r in db.query(UserRole).filter(UserRole.user_id == user_id)
+        }
+        supervisor_roles = {
+            r.role_id for r in db.query(UserRole).filter(UserRole.user_id == supervisor_id)
+        }
+
+        if not user_roles.intersection(supervisor_roles):
+            raise ValueError("Supervisor must share at least one role with user")
+
+        db.add(UserSupervisor(
             id=str(uuid.uuid4()),
-            user_id=user_id,           # newly created user
+            user_id=user_id,
             supervisor_id=supervisor_id
-        )
-        db.add(supervisor_link)
-
-        # Mark supervisor flag
-        if not supervisor.is_supervisor:
-            supervisor.is_supervisor = True
+        ))
 
         db.commit()
+
 
     @staticmethod
     def change_password(user_id: str, new_password: str, db: Session) -> bool:

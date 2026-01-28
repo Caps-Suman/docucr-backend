@@ -116,6 +116,16 @@ async def get_user_stats(
 ):
     return UserService.get_user_stats(db, current_user)
 
+@router.get("/by-role", response_model=List[UserResponse])
+async def get_users_by_role(
+    role_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    permission: bool = Depends(Permission("user_module", "READ"))
+):
+    users = UserService.get_users_by_role(role_id, db, current_user)
+    return [UserResponse(**u) for u in users]
+
 @router.get("/email/{email}", response_model=UserResponse)
 async def get_user_by_email(
     email: str, 
