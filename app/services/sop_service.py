@@ -1,5 +1,4 @@
 from importlib.resources import path
-
 import uuid
 from sqlalchemy.orm import Session, defer
 from sqlalchemy import desc, func

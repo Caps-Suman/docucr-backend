@@ -28,6 +28,16 @@ class ClientCreate(BaseModel):
     description: Optional[str] = None
     user_id: Optional[str] = None
 
+    # ✅ NEW ADDRESS FIELDS
+    address_line_1: Optional[str] = Field(None, max_length=250)
+    address_line_2: Optional[str] = Field(None, max_length=250)
+    state_code: Optional[str] = Field(None, min_length=2, max_length=2)
+    state_name: Optional[str] = Field(None, max_length=50)
+    country: Optional[str] = Field(default="United States", max_length=50)
+    zip_code: Optional[str] = Field(None, min_length=5, max_length=5)
+    zip_extension: Optional[str] = Field(None, min_length=4, max_length=4)
+
+
 class ClientUpdate(BaseModel):
     business_name: Optional[str] = None
     first_name: Optional[str] = None
@@ -38,6 +48,16 @@ class ClientUpdate(BaseModel):
     type: Optional[str] = None
     status_id: Optional[str] = None
     description: Optional[str] = None
+
+    # ✅ NEW ADDRESS FIELDS
+    address_line_1: Optional[str] = Field(None, max_length=250)
+    address_line_2: Optional[str] = Field(None, max_length=250)
+    state_code: Optional[str] = Field(None, min_length=2, max_length=2)
+    state_name: Optional[str] = Field(None, max_length=50)
+    country: Optional[str] = Field(None, max_length=50)
+    zip_code: Optional[str] = Field(None, min_length=5, max_length=5)
+    zip_extension: Optional[str] = Field(None, min_length=4, max_length=4)
+
 
 class ClientResponse(BaseModel):
     id: UUID
@@ -51,12 +71,18 @@ class ClientResponse(BaseModel):
     status_id: Optional[int]
     statusCode: Optional[str]
     description: Optional[str]
+
+    # ✅ ONLY EXTRA FIELD FOR LIST
+    state_name: Optional[str]
+
     assigned_users: List[str] = []
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
     class Config:
         from_attributes = True
+
+
 
 class ClientListResponse(BaseModel):
     clients: List[ClientResponse]

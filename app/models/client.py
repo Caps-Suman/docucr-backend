@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, Integer
+from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, Integer, CheckConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID
@@ -7,19 +7,40 @@ import uuid
 
 class Client(Base):
     __tablename__ = "client"
-    __table_args__ = {'schema': 'docucr'}
-    
+    __table_args__ = (
+        CheckConstraint("char_length(state_code) = 2", name="ck_client_state_code_len"),
+        CheckConstraint("zip_code ~ '^[0-9]{5}$'", name="ck_client_zip"),
+        CheckConstraint("zip_extension IS NULL OR zip_extension ~ '^[0-9]{4}$'", name="ck_client_zip_ext"),
+        {'schema': 'docucr'}
+    )
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    business_name = Column(String, nullable=True)
-    first_name = Column(String, nullable=True)
-    middle_name = Column(String, nullable=True)
-    last_name = Column(String, nullable=True)
-    npi = Column(String, nullable=True, index=True)
+
+    # --- Identity ---
+    business_name = Column(String(255), nullable=True)
+    first_name = Column(String(100), nullable=True)
+    middle_name = Column(String(100), nullable=True)
+    last_name = Column(String(100), nullable=True)
+
+    # --- Provider ---
+    npi = Column(String(10), nullable=True, index=True)  # NPI is 10 digits
+    type = Column(String(50), nullable=True)
+
+    # --- Address ---
+    address_line_1 = Column(String(250), nullable=True)
+    address_line_2 = Column(String(250), nullable=True)
+    state_code = Column(String(2), nullable=True)        # e.g. VA, CA
+    state_name = Column(String(50), nullable=True)       # e.g. Virginia
+    country = Column(String(50), nullable=True, default="United States")
+    zip_code = Column(String(5), nullable=True)
+    zip_extension = Column(String(4), nullable=True)
+
+    # --- System ---
     is_user = Column(Boolean, default=False)
     user_id = Column(String, ForeignKey('docucr.user.id'), nullable=True)
-    type = Column(String, nullable=True)
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
     description = Column(Text, nullable=True)
+
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

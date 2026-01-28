@@ -332,10 +332,15 @@ class ClientService:
             "npi": client.npi,
             "is_user": client.is_user,
             "type": client.type,
-            "status_id": client.status_id, # Integer
-            "statusCode": status_code,     # String
+            "status_id": client.status_id,
+            "statusCode": status_code,
             "description": client.description,
+
+            # ✅ ADD THIS ONE LINE ONLY
+            "state_name": client.state_name,
+
             "assigned_users": assigned_users,
             "created_at": client.created_at.isoformat() if client.created_at else None,
             "updated_at": client.updated_at.isoformat() if client.updated_at else None
         }
+

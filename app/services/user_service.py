@@ -46,6 +46,36 @@ class UserService:
     @staticmethod
     def _get_role_names(user: User) -> List[str]:
         return [role.name for role in user.roles]
+    @staticmethod
+    def get_users_by_role(role_id: str, db: Session, current_user: User) -> List[Dict]:
+        query = (
+            db.query(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .filter(UserRole.role_id == role_id)
+            .filter(
+                ~db.query(UserRole)
+                .join(Role)
+                .filter(
+                    UserRole.user_id == User.id,
+                    Role.name == "SUPER_ADMIN"
+                )
+                .exists()
+            )
+        )
+
+        # Visibility rules
+        if not UserService._is_admin(current_user):
+            if current_user.is_supervisor:
+                subordinate_ids = (
+                    db.query(UserSupervisor.user_id)
+                    .filter(UserSupervisor.supervisor_id == current_user.id)
+                )
+                query = query.filter(User.id.in_(subordinate_ids))
+            else:
+                query = query.filter(False)
+
+        users = query.all()
+        return [UserService._format_user_response(u, db) for u in users]
 
     @staticmethod
     def _is_admin(user: User) -> bool:
@@ -189,6 +219,57 @@ class UserService:
             user.is_client = True
             client.is_user = True
             
+            db.commit()
+
+    @staticmethod
+    def get_user_clients(user_id: str, db: Session) -> List[Dict]:
+        """Fetch all clients mapped to a specific user"""
+        results = db.query(Client).join(UserClient, UserClient.client_id == Client.id).filter(UserClient.user_id == user_id).all()
+        
+        # We need to format the clients. I'll use a simplified dict for now, 
+        # or we could move formatting to ClientService or something similar.
+        # But for now, returning simple dicts is fine to match the requirement.
+        
+        # User defined ClientResponse schema is in clients_router usually or client_service.
+        # Since I am in UserService, I will return raw models and let router handle Pydantic conversion 
+        # OR return formatted dicts. returning Models is better for Pydantic in Router.
+        return results
+
+    @staticmethod
+    def map_clients_to_user(user_id: str, client_ids: List[str], assigned_by: str, db: Session):
+        """Map multiple clients to a user"""
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+             raise ValueError("User not found")
+
+        # Get existing mappings to avoid duplicates
+        existing_client_ids = {
+            str(uc.client_id) for uc in db.query(UserClient.client_id).filter(UserClient.user_id == user_id).all()
+        }
+
+        new_mappings = []
+        for cid in client_ids:
+            if cid not in existing_client_ids:
+                 new_mappings.append(UserClient(
+                     id=str(uuid.uuid4()),
+                     user_id=user_id,
+                     client_id=cid,
+                     assigned_by=assigned_by
+                 ))
+        
+        if new_mappings:
+            db.add_all(new_mappings)
+            # Ensure flags are set?
+            # If we map a client to a user, does it mean user.is_client = True?
+            # Based on _link_client logic:
+            if not user.is_client:
+                user.is_client = True
+            
+            # Also update client.is_user?
+            # We should probably update the clients too.
+            if new_mappings:
+                 db.query(Client).filter(Client.id.in_(client_ids)).update({Client.is_user: True}, synchronize_session=False)
+
             db.commit()
 
     @staticmethod
@@ -425,21 +506,27 @@ class UserService:
 
         supervisor = db.query(User).filter(User.id == supervisor_id).first()
         if not supervisor:
-            raise ValueError("Supervisor user not found")
+            raise ValueError("Supervisor not found")
 
-        # Create mapping
-        supervisor_link = UserSupervisor(
+        # Validate shared role
+        user_roles = {
+            r.role_id for r in db.query(UserRole).filter(UserRole.user_id == user_id)
+        }
+        supervisor_roles = {
+            r.role_id for r in db.query(UserRole).filter(UserRole.user_id == supervisor_id)
+        }
+
+        if not user_roles.intersection(supervisor_roles):
+            raise ValueError("Supervisor must share at least one role with user")
+
+        db.add(UserSupervisor(
             id=str(uuid.uuid4()),
-            user_id=user_id,           # newly created user
+            user_id=user_id,
             supervisor_id=supervisor_id
-        )
-        db.add(supervisor_link)
-
-        # Mark supervisor flag
-        if not supervisor.is_supervisor:
-            supervisor.is_supervisor = True
+        ))
 
         db.commit()
+
 
     @staticmethod
     def change_password(user_id: str, new_password: str, db: Session) -> bool:
