@@ -142,7 +142,7 @@ class ClientService:
             )
         
         total = query.count()
-        clients = query.offset(skip).limit(page_size).all()
+        clients = query.order_by(Client.created_at.desc()).offset(skip).limit(page_size).all()
         
         return [ClientService._format_client(c, db) for c in clients], total
 
@@ -291,7 +291,7 @@ class ClientService:
         user_clients = db.query(Client).join(UserClient, Client.id == UserClient.client_id).filter(
             UserClient.user_id == user_id,
             Client.deleted_at.is_(None)
-        ).all()
+        ).order_by(Client.created_at.desc()).all()
         return [ClientService._format_client(c, db) for c in user_clients]
 
     @staticmethod

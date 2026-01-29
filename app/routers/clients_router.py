@@ -112,6 +112,12 @@ def _is_admin_user(user: User) -> bool:
         "ADMIN" in role_names or
         "SUPER_ADMIN" in role_names
     )
+class NPICheckRequest(BaseModel):
+    npis: List[str]
+
+class NPICheckResponse(BaseModel):
+    existing_npis: List[str]
+
 class BulkClientCreateRequest(BaseModel):
     clients: List[ClientCreate]
 
@@ -355,6 +361,14 @@ async def get_user_clients(user_id: str, db: Session = Depends(get_db)):
     clients = ClientService.get_user_clients(user_id, db)
     return [ClientResponse(**client) for client in clients]
 
+@router.post("/check-npis", response_model=NPICheckResponse, dependencies=[Depends(Permission("clients", "READ"))])
+async def check_existing_npis(request: NPICheckRequest, db: Session = Depends(get_db)):
+    existing = db.query(Client.npi).filter(
+        Client.npi.in_(request.npis),
+        Client.deleted_at.is_(None)
+    ).all()
+    return NPICheckResponse(existing_npis=[n[0] for n in existing if n[0]])
+
 @router.post("/bulk", response_model=BulkClientCreateResponse, dependencies=[Depends(Permission("clients", "CREATE"))])
 async def create_clients_bulk(
     request: BulkClientCreateRequest,
@@ -369,6 +383,12 @@ async def create_clients_bulk(
     
     for client_data in request.clients:
         try:
+            # Duplicate NPI check
+            if client_data.npi and ClientService.check_npi_exists(client_data.npi, None, db):
+                failed += 1
+                errors.append(f"NPI already exists: {client_data.npi}")
+                continue
+
             client = ClientService.create_client(client_data.dict(), db)
             if client:
                 success += 1
