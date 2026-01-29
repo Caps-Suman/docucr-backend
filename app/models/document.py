@@ -47,6 +47,11 @@ class Document(Base):
     # Relationships to new tables
     extracted_documents = relationship("ExtractedDocument", back_populates="document", cascade="all, delete-orphan")
     unverified_documents = relationship("UnverifiedDocument", back_populates="document", cascade="all, delete-orphan")
-    
+    shares = relationship(
+    "DocumentShare",
+    back_populates="document",
+    cascade="all, delete-orphan"
+    )
+
     # metadata relationship
     form_data_relation = relationship("DocumentFormData", back_populates="document", uselist=False, cascade="all, delete-orphan")

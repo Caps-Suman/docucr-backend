@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
+import json
 
 from app.models.user_client import UserClient
 from ..core.database import get_db
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 document_service= DocumentService()
 
+
 @router.post("/upload", response_model=List[dict])
 async def upload_documents(
     files: List[UploadFile] = File(...),
@@ -34,37 +36,105 @@ async def upload_documents(
     form_data: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "CREATE")),
+    _: bool = Depends(Permission("documents", "CREATE")),
     background_tasks: BackgroundTasks = None,
-    request: Request = None
+    request: Request = None,
 ):
-    """Upload multiple documents - returns immediately with queued status"""
+    """
+    Upload multiple documents.
+    Client ownership is enforced server-side.
+    """
+
+    # ─────────────────────────────
+    # 1. BASIC VALIDATION
+    # ─────────────────────────────
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
-    
-    # Validate file sizes (max 1GB per file)
+
     for file in files:
-        if file.size and file.size > 1024 * 1024 * 1024:  # 1GB
-            raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds 1GB limit")
-    
-    # Create document records immediately and start background processing
+        if file.size and file.size > 1024 * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File {file.filename} exceeds 1GB limit",
+            )
+
+    # ─────────────────────────────
+    # 2. PARSE form_data ONCE
+    # ─────────────────────────────
+    parsed_form_data: dict = {}
+
+    if form_data:
+        try:
+            parsed_form_data = json.loads(form_data)
+            if not isinstance(parsed_form_data, dict):
+                raise ValueError
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid form_data JSON",
+            )
+
+    # ─────────────────────────────
+    # 3. ENFORCE CLIENT OWNERSHIP
+    # ─────────────────────────────
+    frontend_client_id = parsed_form_data.get("client_id")
+
+    if current_user.is_client:
+        # Client users MUST have a client_id
+        if not current_user.client_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Client user has no assigned client",
+            )
+
+        # 🔒 FORCE client_id (ignore frontend completely)
+        enforced_client_id = str(current_user.client_id)
+
+    else:
+        # Admin / Staff users
+        enforced_client_id = frontend_client_id
+
+    if enforced_client_id:
+        parsed_form_data["client_id"] = enforced_client_id
+
+    # Serialize back
+    final_form_data = json.dumps(parsed_form_data) if parsed_form_data else None
+
+    # ─────────────────────────────
+    # 4. PROCESS UPLOAD
+    # ─────────────────────────────
     documents = await document_service.process_multiple_uploads(
-        db, files, current_user.id, enable_ai, document_type_id, template_id, form_id, form_data
+        db=db,
+        files=files,
+        user_id=current_user.id,
+        enable_ai=enable_ai,
+        document_type_id=document_type_id,
+        template_id=template_id,
+        form_id=form_id,
+        form_data=final_form_data,
     )
 
-    # Activity Log
+    # ─────────────────────────────
+    # 5. ACTIVITY LOG
+    # ─────────────────────────────
     for doc in documents:
         ActivityService.log(
-            db,
+            db=db,
             action="CREATE",
             entity_type="document",
             entity_id=str(doc.id),
             user_id=current_user.id,
-            details={"filename": doc.filename, "size": doc.file_size},
+            details={
+                "filename": doc.filename,
+                "size": doc.file_size,
+            },
             request=request,
-            background_tasks=background_tasks
+            background_tasks=background_tasks,
         )
-    
+
+    # ─────────────────────────────
+    # 6. RESPONSE
+    # ─────────────────────────────
     return [
         {
             "id": doc.id,
@@ -72,11 +142,10 @@ async def upload_documents(
             "status_id": doc.status_id,
             "statusCode": doc.status.code if doc.status else None,
             "file_size": doc.file_size,
-            "upload_progress": doc.upload_progress
+            "upload_progress": doc.upload_progress,
         }
         for doc in documents
     ]
-
 # ... existing get_documents ...
 
 @router.get("/{document_id}/form-data")
