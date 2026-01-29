@@ -52,5 +52,9 @@ class Client(Base):
         return self.status_relation.code if self.status_relation else None
 
     @property
+    def status_code(self):
+        return self.statusCode
+
+    @property
     def assigned_users(self):
         return [f"{u.first_name} {u.last_name}" for u in self.users]
