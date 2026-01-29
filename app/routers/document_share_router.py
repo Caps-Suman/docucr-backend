@@ -21,27 +21,33 @@ async def share_documents(
     request: ShareDocumentsRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
     permission: bool = Depends(Permission("documents", "SHARE")),
-    req: Request = None,
-    background_tasks: BackgroundTasks = None
 ):
-    """Share documents with users"""
     service = DocumentShareService(db)
-    service.share_documents(request.document_ids, request.user_ids, current_user.id)
-    
-    for doc_id in request.document_ids:
-        ActivityService.log(
-            db,
-            action="SHARE",
-            entity_type="document",
-            entity_id=str(doc_id),
-            user_id=current_user.id,
-            details={"shared_with": request.user_ids},
-            request=req,
-            background_tasks=background_tasks
-        )
-    
-    return {"message": "Documents shared successfully"}
+    created, users = service.share_documents(
+        request.document_ids,
+        request.user_ids,
+        current_user.id
+    )
+
+    if created > 0:
+        for user in users:
+            background_tasks.add_task(
+                DocumentShareService.send_internal_share_email,
+                user.email,
+                f"{current_user.first_name} {current_user.last_name}",
+                len(request.document_ids)
+            )
+
+    return {
+        "message": (
+            "Documents shared successfully"
+            if created > 0
+            else "Documents were already shared with the selected users"
+        ),
+        "new_shares": created
+    }
 
 @router.get("/shared-with-me")
 async def get_shared_documents(

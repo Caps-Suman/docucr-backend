@@ -72,9 +72,12 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
                 "email": user.email,
                 "first_name": user.first_name,
                 "last_name": user.last_name,
-                "role": roles[0]
+                "role": roles[0],
+                "client_id": str(user.client_id) if user.client_id else None,
+                "is_client": user.is_client
             }
         }
+
     
     from app.core.security import create_access_token
     temp_token = create_access_token(data={"sub": user.email, "temp": True}, expires_delta=timedelta(minutes=5))
@@ -108,13 +111,15 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
     return {
         **tokens,
         "user": {
-            "id": current_user.id,
-            "email": current_user.email,
-            "first_name": current_user.first_name,
-            "last_name": current_user.last_name,
-            "role": {"id": role.id, "name": role.name}
-        }
-    }
+                "id": current_user.id,
+                "email": current_user.email,
+                "first_name": current_user.first_name,
+                "last_name": current_user.last_name,
+                "role": {"id": role.id, "name": role.name},
+                "client_id": str(current_user.client_id) if current_user.client_id else None,
+                "is_client": current_user.is_client
+            }
+         }
 
 @router.post("/forgot-password")
 async def forgot_password(request: ForgotPasswordRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):

@@ -27,6 +27,13 @@ class User(Base):
     
     documents = relationship("Document", back_populates="user")
     status_relation = relationship("Status")
+    shared_documents = relationship(
+    "DocumentShare",
+    foreign_keys="DocumentShare.user_id",
+    back_populates="user",
+    cascade="all, delete-orphan"
+    )
+
     roles = relationship(
     "Role",
     secondary="docucr.user_role",

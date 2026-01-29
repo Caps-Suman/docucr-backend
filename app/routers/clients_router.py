@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from app.models.client import Client
 from app.services.activity_service import ActivityService
 from app.core.permissions import Permission
 from sqlalchemy.orm import Session
@@ -122,6 +123,28 @@ def get_visible_clients(
     current_user = Depends(get_current_user),
 ):
     return ClientService.get_visible_clients(db, current_user)
+
+@router.get("/me", response_model=ClientResponse)
+async def get_my_client(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 🔒 Only client users allowed
+    if not current_user.client_id:
+        raise HTTPException(
+            status_code=403,
+            detail="This user is not linked to a client"
+        )
+
+    client = db.query(Client).filter(
+        Client.id == current_user.client_id,
+        Client.deleted_at.is_(None)
+    ).first()
+
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    return ClientResponse(**ClientService._format_client(client, db))
 
 @router.get("", response_model=ClientListResponse, dependencies=[Depends(Permission("clients", "READ"))])
 @router.get("/", response_model=ClientListResponse, dependencies=[Depends(Permission("clients", "READ"))])
