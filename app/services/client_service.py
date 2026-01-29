@@ -171,8 +171,7 @@ class ClientService:
         if user_id:
             ClientService._link_user(new_client, user_id, db)
 
-        # return ClientService._format_client(new_client, db)
-        return new_client
+        return ClientService._format_client(new_client, db)
 
     @staticmethod
     def _link_user(client: Client, user_id: str, db: Session):
@@ -214,7 +213,7 @@ class ClientService:
         
         db.commit()
         db.refresh(client)
-        return client
+        return ClientService._format_client(client, db)
     @staticmethod
     def activate_client(client_id: str, db: Session) -> Optional[Dict]:
         client = db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
@@ -226,7 +225,7 @@ class ClientService:
             client.status_id = active_status.id
             db.commit()
             db.refresh(client)
-        return client
+        return ClientService._format_client(client, db)
     @staticmethod
     def deactivate_client(client_id: str, db: Session) -> Optional[Dict]:
         client = db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
@@ -262,7 +261,7 @@ class ClientService:
             
             db.commit()
             db.refresh(client)
-        return client
+        return ClientService._format_client(client, db)
     @staticmethod
     def assign_clients_to_user(
         user_id: str,
@@ -333,10 +332,11 @@ class ClientService:
             "is_user": client.is_user,
             "type": client.type,
             "status_id": client.status_id,
+            "status_code": status_code,
             "statusCode": status_code,
             "description": client.description,
 
-            # ✅ ADD THIS ONE LINE ONLY
+            # ADD THIS ONE LINE ONLY
             "state_name": client.state_name,
 
             "assigned_users": assigned_users,

@@ -14,7 +14,7 @@ class Status(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     
-    # ✅ REQUIRED
+    #REQUIRED
     templates = relationship(
         "Template",
         back_populates="status",

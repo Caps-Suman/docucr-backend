@@ -81,9 +81,10 @@ class ClientResponse(BaseModel):
     type: Optional[str]
     status_id: Optional[int]
     statusCode: Optional[str]
+    status_code: Optional[str]
     description: Optional[str]
 
-    # ✅ ONLY EXTRA FIELD FOR LIST
+    # ONLY EXTRA FIELD FOR LIST
     state_name: Optional[str]
 
     assigned_users: List[str] = []
@@ -216,15 +217,14 @@ async def create_client(
         db=db,
         action="CREATE",
         entity_type="client",
-        entity_id=str(created_client.id),
+        entity_id=str(created_client['id']),
         user_id=current_user.id,
-        details={"name": created_client.business_name},
+        details={"name": created_client['business_name']},
         request=request,
         background_tasks=background_tasks
     )
     
-    # return ClientResponse(**created_client)
-    return created_client
+    return ClientResponse(**created_client)
 
 @router.put("/{client_id}", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def update_client(
@@ -265,15 +265,14 @@ async def update_client(
         entity_id=client_id,
         user_id=current_user.id,
         details={
-            "name": updated_client.business_name,
+            "name": updated_client['business_name'],
             "changes": changes
         },
         request=request,
         background_tasks=background_tasks
     )
         
-    # return ClientResponse(**updated_client)
-    return updated_client
+    return ClientResponse(**updated_client)
 @router.post("/{client_id}/activate", response_model=ClientResponse,
              dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def activate_client(
@@ -397,7 +396,7 @@ async def create_clients_bulk(
                     db=db,
                     action="CREATE",
                     entity_type="client",
-                    entity_id=client.id,
+                    entity_id=str(client['id']),
                     user_id=current_user.id,
                     request=request_obj,
                     background_tasks=background_tasks
