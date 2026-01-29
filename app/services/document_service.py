@@ -47,7 +47,8 @@ class DocumentService:
             # ---------- DOCX ----------
             if content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                 from io import BytesIO
-                doc = Document(BytesIO(file_bytes))
+                from docx import Document as DocxDocument
+                doc = DocxDocument(BytesIO(file_bytes))
 
                 # Word pages are NOT real pages; this is best-effort
                 # Rule: every section break counts as new page
