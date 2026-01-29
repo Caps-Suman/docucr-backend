@@ -35,9 +35,10 @@ class ClientService:
 
         # --- ADMIN: ALL CLIENTS ---
         if is_admin:
-            return db.query(Client).filter(
+            clients = db.query(Client).filter(
                 Client.status_id == active_status
             ).order_by(Client.business_name).all()
+            return [ClientService._format_client(c, db) for c in clients]
 
         # --- SUPERVISOR ---
         if is_supervisor:
@@ -55,20 +56,23 @@ class ClientService:
                 UserClient.user_id.in_(subordinate_users)
             )
 
-            return db.query(Client).filter(
+            clients = db.query(Client).filter(
                 Client.status_id == active_status,
                 Client.id.in_(direct_clients.union(subordinate_clients))
             ).order_by(Client.business_name).all()
+            return [ClientService._format_client(c, db) for c in clients]
 
         # --- REGULAR USER / CLIENT ---
         assigned_clients = select(UserClient.client_id).where(
             UserClient.user_id == current_user.id
         )
 
-        return db.query(Client).filter(
+        clients = db.query(Client).filter(
             Client.status_id == active_status,
             Client.id.in_(assigned_clients)
         ).order_by(Client.business_name).all()
+
+        return [ClientService._format_client(c, db) for c in clients]
     @staticmethod
     def get_client_stats(db: Session, current_user: User) -> Dict:
         # Detect admin
@@ -142,7 +146,7 @@ class ClientService:
             )
         
         total = query.count()
-        clients = query.offset(skip).limit(page_size).all()
+        clients = query.order_by(Client.created_at.desc()).offset(skip).limit(page_size).all()
         
         return [ClientService._format_client(c, db) for c in clients], total
 
@@ -171,8 +175,7 @@ class ClientService:
         if user_id:
             ClientService._link_user(new_client, user_id, db)
 
-        # return ClientService._format_client(new_client, db)
-        return new_client
+        return ClientService._format_client(new_client, db)
 
     @staticmethod
     def _link_user(client: Client, user_id: str, db: Session):
@@ -214,7 +217,7 @@ class ClientService:
         
         db.commit()
         db.refresh(client)
-        return client
+        return ClientService._format_client(client, db)
     @staticmethod
     def activate_client(client_id: str, db: Session) -> Optional[Dict]:
         client = db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
@@ -226,7 +229,7 @@ class ClientService:
             client.status_id = active_status.id
             db.commit()
             db.refresh(client)
-        return client
+        return ClientService._format_client(client, db)
     @staticmethod
     def deactivate_client(client_id: str, db: Session) -> Optional[Dict]:
         client = db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
@@ -262,7 +265,7 @@ class ClientService:
             
             db.commit()
             db.refresh(client)
-        return client
+        return ClientService._format_client(client, db)
     @staticmethod
     def assign_clients_to_user(
         user_id: str,
@@ -291,7 +294,7 @@ class ClientService:
         user_clients = db.query(Client).join(UserClient, Client.id == UserClient.client_id).filter(
             UserClient.user_id == user_id,
             Client.deleted_at.is_(None)
-        ).all()
+        ).order_by(Client.created_at.desc()).all()
         return [ClientService._format_client(c, db) for c in user_clients]
 
     @staticmethod
@@ -333,10 +336,11 @@ class ClientService:
             "is_user": client.is_user,
             "type": client.type,
             "status_id": client.status_id,
+            "status_code": status_code,
             "statusCode": status_code,
             "description": client.description,
 
-            # ✅ ADD THIS ONE LINE ONLY
+            # ADD THIS ONE LINE ONLY
             "state_name": client.state_name,
 
             "assigned_users": assigned_users,

@@ -27,6 +27,7 @@ class FormField(Base):
     label = Column(String(200), nullable=False)
     placeholder = Column(String(200), nullable=True)
     required = Column(Boolean, default=False)
+    default_value = Column(JSON, nullable=True)
     options = Column(JSON, nullable=True)  # For select, checkbox, radio
     validation = Column(JSON, nullable=True)  # Validation rules
     order = Column(Integer, nullable=False)

@@ -11,7 +11,7 @@ from app.services.external_share_service import ExternalShareService
 from ..services.activity_service import ActivityService
 from fastapi import Request
 
-router = APIRouter(tags=["external-sharing"])
+router = APIRouter(prefix="/api/documents/share/external", tags=["external-sharing"])
 
 # --- Schemas ---
 
@@ -32,7 +32,7 @@ class VerifyShareRequest(BaseModel):
 
 # --- Protected Endpoints ---
 
-@router.post("/api/documents/share/external")
+@router.post("")
 async def create_external_share(
     request: CreateExternalShareRequest,
     current_user: User = Depends(get_current_user),
@@ -72,7 +72,7 @@ async def create_external_share(
         "expires_at": share.expires_at.isoformat()
     }
 
-@router.post("/api/documents/share/external/batch")
+@router.post("/batch")
 async def create_external_share_batch(
     request: CreateBatchExternalShareRequest,
     current_user: User = Depends(get_current_user),
@@ -114,9 +114,9 @@ async def create_external_share_batch(
         ]
     }
 
-# --- Public Endpoints ---
+# --- Public Endpoints (These should probably be in a separate router or have different prefix if public) ---
 
-@router.get("/api/public/shares/{token}")
+@router.get("/public/shares/{token}")
 async def get_share_metadata(token: str, db: Session = Depends(get_db)):
     """Get public metadata for a share token (filename, etc.) before authentication."""
     service = ExternalShareService(db)
@@ -127,7 +127,7 @@ async def get_share_metadata(token: str, db: Session = Depends(get_db)):
         "expires_at": share.expires_at.isoformat()
     }
 
-@router.post("/api/public/shares/{token}/verify")
+@router.post("/public/shares/{token}/verify")
 async def verify_external_share(
     token: str, 
     request: VerifyShareRequest, 

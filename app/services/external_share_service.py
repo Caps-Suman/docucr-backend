@@ -28,6 +28,14 @@ class ExternalShareService:
         shares = []
         email_docs = []
         
+        # RESTRICTION: Recipient must be a registered user
+        recipient = self.db.query(User).filter(User.email == email).first()
+        if not recipient:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Safety Check: The email '{email}' is not registered. We only allow sharing with internal team members for security."
+            )
+
         try:
             for doc_id in document_ids:
                 doc = self.db.query(Document).filter(Document.id == doc_id).first()

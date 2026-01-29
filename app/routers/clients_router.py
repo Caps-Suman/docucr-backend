@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from app.models.client import Client
 from app.services.activity_service import ActivityService
 from app.core.permissions import Permission
 from sqlalchemy.orm import Session
@@ -14,7 +15,17 @@ from app.models.user_client import UserClient
 from app.models.user_role import UserRole
 from app.models.role import Role
 from uuid import UUID
+import requests
 router = APIRouter(dependencies=[Depends(get_current_user)])
+
+@router.get("/npi-lookup/{npi}")
+async def npi_lookup(npi: str):
+    try:
+        response = requests.get(f"https://npiregistry.cms.hhs.gov/api/?version=2.1&number={npi}")
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch NPI details: {str(e)}")
 
 class ClientCreate(BaseModel):
     business_name: Optional[str] = None
@@ -70,9 +81,10 @@ class ClientResponse(BaseModel):
     type: Optional[str]
     status_id: Optional[int]
     statusCode: Optional[str]
+    status_code: Optional[str]
     description: Optional[str]
 
-    # ✅ ONLY EXTRA FIELD FOR LIST
+    # ONLY EXTRA FIELD FOR LIST
     state_name: Optional[str]
 
     assigned_users: List[str] = []
@@ -101,6 +113,12 @@ def _is_admin_user(user: User) -> bool:
         "ADMIN" in role_names or
         "SUPER_ADMIN" in role_names
     )
+class NPICheckRequest(BaseModel):
+    npis: List[str]
+
+class NPICheckResponse(BaseModel):
+    existing_npis: List[str]
+
 class BulkClientCreateRequest(BaseModel):
     clients: List[ClientCreate]
 
@@ -122,6 +140,28 @@ def get_visible_clients(
     current_user = Depends(get_current_user),
 ):
     return ClientService.get_visible_clients(db, current_user)
+
+@router.get("/me", response_model=ClientResponse)
+async def get_my_client(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 🔒 Only client users allowed
+    if not current_user.client_id:
+        raise HTTPException(
+            status_code=403,
+            detail="This user is not linked to a client"
+        )
+
+    client = db.query(Client).filter(
+        Client.id == current_user.client_id,
+        Client.deleted_at.is_(None)
+    ).first()
+
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    return ClientResponse(**ClientService._format_client(client, db))
 
 @router.get("", response_model=ClientListResponse, dependencies=[Depends(Permission("clients", "READ"))])
 @router.get("/", response_model=ClientListResponse, dependencies=[Depends(Permission("clients", "READ"))])
@@ -177,15 +217,14 @@ async def create_client(
         db=db,
         action="CREATE",
         entity_type="client",
-        entity_id=str(created_client.id),
+        entity_id=str(created_client['id']),
         user_id=current_user.id,
-        details={"name": created_client.business_name},
+        details={"name": created_client['business_name']},
         request=request,
         background_tasks=background_tasks
     )
     
-    # return ClientResponse(**created_client)
-    return created_client
+    return ClientResponse(**created_client)
 
 @router.put("/{client_id}", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def update_client(
@@ -226,15 +265,14 @@ async def update_client(
         entity_id=client_id,
         user_id=current_user.id,
         details={
-            "name": updated_client.business_name,
+            "name": updated_client['business_name'],
             "changes": changes
         },
         request=request,
         background_tasks=background_tasks
     )
         
-    # return ClientResponse(**updated_client)
-    return updated_client
+    return ClientResponse(**updated_client)
 @router.post("/{client_id}/activate", response_model=ClientResponse,
              dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def activate_client(
@@ -322,6 +360,14 @@ async def get_user_clients(user_id: str, db: Session = Depends(get_db)):
     clients = ClientService.get_user_clients(user_id, db)
     return [ClientResponse(**client) for client in clients]
 
+@router.post("/check-npis", response_model=NPICheckResponse, dependencies=[Depends(Permission("clients", "READ"))])
+async def check_existing_npis(request: NPICheckRequest, db: Session = Depends(get_db)):
+    existing = db.query(Client.npi).filter(
+        Client.npi.in_(request.npis),
+        Client.deleted_at.is_(None)
+    ).all()
+    return NPICheckResponse(existing_npis=[n[0] for n in existing if n[0]])
+
 @router.post("/bulk", response_model=BulkClientCreateResponse, dependencies=[Depends(Permission("clients", "CREATE"))])
 async def create_clients_bulk(
     request: BulkClientCreateRequest,
@@ -336,6 +382,12 @@ async def create_clients_bulk(
     
     for client_data in request.clients:
         try:
+            # Duplicate NPI check
+            if client_data.npi and ClientService.check_npi_exists(client_data.npi, None, db):
+                failed += 1
+                errors.append(f"NPI already exists: {client_data.npi}")
+                continue
+
             client = ClientService.create_client(client_data.dict(), db)
             if client:
                 success += 1
@@ -344,7 +396,7 @@ async def create_clients_bulk(
                     db=db,
                     action="CREATE",
                     entity_type="client",
-                    entity_id=client.id,
+                    entity_id=str(client['id']),
                     user_id=current_user.id,
                     request=request_obj,
                     background_tasks=background_tasks

@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, BackgroundTasks, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
+import json
 
 from app.models.user_client import UserClient
 from ..core.database import get_db
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 document_service= DocumentService()
 
+
 @router.post("/upload", response_model=List[dict])
 async def upload_documents(
     files: List[UploadFile] = File(...),
@@ -34,37 +36,105 @@ async def upload_documents(
     form_data: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "CREATE")),
+    _: bool = Depends(Permission("documents", "CREATE")),
     background_tasks: BackgroundTasks = None,
-    request: Request = None
+    request: Request = None,
 ):
-    """Upload multiple documents - returns immediately with queued status"""
+    """
+    Upload multiple documents.
+    Client ownership is enforced server-side.
+    """
+
+    # ─────────────────────────────
+    # 1. BASIC VALIDATION
+    # ─────────────────────────────
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
-    
-    # Validate file sizes (max 1GB per file)
+
     for file in files:
-        if file.size and file.size > 1024 * 1024 * 1024:  # 1GB
-            raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds 1GB limit")
-    
-    # Create document records immediately and start background processing
+        if file.size and file.size > 1024 * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File {file.filename} exceeds 1GB limit",
+            )
+
+    # ─────────────────────────────
+    # 2. PARSE form_data ONCE
+    # ─────────────────────────────
+    parsed_form_data: dict = {}
+
+    if form_data:
+        try:
+            parsed_form_data = json.loads(form_data)
+            if not isinstance(parsed_form_data, dict):
+                raise ValueError
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid form_data JSON",
+            )
+
+    # ─────────────────────────────
+    # 3. ENFORCE CLIENT OWNERSHIP
+    # ─────────────────────────────
+    frontend_client_id = parsed_form_data.get("client_id")
+
+    if current_user.is_client:
+        # Client users MUST have a client_id
+        if not current_user.client_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Client user has no assigned client",
+            )
+
+        # 🔒 FORCE client_id (ignore frontend completely)
+        enforced_client_id = str(current_user.client_id)
+
+    else:
+        # Admin / Staff users
+        enforced_client_id = frontend_client_id
+
+    if enforced_client_id:
+        parsed_form_data["client_id"] = enforced_client_id
+
+    # Serialize back
+    final_form_data = json.dumps(parsed_form_data) if parsed_form_data else None
+
+    # ─────────────────────────────
+    # 4. PROCESS UPLOAD
+    # ─────────────────────────────
     documents = await document_service.process_multiple_uploads(
-        db, files, current_user.id, enable_ai, document_type_id, template_id, form_id, form_data
+        db=db,
+        files=files,
+        user_id=current_user.id,
+        enable_ai=enable_ai,
+        document_type_id=document_type_id,
+        template_id=template_id,
+        form_id=form_id,
+        form_data=final_form_data,
     )
 
-    # Activity Log
+    # ─────────────────────────────
+    # 5. ACTIVITY LOG
+    # ─────────────────────────────
     for doc in documents:
         ActivityService.log(
-            db,
+            db=db,
             action="CREATE",
             entity_type="document",
             entity_id=str(doc.id),
             user_id=current_user.id,
-            details={"filename": doc.filename, "size": doc.file_size},
+            details={
+                "filename": doc.filename,
+                "size": doc.file_size,
+            },
             request=request,
-            background_tasks=background_tasks
+            background_tasks=background_tasks,
         )
-    
+
+    # ─────────────────────────────
+    # 6. RESPONSE
+    # ─────────────────────────────
     return [
         {
             "id": doc.id,
@@ -72,12 +142,11 @@ async def upload_documents(
             "status_id": doc.status_id,
             "statusCode": doc.status.code if doc.status else None,
             "file_size": doc.file_size,
-            "upload_progress": doc.upload_progress
+            "upload_progress": doc.upload_progress,
         }
         for doc in documents
     ]
 
-# ... existing get_documents ...
 
 @router.get("/{document_id}/form-data")
 async def get_document_form_data(
@@ -715,6 +784,7 @@ async def get_document_report_url(
 @router.get("/{document_id}/report-data")
 async def get_document_report_data(
     document_id: int,
+    page: int = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "READ"))
@@ -731,7 +801,7 @@ async def get_document_report_data(
     import io
     import json
     
-    # Get user's roles to determine access level
+    # ... (access control logic remains same)
     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
         User.id == current_user.id,
         Role.status_id.in_(
@@ -745,15 +815,15 @@ async def get_document_report_data(
     query = db.query(Document).filter(Document.id == document_id)
     
     if not is_admin:
-        assigned_client_ids = select(UserClient.client_id).where(
+        assigned_client_ids = db.query(UserClient.client_id).filter(
             UserClient.user_id == current_user.id
         )
         client_documents_query = db.query(Document.id).join(
             DocumentFormData, Document.id == DocumentFormData.document_id
-        ).join(
-            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
         ).filter(
-            Client.id.in_(assigned_client_ids)
+            cast(DocumentFormData.data['client_id'], String).in_(
+                db.query(cast(Client.id, String)).filter(Client.id.in_(assigned_client_ids))
+            )
         )
         
         query = query.filter(
@@ -776,27 +846,47 @@ async def get_document_report_data(
         # Read XLSX using pandas
         df = pd.read_excel(io.BytesIO(file_bytes))
         
+        def is_page_in_range(target_page, page_range_str):
+            if not page_range_str or pd.isna(page_range_str):
+                return False
+            try:
+                # Handle comma separated ranges: "1-2, 4, 6-8"
+                parts = str(page_range_str).split(',')
+                for part in parts:
+                    part = part.strip()
+                    if '-' in part:
+                        start, end = map(int, part.split('-'))
+                        if start <= target_page <= end:
+                            return True
+                    else:
+                        if int(part) == target_page:
+                            return True
+                return False
+            except:
+                return False
+
         # Parse data
         findings = []
         for _, row in df.iterrows():
-            extracted_data_raw = row.get("Extracted Data", "{}")
+            page_range = row.get("Page Range", "")
             
-            # Handle potential nan or empty
+            # Filter by page if requested
+            if page is not None and not is_page_in_range(page, page_range):
+                continue
+
+            extracted_data_raw = row.get("Extracted Data", "{}")
             if pd.isna(extracted_data_raw) or not extracted_data_raw:
                 extracted_data_raw = "{}"
             
             extracted_data = {}
             try:
-                # If it's already a dict (pandas might parse stringified JSON if it looks like one)
                 if isinstance(extracted_data_raw, dict):
                     extracted_data = extracted_data_raw
                 elif isinstance(extracted_data_raw, str):
                     import ast
                     try:
-                        # Safely evaluate Python literal structures (handles single quotes and None)
                         extracted_data = ast.literal_eval(extracted_data_raw)
                     except (ValueError, SyntaxError):
-                        # Fallback to standard JSON if literal_eval fails
                         extracted_data = json.loads(extracted_data_raw.replace("'", '"'))
                 else:
                     extracted_data = {"raw_data": str(extracted_data_raw)}
@@ -805,11 +895,11 @@ async def get_document_report_data(
                 
             findings.append({
                 "document_type": row.get("Document Type", "Unknown"),
-                "page_range": row.get("Page Range", "Unknown"),
+                "page_range": str(page_range),
                 "extracted_data": extracted_data
             })
             
-        return {"findings": findings}
+        return {"findings": findings, "total_pages": document.total_pages}
         
     except Exception as e:
         print(f"Error parsing report data: {e}")
