@@ -13,6 +13,10 @@ from app.models.user import User
 
 router = APIRouter()
 
+class AssignClientsRequest(BaseModel):
+    client_ids: List[str]
+    assigned_by: str
+
 class UserCreate(BaseModel):
     email: str
     username: str = Field(..., min_length=3, max_length=50)
@@ -79,6 +83,7 @@ class UserResponse(BaseModel):
     is_superuser: bool
     roles: List[dict]
     supervisor_id: Optional[str]
+    client_count: int = 0
     
     class Config:
         from_attributes = True
@@ -384,3 +389,42 @@ async def change_user_password(
     )
         
     return {"message": "Password changed successfully"}
+
+from app.routers.clients_router import ClientResponse
+
+@router.get("/{user_id}/clients", response_model=List[ClientResponse])
+async def get_user_clients(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    permission: bool = Depends(Permission("user_module", "READ"))
+):
+    """Get clients mapped to a user"""
+    # Check permission or visibility? 
+    # Assuming standard visibility rules apply or admin access.
+    # For now, allowing READ permission on user_module to see clients.
+    clients = UserService.get_user_clients(user_id, db)
+    return clients
+
+@router.post("/{user_id}/clients")
+async def map_clients_to_user(
+    user_id: str,
+    request: AssignClientsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    permission: bool = Depends(Permission("user_module", "UPDATE")) # Mapping clients is an update action
+):
+    """Map clients to a user"""
+    UserService.map_clients_to_user(user_id, request.client_ids, request.assigned_by, db)
+    
+    # Log activity
+    ActivityService.log(
+        db=db,
+        action="UPDATE",
+        entity_type="user",
+        entity_id=user_id,
+        user_id=current_user.id,
+        details={"action": "map_clients", "client_ids": request.client_ids}
+    )
+    
+    return {"message": "Clients mapped successfully"}
