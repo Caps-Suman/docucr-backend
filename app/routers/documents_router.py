@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, BackgroundTasks, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -146,7 +146,7 @@ async def upload_documents(
         }
         for doc in documents
     ]
-# ... existing get_documents ...
+
 
 @router.get("/{document_id}/form-data")
 async def get_document_form_data(
@@ -784,6 +784,7 @@ async def get_document_report_url(
 @router.get("/{document_id}/report-data")
 async def get_document_report_data(
     document_id: int,
+    page: int = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "READ"))
@@ -800,7 +801,7 @@ async def get_document_report_data(
     import io
     import json
     
-    # Get user's roles to determine access level
+    # ... (access control logic remains same)
     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
         User.id == current_user.id,
         Role.status_id.in_(
@@ -814,15 +815,15 @@ async def get_document_report_data(
     query = db.query(Document).filter(Document.id == document_id)
     
     if not is_admin:
-        assigned_client_ids = select(UserClient.client_id).where(
+        assigned_client_ids = db.query(UserClient.client_id).filter(
             UserClient.user_id == current_user.id
         )
         client_documents_query = db.query(Document.id).join(
             DocumentFormData, Document.id == DocumentFormData.document_id
-        ).join(
-            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
         ).filter(
-            Client.id.in_(assigned_client_ids)
+            cast(DocumentFormData.data['client_id'], String).in_(
+                db.query(cast(Client.id, String)).filter(Client.id.in_(assigned_client_ids))
+            )
         )
         
         query = query.filter(
@@ -845,27 +846,47 @@ async def get_document_report_data(
         # Read XLSX using pandas
         df = pd.read_excel(io.BytesIO(file_bytes))
         
+        def is_page_in_range(target_page, page_range_str):
+            if not page_range_str or pd.isna(page_range_str):
+                return False
+            try:
+                # Handle comma separated ranges: "1-2, 4, 6-8"
+                parts = str(page_range_str).split(',')
+                for part in parts:
+                    part = part.strip()
+                    if '-' in part:
+                        start, end = map(int, part.split('-'))
+                        if start <= target_page <= end:
+                            return True
+                    else:
+                        if int(part) == target_page:
+                            return True
+                return False
+            except:
+                return False
+
         # Parse data
         findings = []
         for _, row in df.iterrows():
-            extracted_data_raw = row.get("Extracted Data", "{}")
+            page_range = row.get("Page Range", "")
             
-            # Handle potential nan or empty
+            # Filter by page if requested
+            if page is not None and not is_page_in_range(page, page_range):
+                continue
+
+            extracted_data_raw = row.get("Extracted Data", "{}")
             if pd.isna(extracted_data_raw) or not extracted_data_raw:
                 extracted_data_raw = "{}"
             
             extracted_data = {}
             try:
-                # If it's already a dict (pandas might parse stringified JSON if it looks like one)
                 if isinstance(extracted_data_raw, dict):
                     extracted_data = extracted_data_raw
                 elif isinstance(extracted_data_raw, str):
                     import ast
                     try:
-                        # Safely evaluate Python literal structures (handles single quotes and None)
                         extracted_data = ast.literal_eval(extracted_data_raw)
                     except (ValueError, SyntaxError):
-                        # Fallback to standard JSON if literal_eval fails
                         extracted_data = json.loads(extracted_data_raw.replace("'", '"'))
                 else:
                     extracted_data = {"raw_data": str(extracted_data_raw)}
@@ -874,11 +895,11 @@ async def get_document_report_data(
                 
             findings.append({
                 "document_type": row.get("Document Type", "Unknown"),
-                "page_range": row.get("Page Range", "Unknown"),
+                "page_range": str(page_range),
                 "extracted_data": extracted_data
             })
             
-        return {"findings": findings}
+        return {"findings": findings, "total_pages": document.total_pages}
         
     except Exception as e:
         print(f"Error parsing report data: {e}")
