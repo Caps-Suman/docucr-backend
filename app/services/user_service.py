@@ -222,6 +222,57 @@ class UserService:
             db.commit()
 
     @staticmethod
+    def get_user_clients(user_id: str, db: Session) -> List[Dict]:
+        """Fetch all clients mapped to a specific user"""
+        results = db.query(Client).join(UserClient, UserClient.client_id == Client.id).filter(UserClient.user_id == user_id).all()
+        
+        # We need to format the clients. I'll use a simplified dict for now, 
+        # or we could move formatting to ClientService or something similar.
+        # But for now, returning simple dicts is fine to match the requirement.
+        
+        # User defined ClientResponse schema is in clients_router usually or client_service.
+        # Since I am in UserService, I will return raw models and let router handle Pydantic conversion 
+        # OR return formatted dicts. returning Models is better for Pydantic in Router.
+        return results
+
+    @staticmethod
+    def map_clients_to_user(user_id: str, client_ids: List[str], assigned_by: str, db: Session):
+        """Map multiple clients to a user"""
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+             raise ValueError("User not found")
+
+        # Get existing mappings to avoid duplicates
+        existing_client_ids = {
+            str(uc.client_id) for uc in db.query(UserClient.client_id).filter(UserClient.user_id == user_id).all()
+        }
+
+        new_mappings = []
+        for cid in client_ids:
+            if cid not in existing_client_ids:
+                 new_mappings.append(UserClient(
+                     id=str(uuid.uuid4()),
+                     user_id=user_id,
+                     client_id=cid,
+                     assigned_by=assigned_by
+                 ))
+        
+        if new_mappings:
+            db.add_all(new_mappings)
+            # Ensure flags are set?
+            # If we map a client to a user, does it mean user.is_client = True?
+            # Based on _link_client logic:
+            if not user.is_client:
+                user.is_client = True
+            
+            # Also update client.is_user?
+            # We should probably update the clients too.
+            if new_mappings:
+                 db.query(Client).filter(Client.id.in_(client_ids)).update({Client.is_user: True}, synchronize_session=False)
+
+            db.commit()
+
+    @staticmethod
     def update_user(user_id: str, user_data: Dict, db: Session) -> Optional[Dict]:
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
@@ -409,6 +460,7 @@ class UserService:
              status_obj = db.query(Status).filter(Status.id == user.status_id).first()
              if status_obj:
                  status_code = status_obj.code
+        client_count = db.query(UserClient).filter(UserClient.user_id == user.id).count()
 
         return {
             "id": user.id,
@@ -423,7 +475,8 @@ class UserService:
             "statusCode": status_code,   # String
             "is_superuser": user.is_superuser,
             "roles": roles,
-            "supervisor_id": supervisor_id
+            "supervisor_id": supervisor_id,
+            "client_count": client_count
         }
 
     @staticmethod
