@@ -1,9 +1,10 @@
 import json
 from fastapi import HTTPException
 from pdfminer.high_level import extract_text
-import pytesseract
 from docx import Document
 from PIL import Image
+import base64
+from io import BytesIO
 
 from app.services.ai_client import openai_client  # adjust import path
 
@@ -31,9 +32,55 @@ class AISOPService:
     def extract_pdf_text(path: str) -> str:
         return extract_text(path)
     
+
     @staticmethod
-    def extract_image_text(path: str) -> str:
-        return pytesseract.image_to_string(Image.open(path))
+    async def extract_image_text(path: str) -> str:
+        """
+        Uses OpenAI Vision to extract raw text from an image.
+        This replaces pytesseract completely.
+        """
+
+        # Read image
+        with Image.open(path) as img:
+            buffered = BytesIO()
+            img.convert("RGB").save(buffered, format="JPEG")
+            image_bytes = buffered.getvalue()
+
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an OCR engine. Extract ALL visible text exactly as-is. No summaries."
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Extract all text from this image. Preserve line breaks."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            temperature=0,
+            max_tokens=4000
+        )
+
+        text = response.choices[0].message.content.strip()
+
+        if not text:
+            raise HTTPException(422, "No text extracted from image")
+
+        return text
 
     @staticmethod
     def extract_docx_text(path: str) -> str:
@@ -60,12 +107,12 @@ class AISOPService:
 
 
     @staticmethod
-    def extract_text(path: str, content_type: str) -> str:
+    async def extract_text(path: str, content_type: str) -> str:
         if content_type == "application/pdf":
             return AISOPService.extract_pdf_text(path)
 
         if content_type in ("image/png", "image/jpeg"):
-            return AISOPService.extract_image_text(path)
+            return await AISOPService.extract_image_text(path)
 
         if content_type == (
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -73,6 +120,7 @@ class AISOPService:
             return AISOPService.extract_docx_text(path)
 
         raise ValueError("Unsupported file type")
+
     @staticmethod
     def normalize_ai_sop(data: dict) -> dict:
         category = data.get("category")

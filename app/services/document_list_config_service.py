@@ -5,6 +5,7 @@ from ..models.user import User
 
 class DocumentListConfigService:
     
+    
     @staticmethod
     def get_user_config(db: Session, user_id: str) -> Optional[Dict[str, Any]]:
         """Get user's document list configuration"""
