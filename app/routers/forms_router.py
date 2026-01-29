@@ -18,7 +18,7 @@ class FormFieldSchema(BaseModel):
     options: Optional[List[str]] = None
     validation: Optional[Dict[str, Any]] = None
     is_system: Optional[bool] = False
-
+    default_value: Optional[Any] = None   # 👈 ADD THIS
 class FormCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
