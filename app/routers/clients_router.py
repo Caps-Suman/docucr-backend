@@ -15,7 +15,17 @@ from app.models.user_client import UserClient
 from app.models.user_role import UserRole
 from app.models.role import Role
 from uuid import UUID
+import requests
 router = APIRouter(dependencies=[Depends(get_current_user)])
+
+@router.get("/npi-lookup/{npi}")
+async def npi_lookup(npi: str):
+    try:
+        response = requests.get(f"https://npiregistry.cms.hhs.gov/api/?version=2.1&number={npi}")
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch NPI details: {str(e)}")
 
 class ClientCreate(BaseModel):
     business_name: Optional[str] = None
