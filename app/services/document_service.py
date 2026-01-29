@@ -5,6 +5,10 @@ import asyncio
 import json
 from io import BytesIO
 from collections import Counter, defaultdict
+from pdfminer.pdfparser import PDFParser
+from pdfminer.pdfdocument import PDFDocument
+from pdfminer.pdfpage import PDFPage
+from PIL import Image
 
 from sqlalchemy import UUID, and_, or_, cast, String, select, text, func
 from sqlalchemy.orm import Session, joinedload
@@ -29,15 +33,41 @@ class DocumentService:
         if status:
             return status.id
         return None
-
     @staticmethod
-    # def build_derived_document_counts(extracted_docs) -> Dict[str, int]:
-    #     counter = Counter()
-    #     for ed in extracted_docs:
-    #         if ed.document_type:
-    #             counter[ed.document_type.name] += 1
-    #     return dict(counter)
-    
+    def get_total_pages(file_bytes: bytes, content_type: str) -> int:
+        try:
+            # ---------- PDF ----------
+            if content_type == "application/pdf":
+                from io import BytesIO
+                fp = BytesIO(file_bytes)
+                parser = PDFParser(fp)
+                doc = PDFDocument(parser)
+                return sum(1 for _ in PDFPage.create_pages(doc))
+
+            # ---------- DOCX ----------
+            if content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                from io import BytesIO
+                doc = Document(BytesIO(file_bytes))
+
+                # Word pages are NOT real pages; this is best-effort
+                # Rule: every section break counts as new page
+                return max(1, len(doc.sections))
+
+            # ---------- IMAGES ----------
+            if content_type in ("image/png", "image/jpeg", "image/jpg"):
+                return 1
+
+            # ---------- MULTI-FRAME IMAGES (TIFF) ----------
+            if content_type == "image/tiff":
+                from io import BytesIO
+                img = Image.open(BytesIO(file_bytes))
+                return getattr(img, "n_frames", 1)
+
+        except Exception:
+            pass
+
+        # Safe fallback
+        return 1
     @staticmethod
     def build_derived_document_counts(extracted_docs, unverified_docs):
         """
@@ -57,6 +87,20 @@ class DocumentService:
                 counts[ud.suspected_type] += 1
 
         return dict(counts)
+
+    @staticmethod
+    def extract_client_id_from_form_data(db: Session, form_data: dict) -> Optional[str]:
+        """Extract client_id from form data if present"""
+        if not form_data:
+            return None
+        
+        from ..models.form import FormField
+        for field_id, value in form_data.items():
+            # Check if this field is a client field by querying the form field
+            field = db.query(FormField).filter(FormField.id == field_id).first()
+            if field and (field.field_type == 'client_dropdown' or field.label == 'Client'):
+                return value
+        return None
 
 
     @staticmethod
@@ -145,9 +189,12 @@ class DocumentService:
         from ..models.document_form_data import DocumentFormData
         
         parsed_form_data = None
+        client_id = None
         if form_data:
             try:
                 parsed_form_data = json.loads(form_data)
+                # Extract client_id from form data if present
+                client_id = DocumentService.extract_client_id_from_form_data(db, parsed_form_data)
             except:
                 parsed_form_data = {}
         
@@ -165,7 +212,8 @@ class DocumentService:
             content = await file.read()
             file_size = len(content)
             buffer = BytesIO(content)
-            
+            total_pages = DocumentService.get_total_pages(content, file.content_type)
+
             # Reset original file just in case (though we use buffer now)
             await file.seek(0)
             
@@ -179,7 +227,9 @@ class DocumentService:
                 upload_progress=0,
                 enable_ai=enable_ai,
                 document_type_id=document_type_id,
-                template_id=template_id
+                template_id=template_id,
+                client_id=client_id,
+                total_pages=total_pages   
             )
             db.add(document)
             db.flush()  # Get the ID without committing

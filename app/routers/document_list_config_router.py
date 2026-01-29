@@ -34,7 +34,32 @@ async def get_config(
     """Get user's document list configuration"""
     try:
         configuration = DocumentListConfigService.get_user_config(db, current_user.id)
+
+        if configuration and "columns" in configuration:
+            columns = configuration["columns"]
+
+            existing_ids = {c["id"] for c in columns}
+            max_order = max([c["order"] for c in columns], default=0)
+
+            if "pages" not in existing_ids:
+                columns.append({
+                    "id": "pages",
+                    "label": "Pages",
+                    "visible": True,
+                    "order": max_order + 1,
+                    "width": 80,
+                    "type": "number",
+                    "required": False
+                })
+
+                # 🔥 Persist auto-heal so it doesn't repeat every GET
+                configuration["columns"] = columns
+                DocumentListConfigService.save_user_config(
+                    db, current_user.id, configuration
+                )
+
         return {"configuration": configuration}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve configuration: {str(e)}")
 
@@ -52,7 +77,27 @@ async def update_config(
     try:
         # Convert to dict for storage
         configuration = config_request.dict()
-        
+
+        # 🔥 INLINE SYSTEM COLUMN ENFORCEMENT (NO NEW FUNCTIONS)
+        columns = configuration.get("columns", [])
+
+        existing_ids = {c["id"] for c in columns}
+        max_order = max([c["order"] for c in columns], default=0)
+
+        if "pages" not in existing_ids:
+            columns.append({
+                "id": "pages",
+                "label": "Pages",
+                "visible": True,
+                "order": max_order + 1,
+                "width": 80,
+                "type": "number",
+                "required": False
+            })
+
+        configuration["columns"] = columns
+
+
         saved_config = DocumentListConfigService.save_user_config(
             db, current_user.id, configuration
         )

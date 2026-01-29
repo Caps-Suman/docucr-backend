@@ -153,7 +153,7 @@ async def ai_extract_sop(
             tmp.write(await file.read())
 
         # ---- extract raw text ----
-        text = AISOPService.extract_text(
+        text = await AISOPService.extract_text(
             temp_file_path,
             file.content_type
         )
