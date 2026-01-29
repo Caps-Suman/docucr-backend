@@ -360,6 +360,11 @@ async def update_document_form_data(
     
     changes = ActivityService.calculate_changes(resolved_old, resolved_new)
 
+    # Update client_id in the Document record if present in form_data
+    client_id = DocumentService.extract_client_id_from_form_data(db, form_data)
+    if client_id:
+        document.client_id = client_id
+
     if not document.form_data_relation:
         # Create if not exists (though typically created on upload)
         new_record = DocumentFormData(

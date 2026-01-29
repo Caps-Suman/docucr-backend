@@ -38,10 +38,12 @@ class Document(Base):
     
     user = relationship("User", back_populates="documents")
     status = relationship("Status")
+    client = relationship("Client")
     
     # New Columns for Processing Context
     document_type_id = Column(UUID(as_uuid=True), ForeignKey("docucr.document_types.id"), nullable=True)
     template_id = Column(UUID(as_uuid=True), ForeignKey("docucr.templates.id"), nullable=True)
+    client_id = Column(UUID(as_uuid=True), ForeignKey("docucr.client.id"), nullable=True)
     enable_ai = Column(Boolean, default=True, nullable=False)
 
     # Relationships to new tables
