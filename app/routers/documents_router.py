@@ -410,6 +410,7 @@ def get_documents(
             "file_size": doc.file_size,
             "upload_progress": doc.upload_progress,
             "error_message": doc.error_message,
+            "total_pages": doc.total_pages,
             "created_at": doc.created_at.isoformat() if doc.created_at else None,
             "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
             "is_archived": doc.is_archived,
@@ -447,6 +448,7 @@ async def get_document_detail(
         "file_size": document.file_size,
         "derived_documents": derived_counts,   # 👈 NEW (what UI should use)
         "content_type": document.content_type,
+        "total_pages": document.total_pages,
         "upload_progress": document.upload_progress,
         "error_message": document.error_message,
         "created_at": document.created_at.isoformat(),

@@ -5,6 +5,10 @@ import asyncio
 import json
 from io import BytesIO
 from collections import Counter, defaultdict
+from pdfminer.pdfparser import PDFParser
+from pdfminer.pdfdocument import PDFDocument
+from pdfminer.pdfpage import PDFPage
+from PIL import Image
 
 from sqlalchemy import UUID, and_, or_, cast, String, select, text, func
 from sqlalchemy.orm import Session, joinedload
@@ -29,15 +33,41 @@ class DocumentService:
         if status:
             return status.id
         return None
-
     @staticmethod
-    # def build_derived_document_counts(extracted_docs) -> Dict[str, int]:
-    #     counter = Counter()
-    #     for ed in extracted_docs:
-    #         if ed.document_type:
-    #             counter[ed.document_type.name] += 1
-    #     return dict(counter)
-    
+    def get_total_pages(file_bytes: bytes, content_type: str) -> int:
+        try:
+            # ---------- PDF ----------
+            if content_type == "application/pdf":
+                from io import BytesIO
+                fp = BytesIO(file_bytes)
+                parser = PDFParser(fp)
+                doc = PDFDocument(parser)
+                return sum(1 for _ in PDFPage.create_pages(doc))
+
+            # ---------- DOCX ----------
+            if content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                from io import BytesIO
+                doc = Document(BytesIO(file_bytes))
+
+                # Word pages are NOT real pages; this is best-effort
+                # Rule: every section break counts as new page
+                return max(1, len(doc.sections))
+
+            # ---------- IMAGES ----------
+            if content_type in ("image/png", "image/jpeg", "image/jpg"):
+                return 1
+
+            # ---------- MULTI-FRAME IMAGES (TIFF) ----------
+            if content_type == "image/tiff":
+                from io import BytesIO
+                img = Image.open(BytesIO(file_bytes))
+                return getattr(img, "n_frames", 1)
+
+        except Exception:
+            pass
+
+        # Safe fallback
+        return 1
     @staticmethod
     def build_derived_document_counts(extracted_docs, unverified_docs):
         """
@@ -165,7 +195,8 @@ class DocumentService:
             content = await file.read()
             file_size = len(content)
             buffer = BytesIO(content)
-            
+            total_pages = DocumentService.get_total_pages(content, file.content_type)
+
             # Reset original file just in case (though we use buffer now)
             await file.seek(0)
             
@@ -179,7 +210,8 @@ class DocumentService:
                 upload_progress=0,
                 enable_ai=enable_ai,
                 document_type_id=document_type_id,
-                template_id=template_id
+                template_id=template_id,
+                total_pages=total_pages   # 👈 THIS WAS MISSING
             )
             db.add(document)
             db.flush()  # Get the ID without committing
