@@ -78,6 +78,7 @@ class FormService:
                 "required": f.required,
                 "options": f.options,
                 "validation": f.validation,
+                "default_value": f.default_value,  # 👈 ADD
                 "order": f.order,
                 "is_system": f.is_system
             } for f in fields]
@@ -127,6 +128,7 @@ class FormService:
                 required=field_data.get('required', False),
                 options=field_data.get('options'),
                 validation=field_data.get('validation'),
+                default_value=field_data.get('default_value'),  # 👈 ADD
                 order=idx,
                 is_system=field_data.get('is_system', False)
             )
@@ -183,6 +185,7 @@ class FormService:
                     required=field_data.get('required', False),
                     options=field_data.get('options'),
                     validation=field_data.get('validation'),
+                    default_value=field_data.get('default_value'),  # 👈 ADD
                     order=idx,
                     is_system=field_data.get('is_system', False)
                 )
