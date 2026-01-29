@@ -58,6 +58,20 @@ class DocumentService:
 
         return dict(counts)
 
+    @staticmethod
+    def extract_client_id_from_form_data(db: Session, form_data: dict) -> Optional[str]:
+        """Extract client_id from form data if present"""
+        if not form_data:
+            return None
+        
+        from ..models.form import FormField
+        for field_id, value in form_data.items():
+            # Check if this field is a client field by querying the form field
+            field = db.query(FormField).filter(FormField.id == field_id).first()
+            if field and (field.field_type == 'client_dropdown' or field.label == 'Client'):
+                return value
+        return None
+
 
     @staticmethod
     async def create_document(db: Session, file: UploadFile, user_id: str) -> Document:
@@ -145,9 +159,12 @@ class DocumentService:
         from ..models.document_form_data import DocumentFormData
         
         parsed_form_data = None
+        client_id = None
         if form_data:
             try:
                 parsed_form_data = json.loads(form_data)
+                # Extract client_id from form data if present
+                client_id = DocumentService.extract_client_id_from_form_data(db, parsed_form_data)
             except:
                 parsed_form_data = {}
         
@@ -179,7 +196,8 @@ class DocumentService:
                 upload_progress=0,
                 enable_ai=enable_ai,
                 document_type_id=document_type_id,
-                template_id=template_id
+                template_id=template_id,
+                client_id=client_id
             )
             db.add(document)
             db.flush()  # Get the ID without committing
