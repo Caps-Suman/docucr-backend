@@ -5,8 +5,10 @@ import random
 import string
 import uuid
 
+from app.models.client import Client
 from app.models.user import User
 from app.models.otp import OTP
+from app.models.user_client import UserClient
 from app.models.user_role import UserRole
 from app.models.role import Role
 from app.models.status import Status
@@ -27,6 +29,14 @@ class AuthService:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         return active_status and user.status_id == active_status.id
 
+    @staticmethod
+    def get_user_client(user_id: str, db: Session):
+        return (
+            db.query(Client)
+            .join(UserClient, UserClient.client_id == Client.id)
+            .filter(UserClient.user_id == user_id)
+            .first()
+        )
     @staticmethod
     def get_user_roles(user_id: str, db: Session) -> List[Dict]:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
