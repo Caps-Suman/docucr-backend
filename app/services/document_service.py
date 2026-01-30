@@ -272,7 +272,49 @@ class DocumentService:
         ))
         
         return documents
-    
+    @staticmethod
+    def _visible_documents_query(db: Session, user_id: str):
+        from ..models.document_share import DocumentShare
+
+        role_names = [
+            r[0] for r in db.query(Role.name)
+            .join(UserRole)
+            .filter(UserRole.user_id == user_id)
+            .all()
+        ]
+        is_admin = any(r in ["ADMIN", "SUPER_ADMIN"] for r in role_names)
+
+        base = db.query(Document)
+
+        if is_admin:
+            return base
+
+        assigned_client_ids = (
+            db.query(UserClient.client_id)
+            .filter(UserClient.user_id == user_id)
+        )
+
+        shared_ids = (
+            db.query(DocumentShare.document_id)
+            .filter(DocumentShare.user_id == user_id)
+        )
+
+        owned_client_ids = (
+            db.query(Client.id)
+            .filter(Client.user_id == user_id)
+        )
+
+        return base.filter(
+            or_(
+                Document.user_id == user_id,
+                Document.client_id.in_(assigned_client_ids),
+                Document.client_id.in_(owned_client_ids),
+                Document.id.in_(shared_ids)
+            )
+        )
+
+
+
     @staticmethod
     async def _process_uploads_background(documents: List[Document], files_data: List[dict],
                                         enable_ai: bool = False, document_type_id: str = None, 
@@ -618,129 +660,112 @@ class DocumentService:
             db.close()
     
     @staticmethod
-    def get_user_documents(db: Session, user_id: str, skip: int = 0, limit: int = 100,
-                         status_id: str = None, date_from: str = None, date_to: str = None,
-                         search_query: str = None, form_filters: str = None,
-                         document_type_id: UUID = None,  # ✅ ADD
-                         shared_only: bool = False) -> tuple[List[Document], int]:
-        """Get documents for a user with role-based access control"""
+    def get_user_documents(
+    db: Session,
+    user_id: str,
+    skip: int = 0,
+    limit: int = 100,
+    status_id: str = None,
+    date_from: str = None,
+    date_to: str = None,
+    search_query: str = None,
+    form_filters: str = None,
+    document_type_id: UUID = None,
+    shared_only: bool = False
+) -> tuple[List[Document], int]:
+        """
+        Get documents visible to a user.
+        Visibility rules are centralized in _visible_documents_query.
+        """
+
         from ..models.document_share import DocumentShare
-        # Get user's roles to determine access level - optimized query
-        role_names = [r[0] for r in db.query(Role.name).join(UserRole).filter(
-            UserRole.user_id == user_id,
-            Role.status_id.in_(
-                db.query(Status.id).filter(Status.code == 'ACTIVE')
-            )
-        ).all()]
-        is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+        from ..models.document_form_data import DocumentFormData
 
-        query = db.query(Document)\
-            .options(joinedload(Document.form_data_relation))\
+        # 🔐 BASE VISIBILITY (single source of truth)
+        query = (
+            DocumentService._visible_documents_query(db, user_id)
+            .options(joinedload(Document.form_data_relation))
             .options(joinedload(Document.status))
-        
+        )
+
+        # 📤 Shared-only filter (explicit user intent)
         if shared_only:
-            # ONLY documents shared with the user
-            shared_ids = db.query(DocumentShare.document_id).filter(
-                DocumentShare.user_id == user_id
-            ).subquery()
-            query = query.filter(Document.id.in_(shared_ids))
-        elif is_admin:
-            # Admin users see all documents - no user filter
-            pass
-        else:
-            # Non-admin users see only:
-            # 1. Documents they uploaded
-            # 2. Documents from clients assigned to them
-            # 3. Documents shared with them via DocumentShare
-            # assigned_client_ids = db.query(UserClient.client_id).filter(
-            #     UserClient.user_id == user_id
-            # ).subquery()
-            assigned_client_ids = select(UserClient.client_id).where(
-                UserClient.user_id == user_id
-            )
-            # Documents shared via DocumentShare
-            shared_ids = db.query(DocumentShare.document_id).filter(
-                DocumentShare.user_id == user_id
-            ).subquery()
-            
-            # Get documents from assigned clients by joining with form data
-            client_documents_query = db.query(Document.id).join(
-                DocumentFormData, Document.id == DocumentFormData.document_id
-            ).join(
-                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-            ).filter(
-                Client.id.in_(assigned_client_ids)
-            )
-            
-            query = query.filter(
-                or_(
-                    Document.user_id == user_id,  # Documents uploaded by user
-                    Document.id.in_(client_documents_query),  # Documents from assigned clients
-                    Document.id.in_(shared_ids) # Documents shared with user
-                )
-            )
+            query = query.join(
+                DocumentShare,
+                DocumentShare.document_id == Document.id
+            ).filter(DocumentShare.user_id == user_id)
 
-        # Status Filter (Param status_id is actually the CODE string from frontend e.g. 'UPLOADED')
+        # 📌 Status filter
         if status_id:
-            if status_id.upper() == 'ARCHIVED':
-                query = query.filter(Document.is_archived == True)
+            if status_id.upper() == "ARCHIVED":
+                query = query.filter(Document.is_archived.is_(True))
             else:
-                query = query.join(Document.status).filter(Status.code == status_id.upper())
-                # Also filter out archived documents when showing other statuses
-                query = query.filter(Document.is_archived == False)
+                query = (
+                    query.join(Document.status)
+                    .filter(Status.code == status_id.upper())
+                    .filter(Document.is_archived.is_(False))
+                )
         else:
-            # By default, exclude archived documents
-            query = query.filter(Document.is_archived == False)
+            # Default: hide archived
+            query = query.filter(Document.is_archived.is_(False))
 
-        # Date Filters
+        # 📅 Date filters
         if date_from:
             try:
-                # Expecting ISO format string or YYYY-MM-DD
-                d_from = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
-                query = query.filter(Document.created_at >= d_from)
-            except ValueError:
-                pass # Ignore invalid dates
-
-        if date_to:
-            try:
-                d_to = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
-                query = query.filter(Document.created_at <= d_to)
+                query = query.filter(
+                    Document.created_at >= datetime.fromisoformat(
+                        date_from.replace("Z", "+00:00")
+                    )
+                )
             except ValueError:
                 pass
 
-        # Search Query (General - filename)
+        if date_to:
+            try:
+                query = query.filter(
+                    Document.created_at <= datetime.fromisoformat(
+                        date_to.replace("Z", "+00:00")
+                    )
+                )
+            except ValueError:
+                pass
+
+        # 🔍 Filename search
         if search_query:
             query = query.filter(Document.filename.ilike(f"%{search_query}%"))
+
+        # 📄 Document type filter
         if document_type_id:
             query = query.filter(Document.document_type_id == document_type_id)
-        # Dynamic Form Filters
+
+        # 🧩 Dynamic form filters (METADATA ONLY — not permissions)
         if form_filters:
             try:
                 filters = json.loads(form_filters)
                 if filters:
-                    # Join if not already implicit (joinedload is for loading, but we need to filter)
-                    # We outerjoin to include docs even if they don't have form data? 
-                    # No, if we are filtering BY form data, they must have it.
                     query = query.join(Document.form_data_relation)
-                    
                     for key, value in filters.items():
                         if value:
-                            # Use JSON path filtering. 
-                            # Cast to string for ILIKE comparison to support partial/case-insensitive match
                             query = query.filter(
-                                cast(DocumentFormData.data[key], String).ilike(f"%{value}%")
+                                cast(DocumentFormData.data[key], String)
+                                .ilike(f"%{value}%")
                             )
             except json.JSONDecodeError:
                 pass
 
+        # 🔢 Count AFTER all filters
         total_count = query.count()
 
-        documents = query.order_by(Document.created_at.desc())\
-            .offset(skip)\
-            .limit(limit)\
+        # 📑 Pagination
+        documents = (
+            query.order_by(Document.created_at.desc())
+            .offset(skip)
+            .limit(limit)
             .all()
-            
+        )
+
         return documents, total_count
+
 
     @staticmethod
     def get_document_detail(db: Session, document_id: int, user_id: str) -> Document:
@@ -1189,74 +1214,106 @@ class DocumentService:
         from ..models.document_form_data import DocumentFormData
         from ..models.document_share import DocumentShare
         from ..services.document_share_service import DocumentShareService
-        from sqlalchemy import cast, String, or_
+        from sqlalchemy import cast, String, or_\
         
-        # Get user's roles to determine access level
-        user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-            User.id == user_id,
-            Role.status_id.in_(
-                db.query(Status.id).filter(Status.code == 'ACTIVE')
-            )
-        ).all()
-        
-        role_names = [role.name for role in user_roles]
-        is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-        
-        # Base query for documents
-        base_query = db.query(Document)
-        
-        if not is_admin:
-            # Non-admin users see only their documents and assigned client documents
-            # assigned_client_ids = db.query(UserClient.client_id).filter(
-            #     UserClient.user_id == user_id
-            # ).subquery()
-            assigned_client_ids = select(UserClient.client_id).where(
-                UserClient.user_id == user_id
-            )
-            client_documents_query = db.query(Document.id).join(
-                DocumentFormData, Document.id == DocumentFormData.document_id
-            ).join(
-                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-            ).filter(
-                Client.id.in_(assigned_client_ids)
-            )
-            
-            base_query = base_query.filter(
-                or_(
-                    Document.user_id == user_id,
-                    Document.id.in_(client_documents_query)
-                )
-            )
-        
-        # Total active (not archived) documents
-        total_active = base_query.filter(
-            Document.is_archived == False
-        ).count()
-        
-        # Total archived documents
-        total_archived = base_query.filter(
-            Document.is_archived == True
-        ).count()
-        
-        # Counts by status
-        status_counts = base_query.join(Document.status)\
-         .filter(Document.is_archived == False)\
-         .with_entities(Status.code, func.count(Document.id))\
-         .group_by(Status.code).all()
-        
-        counts_dict = {code: count for code, count in status_counts}
-        
-        # Get shared documents count
-        share_service = DocumentShareService(db)
-        shared_count = share_service.get_shared_documents_count(user_id)
-        
-        # Aggregated stats for the cards
+        base = DocumentService._visible_documents_query(db, user_id)
+
+        total_active = base.filter(Document.is_archived == False).count()
+        total_archived = base.filter(Document.is_archived == True).count()
+
+        status_counts = (
+            base.join(Document.status)
+            .filter(Document.is_archived == False)
+            .with_entities(Status.code, func.count(Document.id))
+            .group_by(Status.code)
+            .all()
+        )
+
+        counts = {code: count for code, count in status_counts}
+
+        shared_with_me = (
+            base.join(DocumentShare, DocumentShare.document_id == Document.id)
+            .filter(DocumentShare.user_id == user_id)
+            .count()
+        )
+
         return {
             "total": total_active,
-            "processed": counts_dict.get("COMPLETED", 0),
-            "processing": counts_dict.get("PROCESSING", 0) + counts_dict.get("ANALYZING", 0) + counts_dict.get("AI_QUEUED", 0),
-            "sharedWithMe": shared_count,
-            "archived": total_archived
+            "processed": counts.get("COMPLETED", 0),
+            "processing": (
+                counts.get("PROCESSING", 0)
+                + counts.get("ANALYZING", 0)
+                + counts.get("AI_QUEUED", 0)
+            ),
+            "sharedWithMe": shared_with_me,
+            "archived": total_archived,
         }
+        # Get user's roles to determine access level
+        # user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+        #     User.id == user_id,
+        #     Role.status_id.in_(
+        #         db.query(Status.id).filter(Status.code == 'ACTIVE')
+        #     )
+        # ).all()
+        
+        # role_names = [role.name for role in user_roles]
+        # is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+        
+        # # Base query for documents
+        # base_query = db.query(Document)
+        
+        # if not is_admin:
+        #     # Non-admin users see only their documents and assigned client documents
+        #     # assigned_client_ids = db.query(UserClient.client_id).filter(
+        #     #     UserClient.user_id == user_id
+        #     # ).subquery()
+        #     assigned_client_ids = select(UserClient.client_id).where(
+        #         UserClient.user_id == user_id
+        #     )
+        #     client_documents_query = db.query(Document.id).join(
+        #         DocumentFormData, Document.id == DocumentFormData.document_id
+        #     ).join(
+        #         Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+        #     ).filter(
+        #         Client.id.in_(assigned_client_ids)
+        #     )
+            
+        #     base_query = base_query.filter(
+        #         or_(
+        #             Document.user_id == user_id,
+        #             Document.id.in_(client_documents_query)
+        #         )
+        #     )
+        
+        # # Total active (not archived) documents
+        # total_active = base_query.filter(
+        #     Document.is_archived == False
+        # ).count()
+        
+        # # Total archived documents
+        # total_archived = base_query.filter(
+        #     Document.is_archived == True
+        # ).count()
+        
+        # # Counts by status
+        # status_counts = base_query.join(Document.status)\
+        #  .filter(Document.is_archived == False)\
+        #  .with_entities(Status.code, func.count(Document.id))\
+        #  .group_by(Status.code).all()
+        
+        # counts_dict = {code: count for code, count in status_counts}
+        
+        # # Get shared documents count
+        # share_service = DocumentShareService(db)
+        # shared_count = share_service.get_shared_documents_count(user_id)
+        
+        # # Aggregated stats for the cards
+        # return {
+        #     "total": total_active,
+        #     "processed": counts_dict.get("COMPLETED", 0),
+        #     "processing": counts_dict.get("PROCESSING", 0) + counts_dict.get("ANALYZING", 0) + counts_dict.get("AI_QUEUED", 0),
+        #     "sharedWithMe": shared_count,
+        #     "archived": total_archived
+        # }
 
 document_service = DocumentService()
