@@ -1,0 +1,830 @@
+{
+    "title": "Dr. Hashem Monshie -Greater Washington",
+    "category": "Cardiologist",
+    "provider_type": "new",
+    "client_id": null,
+    "provider_info": {
+        "providerName": "GREATER WASHINGTON ARTHRITIS RHEUMATOLOGY",
+        "billingProviderName": "GREATER WASHINGTON ARTHRITIS RHEUMATOLOGY",
+        "billingProviderNPI": "1366895567",
+        "providerTaxID": "813142896",
+        "practiceName": "",
+        "billingAddress": "GREATER WASHINGTON ARTHRITIS 14904 JEFFERSON DAVIS HWY STE WOODBRIDGE, VA 22191-3908",
+        "software": "Medeye",
+        "clearinghouse": "Alveo"
+    },
+    "workflow_process": {
+        "superbill_source": "Superbills are received through emails.\n\nOpen the Visit tab>manage patient visit, the search the patient for duplicate, if no duplicate post the charge according to supper bills.",
+        "posting_charges_rules": "",
+        "eligibility_verification_portals": [
+            "Medicaid",
+            "Availity",
+            "UnitedHealthcare (UHC)",
+            "Care First"
+        ]
+    },
+    "billing_guidelines": [
+        {
+            "id": "bg_ai_0",
+            "title": "Infusion Claim Billing",
+            "description": "For Infusion claim if buy and bill is mentioned then to bill with amount, if special pharmacy is mentioned then bill with zero amount and for Medicare special pharmacy case take $0.01 as billed amount."
+        },
+        {
+            "id": "bg_ai_1",
+            "title": "Modifier Usage for Insurances",
+            "description": "For insurances Molina, Medicaid & Aetna Better Health use only LT & RT modifier according to which side marked on superbill, do not use modifier 50 with X-ray codes."
+        },
+        {
+            "id": "bg_ai_2",
+            "title": "CPT Code Replacements",
+            "description": "M54.50 replace with M54.59"
+        },
+        {
+            "id": "bg_ai_3",
+            "title": "CPT Code Replacements",
+            "description": "M25.50 replace with M25.59"
+        },
+        {
+            "id": "bg_ai_4",
+            "title": "CPT Code Replacements",
+            "description": "M06.06 replace with M06.069"
+        },
+        {
+            "id": "bg_ai_5",
+            "title": "Bilateral ICD Usage",
+            "description": "Use M17.0 Bilateral ICD with X-ray code (only when M17.12, M17.9 &M17.11 is given) if bilateral. Other use only pain in Knee ICD code according to which side X-ray done."
+        },
+        {
+            "id": "bg_ai_6",
+            "title": "Bilateral ICD Usage",
+            "description": "Use M16.0 Bilateral ICD with X-ray code (only when M16.12, M16.9 &M16.11 is given) if bilateral. Other use only pain in Hip ICD code according to which side X-ray done."
+        },
+        {
+            "id": "bg_ai_7",
+            "title": "ICD Code Restrictions",
+            "description": "If M15.0 is used don’t take ICD code from range (M16 to M19)."
+        },
+        {
+            "id": "bg_ai_8",
+            "title": "ICD Code Restrictions",
+            "description": "If M13.0 is used don’t take ICD from range (M15 to M19)."
+        },
+        {
+            "id": "bg_ai_9",
+            "title": "Modifier Usage for J Codes",
+            "description": "Please use JZ modifier in all J code CPTs for all the insurance."
+        },
+        {
+            "id": "bg_ai_10",
+            "title": "Modifier Usage for Medicare",
+            "description": "JA modifier should be only use with Medicare for CPT J0129."
+        },
+        {
+            "id": "bg_ai_11",
+            "title": "Modifier Usage for CPT Codes",
+            "description": "LT or RT modifier use in Medicare with CPT 73130 and 73110 and don’t use 50 modifiers for these CPT code. LT and RT bill with 2 unit."
+        },
+        {
+            "id": "bg_ai_12",
+            "title": "JW Modifier Usage",
+            "description": "If wastage as marked on super bill given then take only JW modifier with drug codes do not use JZ & JW modifier both on drug codes."
+        },
+        {
+            "id": "bg_ai_13",
+            "title": "Code Restrictions",
+            "description": "Do not bill both codes together M45.9 and M05.89."
+        },
+        {
+            "id": "bg_ai_14",
+            "title": "Code Restrictions",
+            "description": "Do not bill both codes together M13.0 and M15.1."
+        },
+        {
+            "id": "bg_ai_15",
+            "title": "Primary DX Code Restrictions",
+            "description": "Do Not Bill M1610 DX code as primary."
+        },
+        {
+            "id": "bg_ai_16",
+            "title": "Code Restrictions",
+            "description": "Do not Bill M19.90 & M13.0 DX code together."
+        },
+        {
+            "id": "bg_ai_17",
+            "title": "Code Restrictions",
+            "description": "Do not Bill M06.4 & M13.0 DX code together."
+        },
+        {
+            "id": "bg_ai_18",
+            "title": "X-ray Code Usage",
+            "description": "M17.11 and M17.12 use only when LT RT given with x-ray codes. If marked on superbill."
+        },
+        {
+            "id": "bg_ai_19",
+            "title": "DX Code Usage for CPT J2507",
+            "description": "M1A9XX1 DX code use for CPT J2507."
+        },
+        {
+            "id": "bg_ai_20",
+            "title": "ICD Code Usage",
+            "description": "M06.09 is given then take M06.9."
+        },
+        {
+            "id": "bg_ai_21",
+            "title": "ICD Code for CMC Joint",
+            "description": "B/L first CMC joint ICD 10- M18.0."
+        },
+        {
+            "id": "bg_ai_22",
+            "title": "CPT Code Usage",
+            "description": "CPT 73502 marked on super bill with LR & RT modifier both then use 73521 CPT code. If only LT or RT given then use 73502 with modifier as per given side on superbill."
+        },
+        {
+            "id": "bg_ai_23",
+            "title": "Modifier Restrictions for J Codes",
+            "description": "Don’t use JZ modifier with CPT J1200 & J2919 Only for Anthem Health insurance."
+        },
+        {
+            "id": "bg_ai_24",
+            "title": "Admin Code Usage for CPT J0897",
+            "description": "For CPT J0897 use admin code 96372 with Aetna Better Health, Medicare & UHC. For rest insurance use admin code 96401."
+        },
+        {
+            "id": "bg_ai_25",
+            "title": "CPT Code N95.8 and M85.88 Usage",
+            "description": "CPT code 77080 marked on superbill need to take N95.8 for Female and M85.88 for Male."
+        },
+        {
+            "id": "bg_ai_26",
+            "title": "Telehealth Visit Billing",
+            "description": "For Telehealth Visit use POS 10 and CPT code according to super bill and time for commercial."
+        },
+        {
+            "id": "bg_ai_27",
+            "title": "Medicare Telehealth Billing",
+            "description": "For Medicare do not bill telehealth CPT code, use Modifier 95 and E&M."
+        },
+        {
+            "id": "bg_ai_28",
+            "title": "CPT J1010 Billing Limit",
+            "description": "CPT J1010 maximum can be billed with 120 units only."
+        },
+        {
+            "id": "bg_ai_29",
+            "title": "Unspecified Code Usage",
+            "description": "In Aetna Better & Sentara try not to use unspecified code as primary DX."
+        },
+        {
+            "id": "bg_ai_30",
+            "title": "Aetna Policy Bulletin 0810",
+            "description": "As per Aetna Policy Bulletin 0810 administration code 96413 is no valid a valid code to be billed along with CPT J2507 (Krystexxa) also verified with the coding team, CPT 96365 must be billed as an admin code & 96366 for each additional hour."
+        },
+        {
+            "id": "bg_ai_31",
+            "title": "CPT Code 73502 & 72170 Billing",
+            "description": "73502 & 72170 can be billed together use 59 modifier with 72170 and different ICD."
+        },
+        {
+            "id": "bg_ai_32",
+            "title": "CPT Code 73521 & 72170 Billing",
+            "description": "73521 & 72170 can be billed together use 59 modifier with 72170 and different ICD."
+        },
+        {
+            "id": "bg_ai_33",
+            "title": "CPT J3489 Admin Code Usage",
+            "description": "For CPT J3489 bill admin code as per received super bill. If not given the use 96365."
+        },
+        {
+            "id": "bg_ai_34",
+            "title": "Code Restrictions",
+            "description": "Don’t bill L40.9 & L40.59 together. Use only one."
+        },
+        {
+            "id": "bg_ai_35",
+            "title": "Biller Fee for UDS CPT",
+            "description": "Biller $25 for UDS CPT 81002 to patient as provider does not have CLIA#."
+        },
+        {
+            "id": "bg_ai_36",
+            "title": "Free Clinic Billing",
+            "description": "If Free Clinic written on superbill, billed all CPT code with $0.01 and adjust the amount with free clinic write off code."
+        },
+        {
+            "id": "bg_ai_37",
+            "title": "Anthem Health Keepers and BCBS Claims",
+            "description": "For Anthem Health Keepers and BCBS insurance claims, always use ME (not UN) in the quantity box for J-codes."
+        },
+        {
+            "id": "bg_ai_38",
+            "title": "ICD Code Restrictions",
+            "description": "ICD codes M32.10 and L93.0 should not be reported together."
+        },
+        {
+            "id": "bg_ai_39",
+            "title": "ICD Code Restrictions",
+            "description": "ICD codes M35.00 and R82 should not be reported together."
+        },
+        {
+            "id": "bg_ai_40",
+            "title": "Modifier EJ Usage",
+            "description": "If J7321 is billed more than once, use modifier EJ."
+        },
+        {
+            "id": "bg_ai_41",
+            "title": "ICD Code Restrictions",
+            "description": "ICD codes M45.9 and M05.89 should not be reported together."
+        },
+        {
+            "id": "bg_ai_42",
+            "title": "ICD Code Restrictions",
+            "description": "ICD codes M79.7 and 791.0 should not be reported together."
+        },
+        {
+            "id": "bg_ai_43",
+            "title": "FA Modifier Usage",
+            "description": "FA modifier should be used only with the CPT codes listed above."
+        }
+    ],
+    "coding_rules": [
+        {
+            "id": "cr_ai_0",
+            "cptCode": "J0129",
+            "description": "",
+            "ndcCode": "00003-2187-13",
+            "units": "As per received superbill",
+            "chargePerUnit": "$100.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_1",
+            "cptCode": "J0139",
+            "description": "",
+            "ndcCode": "00744-3399-07",
+            "units": "As per received superbill",
+            "chargePerUnit": "$600.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_2",
+            "cptCode": "J0490",
+            "description": "",
+            "ndcCode": "49401-0102-01",
+            "units": "As per received superbill",
+            "chargePerUnit": "$65.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_3",
+            "cptCode": "J0702",
+            "description": "",
+            "ndcCode": "78206-0118-01",
+            "units": "As per received superbill",
+            "chargePerUnit": "$20.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_4",
+            "cptCode": "J0717",
+            "description": "",
+            "ndcCode": "50474-0700-62",
+            "units": "As per received superbill",
+            "chargePerUnit": "$8.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_5",
+            "cptCode": "J0800",
+            "description": "",
+            "ndcCode": "63004-8710-03",
+            "units": "As per received superbill",
+            "chargePerUnit": "$100.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_6",
+            "cptCode": "J0802",
+            "description": "",
+            "ndcCode": "06255-9860-11",
+            "units": "As per received superbill",
+            "chargePerUnit": "$100.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_7",
+            "cptCode": "J0897",
+            "description": "",
+            "ndcCode": "55513-0710-01",
+            "units": "60 units",
+            "chargePerUnit": "$30.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_8",
+            "cptCode": "J1010",
+            "description": "",
+            "ndcCode": "25021-0821-05",
+            "units": "80",
+            "chargePerUnit": "$0.38",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_9",
+            "cptCode": "J1010",
+            "description": "",
+            "ndcCode": "25021-0821-05",
+            "units": "40",
+            "chargePerUnit": "$0.75",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_10",
+            "cptCode": "J1100",
+            "description": "",
+            "ndcCode": "67457-0422-00",
+            "units": "As per received superbill",
+            "chargePerUnit": "$20.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_11",
+            "cptCode": "J1200",
+            "description": "",
+            "ndcCode": "63323-0664-01",
+            "units": "1",
+            "chargePerUnit": "$10.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_12",
+            "cptCode": "J1438",
+            "description": "",
+            "ndcCode": "58406-0425-34",
+            "units": "As per received superbill",
+            "chargePerUnit": "$500.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_13",
+            "cptCode": "J1602",
+            "description": "",
+            "ndcCode": "57894-0350-01",
+            "units": "As per received superbill",
+            "chargePerUnit": "$33.04",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_14",
+            "cptCode": "J1628",
+            "description": "",
+            "ndcCode": "57894-0640-11",
+            "units": "As per received superbill",
+            "chargePerUnit": "$100.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_15",
+            "cptCode": "J1740",
+            "description": "",
+            "ndcCode": "00004-0191-09",
+            "units": "As per received superbill",
+            "chargePerUnit": "$300.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_16",
+            "cptCode": "J1745",
+            "description": "",
+            "ndcCode": "57894-0030-01",
+            "units": "As per received superbill",
+            "chargePerUnit": "$100.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_17",
+            "cptCode": "J1885",
+            "description": "",
+            "ndcCode": "00409-3795-01",
+            "units": "As per received superbill",
+            "chargePerUnit": "$80.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_18",
+            "cptCode": "J2405",
+            "description": "",
+            "ndcCode": "00409-4759-01",
+            "units": "As per received superbill",
+            "chargePerUnit": "$20.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_19",
+            "cptCode": "J2507",
+            "description": "",
+            "ndcCode": "75987-0080-10",
+            "units": "8",
+            "chargePerUnit": "$3750.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_20",
+            "cptCode": "J2919",
+            "description": "",
+            "ndcCode": "00009-0039-28",
+            "units": "As per received superbill",
+            "chargePerUnit": "$2.5",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_21",
+            "cptCode": "J3111",
+            "description": "",
+            "ndcCode": "55513-0880-02",
+            "units": "210",
+            "chargePerUnit": "$1.20",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_22",
+            "cptCode": "J3262",
+            "description": "",
+            "ndcCode": "50242-0137-01",
+            "units": "As per received superbill",
+            "chargePerUnit": "$10.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_23",
+            "cptCode": "J3301",
+            "description": "",
+            "ndcCode": "00003-0293-20",
+            "units": "As per received superbill",
+            "chargePerUnit": "$15.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_24",
+            "cptCode": "J3304",
+            "description": "",
+            "ndcCode": "65250-003-01",
+            "units": "As per received superbill",
+            "chargePerUnit": "$15.50",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_25",
+            "cptCode": "J3357",
+            "description": "",
+            "ndcCode": "57894-0061-03",
+            "units": "As per received superbill",
+            "chargePerUnit": "$333.35",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_26",
+            "cptCode": "J3420",
+            "description": "",
+            "ndcCode": "00143-9621-01",
+            "units": "1",
+            "chargePerUnit": "$20.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_27",
+            "cptCode": "J3489",
+            "description": "",
+            "ndcCode": "00078-0435-61",
+            "units": "As per received superbill",
+            "chargePerUnit": "$300.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_28",
+            "cptCode": "J3590",
+            "description": "",
+            "ndcCode": "00002-1445-61",
+            "units": "As per received superbill",
+            "chargePerUnit": "The CPT amount isn't confirmed yet, as we've only received it as a sample.",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_29",
+            "cptCode": "j7050",
+            "description": "",
+            "ndcCode": "00264-7800-20",
+            "units": "1",
+            "chargePerUnit": "$5.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_30",
+            "cptCode": "J7321",
+            "description": "",
+            "ndcCode": "89122-0724-20 / 50016-0957-21",
+            "units": "As per received superbill",
+            "chargePerUnit": "$250.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_31",
+            "cptCode": "J7323",
+            "description": "",
+            "ndcCode": "55566-4100-01",
+            "units": "As per received superbill",
+            "chargePerUnit": "$200.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_32",
+            "cptCode": "J9312",
+            "description": "",
+            "ndcCode": "50242-0053-06",
+            "units": "As per received superbill",
+            "chargePerUnit": "$100.00",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_33",
+            "cptCode": "73600",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_34",
+            "cptCode": "72040",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "NO Modifier",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_35",
+            "cptCode": "72070",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "NO Modifier",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_36",
+            "cptCode": "73070",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_37",
+            "cptCode": "73630",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_38",
+            "cptCode": "73620",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_39",
+            "cptCode": "73120",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_40",
+            "cptCode": "73650",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_41",
+            "cptCode": "73510",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "Deleted code",
+            "replacementCPT": "-Use only LT/RT but do not use 50 modifiers"
+        },
+        {
+            "id": "cr_ai_42",
+            "cptCode": "73685",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_43",
+            "cptCode": "73560",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_44",
+            "cptCode": "73684",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_45",
+            "cptCode": "72100",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "NO Modifier",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_46",
+            "cptCode": "72170",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "NO Modifier",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_47",
+            "cptCode": "72200",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "NO Modifier",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_48",
+            "cptCode": "73030",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_49",
+            "cptCode": "73590",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_50",
+            "cptCode": "73100",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_51",
+            "cptCode": "72110",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "NO Modifier",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_52",
+            "cptCode": "73520",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "Deleted code",
+            "replacementCPT": "73521-No Modifier"
+        },
+        {
+            "id": "cr_ai_53",
+            "cptCode": "71046",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "NO Modifier",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_54",
+            "cptCode": "73562",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_55",
+            "cptCode": "73130",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50 / LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_56",
+            "cptCode": "73610",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        },
+        {
+            "id": "cr_ai_57",
+            "cptCode": "73110",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "50/LT/RT",
+            "replacementCPT": ""
+        }
+    ]
+}
