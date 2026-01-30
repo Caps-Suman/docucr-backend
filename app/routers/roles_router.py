@@ -221,12 +221,20 @@ async def update_role(
         if 'status_id' in role_data and existing_role.get('statusCode'):
             existing_role['status_id'] = existing_role['statusCode']
             
-        changes = ActivityService.calculate_changes(existing_role, role_data)
-        
+        changes = ActivityService.calculate_changes(existing_role, role_data) or {}
+        modules_changed = 'modules' in role_data
+
+        if not changes and not modules_changed:
+            raise HTTPException(
+                status_code=400,
+                detail="No changes provided for update"
+            )
+
         # Rename status_id to Status
         if 'status_id' in changes:
             changes['Status'] = changes.pop('status_id')
-
+        if modules_changed:
+            changes['Permissions'] = 'Updated'
     updated_role = RoleService.update_role(role_id, role_data, db)
     if not updated_role:
         raise HTTPException(status_code=404, detail="Role not found")
