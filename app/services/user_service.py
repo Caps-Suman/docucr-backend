@@ -522,16 +522,16 @@ class UserService:
         if not supervisor:
             raise ValueError("Supervisor not found")
 
-        # Validate shared role
-        user_roles = {
-            r.role_id for r in db.query(UserRole).filter(UserRole.user_id == user_id)
-        }
-        supervisor_roles = {
-            r.role_id for r in db.query(UserRole).filter(UserRole.user_id == supervisor_id)
-        }
+        # Validate shared role - REMOVED as it prevents valid cross-role supervision
+        # user_roles = {
+        #     r.role_id for r in db.query(UserRole).filter(UserRole.user_id == user_id)
+        # }
+        # supervisor_roles = {
+        #     r.role_id for r in db.query(UserRole).filter(UserRole.user_id == supervisor_id)
+        # }
 
-        if not user_roles.intersection(supervisor_roles):
-            raise ValueError("Supervisor must share at least one role with user")
+        # if not user_roles.intersection(supervisor_roles):
+        #     raise ValueError("Supervisor must share at least one role with user")
 
         db.add(UserSupervisor(
             id=str(uuid.uuid4()),

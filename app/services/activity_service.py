@@ -141,8 +141,8 @@ class ActivityService:
                         "from": ActivityService._normalize_value(old_val),
                         "to": ActivityService._normalize_value(new_val)
                     }
-
-                    
+        
+        return changes
 
     
     # -------------------------------------------------------------------------
