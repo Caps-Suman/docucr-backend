@@ -344,7 +344,7 @@ class UserService:
 
             if user.is_client:
                 # Fetch client linked to this user
-                client = db.query(Client).filter(Client.user_id == user.id).first()
+                client = db.query(Client).filter(Client.created_by == user.id).first()
                 if client:
                     client.status_id = active_status.id
                     
@@ -364,7 +364,7 @@ class UserService:
             
             if user.is_client:
                 # Fetch client linked to this user
-                client = db.query(Client).filter(Client.user_id == user.id).first()
+                client = db.query(Client).filter(Client.created_by == user.id).first()
                 if client:
                     client.status_id = inactive_status.id
             

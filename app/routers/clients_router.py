@@ -37,9 +37,8 @@ class ClientCreate(BaseModel):
     type: Optional[str] = None
     status_id: Optional[str] = None
     description: Optional[str] = None
-    user_id: Optional[str] = None
 
-    # ✅ NEW ADDRESS FIELDS
+    # NEW ADDRESS FIELDS
     address_line_1: Optional[str] = Field(None, max_length=250)
     address_line_2: Optional[str] = Field(None, max_length=250)
     state_code: Optional[str] = Field(None, min_length=2, max_length=2)
@@ -60,7 +59,7 @@ class ClientUpdate(BaseModel):
     status_id: Optional[str] = None
     description: Optional[str] = None
 
-    # ✅ NEW ADDRESS FIELDS
+    # NEW ADDRESS FIELDS
     address_line_1: Optional[str] = Field(None, max_length=250)
     address_line_2: Optional[str] = Field(None, max_length=250)
     state_code: Optional[str] = Field(None, min_length=2, max_length=2)
@@ -211,6 +210,7 @@ async def create_client(
         raise HTTPException(status_code=400, detail="NPI already exists")
     
     client_data = client.model_dump()
+    client_data['created_by'] = current_user.id
     created_client = ClientService.create_client(client_data, db)
     
     ActivityService.log(
@@ -393,7 +393,9 @@ async def create_clients_bulk(
                 errors.append(f"NPI already exists: {client_data.npi}")
                 continue
 
-            client = ClientService.create_client(client_data.dict(), db)
+            client_dict = client_data.model_dump()
+            client_dict['created_by'] = current_user.id
+            client = ClientService.create_client(client_dict, db)
             if client:
                 success += 1
                 

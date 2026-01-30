@@ -72,7 +72,7 @@ class ClientService:
             Client.status_id == active_status,
             or_(
                 Client.id.in_(assigned_clients),
-                Client.user_id == current_user.id  # 👈 OWNER ACCESS
+                Client.created_by == current_user.id  # OWNER ACCESS
             )
         ).order_by(Client.business_name).all()
 
@@ -90,14 +90,14 @@ class ClientService:
         if user.client_id and user.client_id != client.id:
             raise ValueError("User already linked to another client")
 
-        if client.user_id and client.user_id != user.id:
+        if client.created_by and client.created_by != user.id:
             raise ValueError("Client already has an owner")
 
         # ---- OWNERSHIP ONLY ----
         user.client_id = client.id
         user.is_client = True
 
-        client.user_id = user.id
+        client.created_by = user.id
         client.is_user = True
 
         db.commit()
@@ -188,10 +188,11 @@ class ClientService:
     def create_client(client_data: Dict, db: Session) -> Dict:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         
-        # Extract user_id for linking
-        user_id = client_data.get('user_id')
+        # Extract user_id for linking (using created_by as per user's latest change)
+        user_id = client_data.get('created_by')
         client_data_copy = client_data.copy()
         client_data_copy.pop('status_id', None)
+        client_data_copy.pop('user_id', None)
         
         new_client = Client(
             status_id=active_status.id if active_status else None,
@@ -241,12 +242,13 @@ class ClientService:
                         client.status_id = status_obj.id
                 else:
                     client.status_id = value
-            elif key != 'status_id':
+            elif key not in ['status_id', 'user_id']:
                 setattr(client, key, value)
         
         db.commit()
         db.refresh(client)
         return ClientService._format_client(client, db)
+
     @staticmethod
     def activate_client(client_id: str, db: Session) -> Optional[Dict]:
         client = db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
@@ -259,6 +261,7 @@ class ClientService:
             db.commit()
             db.refresh(client)
         return ClientService._format_client(client, db)
+
     @staticmethod
     def deactivate_client(client_id: str, db: Session) -> Optional[Dict]:
         client = db.query(Client).filter(Client.id == client_id, Client.deleted_at.is_(None)).first()
@@ -271,9 +274,9 @@ class ClientService:
             
             # Deactivate linked user(s) - Check all possible links
             
-            # 1. Direct link on Client
-            if client.user_id:
-                linked_user = db.query(User).filter(User.id == client.user_id).first()
+            # 1. Direct link on Client (Owner)
+            if client.created_by:
+                linked_user = db.query(User).filter(User.id == client.created_by).first()
                 if linked_user and not linked_user.is_superuser:
                     linked_user.status_id = inactive_status.id
 
@@ -295,6 +298,7 @@ class ClientService:
             db.commit()
             db.refresh(client)
         return ClientService._format_client(client, db)
+        
     @staticmethod
     def assign_clients_to_user(
         user_id: str,
