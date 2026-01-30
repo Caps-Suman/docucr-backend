@@ -11,6 +11,7 @@ from app.models.user_client import UserClient
 from app.models.user_role import UserRole
 from app.models.role import Role
 from app.models.status import Status
+from app.services.user_service import UserService
 
 
 class ClientService:
@@ -69,10 +70,38 @@ class ClientService:
 
         clients = db.query(Client).filter(
             Client.status_id == active_status,
-            Client.id.in_(assigned_clients)
+            or_(
+                Client.id.in_(assigned_clients),
+                Client.user_id == current_user.id  # 👈 OWNER ACCESS
+            )
         ).order_by(Client.business_name).all()
 
+
         return [ClientService._format_client(c, db) for c in clients]
+    @staticmethod
+    def link_client_owner(db: Session, user_id: str, client_id: str):
+        user = db.query(User).filter(User.id == user_id).first()
+        client = db.query(Client).filter(Client.id == client_id).first()
+
+        if not user or not client:
+            raise ValueError("User or Client not found")
+
+        # ---- HARD RULES ----
+        if user.client_id and user.client_id != client.id:
+            raise ValueError("User already linked to another client")
+
+        if client.user_id and client.user_id != user.id:
+            raise ValueError("Client already has an owner")
+
+        # ---- OWNERSHIP ONLY ----
+        user.client_id = client.id
+        user.is_client = True
+
+        client.user_id = user.id
+        client.is_user = True
+
+        db.commit()
+ 
     @staticmethod
     def get_client_stats(db: Session, current_user: User) -> Dict:
         # Detect admin
@@ -177,25 +206,25 @@ class ClientService:
 
         return ClientService._format_client(new_client, db)
 
+    # @staticmethod
+    # def _link_user(client: Client, user_id: str, db: Session):
+    #     # Verify user exists
+    #     user = db.query(User).filter(User.id == user_id).first()
+    #     if user:
+    #         # Set direct foreign key relationships
+    #         user.client_id = client.id
+    #         user.is_client = True
+    #         client.is_user = True
+            
+    #         # Create UserClient relationship record for many-to-many queries
+    #         user_client = UserService.link_client_owner(db, user_id, client.id)
+
+    #         db.add(user_client)
+    #         db.commit()
     @staticmethod
     def _link_user(client: Client, user_id: str, db: Session):
-        # Verify user exists
-        user = db.query(User).filter(User.id == user_id).first()
-        if user:
-            # Set direct foreign key relationships
-            user.client_id = client.id
-            user.is_client = True
-            client.is_user = True
-            
-            # Create UserClient relationship record for many-to-many queries
-            user_client = UserClient(
-                id=str(uuid.uuid4()),
-                client_id=client.id,
-                user_id=user_id,
-                assigned_by=user_id
-            )
-            db.add(user_client)
-            db.commit()
+        # Ownership only — NO user_client
+        UserService.link_client_owner(db, user_id, client.id)
 
     @staticmethod
     def update_client(client_id: str, client_data: Dict, db: Session) -> Optional[Dict]:

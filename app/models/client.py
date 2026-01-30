@@ -37,7 +37,7 @@ class Client(Base):
 
     # --- System ---
     is_user = Column(Boolean, default=False)
-    user_id = Column(String, ForeignKey('docucr.user.id'), nullable=True)
+    created_by = Column(String, ForeignKey('docucr.user.id'), nullable=True)
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
     description = Column(Text, nullable=True)
 

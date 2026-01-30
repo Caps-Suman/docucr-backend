@@ -197,29 +197,51 @@ class UserService:
             UserService._assign_supervisor(user.id, user_data['supervisor_id'], db)
 
         if user_data.get('client_id'):
-            UserService._link_client(user, user_data['client_id'], db)
+            UserService.link_client_owner(db, user.id, user_data['client_id'])
         return user
         # return UserService._format_user_response(user, db)
-    
     @staticmethod
-    def _link_client(user: User, client_id: str, db: Session):
-        # Verify client exists
+    def link_client_owner(db: Session, user_id: str, client_id: str):
+        user = db.query(User).filter(User.id == user_id).first()
         client = db.query(Client).filter(Client.id == client_id).first()
-        if client:
-            # Create link
-            user_client = UserClient(
-                id=str(uuid.uuid4()),
-                user_id=user.id,
-                client_id=client_id,
-                assigned_by=user.id # Self-assigned via cross-creation
-            )
-            db.add(user_client)
+
+        if not user or not client:
+            raise ValueError("User or Client not found")
+
+        # ---- HARD RULES ----
+        if user.client_id and user.client_id != client.id:
+            raise ValueError("User already linked to another client")
+
+        if client.user_id and client.user_id != user.id:
+            raise ValueError("Client already has an owner")
+
+        # ---- OWNERSHIP ONLY ----
+        user.client_id = client.id
+        user.is_client = True
+
+        client.user_id = user.id
+        client.is_user = True
+
+        db.commit()
+    # @staticmethod
+    # def _link_client(user: User, client_id: str, db: Session):
+    #     # Verify client exists
+    #     client = db.query(Client).filter(Client.id == client_id).first()
+    #     if client:
+    #         # Create link
+    #         user_client = UserClient(
+    #             id=str(uuid.uuid4()),
+    #             user_id=user.id,
+    #             client_id=client_id,
+    #             assigned_by=user.id # Self-assigned via cross-creation
+    #         )
+    #         db.add(user_client)
             
-            # Update flags
-            user.is_client = True
-            client.is_user = True
+    #         # Update flags
+    #         user.is_client = True
+    #         client.is_user = True
             
-            db.commit()
+    #         db.commit()
 
     @staticmethod
     def get_user_clients(user_id: str, db: Session) -> List[Dict]:
@@ -262,13 +284,13 @@ class UserService:
             # Ensure flags are set?
             # If we map a client to a user, does it mean user.is_client = True?
             # Based on _link_client logic:
-            if not user.is_client:
-                user.is_client = True
+            # if not user.is_client:
+            #     user.is_client = True
             
             # Also update client.is_user?
             # We should probably update the clients too.
-            if new_mappings:
-                 db.query(Client).filter(Client.id.in_(client_ids)).update({Client.is_user: True}, synchronize_session=False)
+            # if new_mappings:
+            #      db.query(Client).filter(Client.id.in_(client_ids)).update({Client.is_user: True}, synchronize_session=False)
 
             db.commit()
 
@@ -474,7 +496,11 @@ class UserService:
              status_obj = db.query(Status).filter(Status.id == user.status_id).first()
              if status_obj:
                  status_code = status_obj.code
-        client_count = db.query(UserClient).filter(UserClient.user_id == user.id).count()
+        client_count = (
+            db.query(UserClient).filter(UserClient.user_id == user.id).count()
+            + db.query(Client).filter(Client.user_id == user.id).count()
+        )
+
 
         return {
             "id": user.id,
@@ -490,7 +516,7 @@ class UserService:
             "is_superuser": user.is_superuser,
             "roles": roles,
             "supervisor_id": supervisor_id,
-            "client_count": client_count
+            "assigned_client_count": client_count
         }
 
     @staticmethod
