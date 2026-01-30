@@ -35,9 +35,10 @@ class ClientService:
 
         # --- ADMIN: ALL CLIENTS ---
         if is_admin:
-            return db.query(Client).filter(
+            clients = db.query(Client).filter(
                 Client.status_id == active_status
             ).order_by(Client.business_name).all()
+            return [ClientService._format_client(c, db) for c in clients]
 
         # --- SUPERVISOR ---
         if is_supervisor:
@@ -55,20 +56,23 @@ class ClientService:
                 UserClient.user_id.in_(subordinate_users)
             )
 
-            return db.query(Client).filter(
+            clients = db.query(Client).filter(
                 Client.status_id == active_status,
                 Client.id.in_(direct_clients.union(subordinate_clients))
             ).order_by(Client.business_name).all()
+            return [ClientService._format_client(c, db) for c in clients]
 
         # --- REGULAR USER / CLIENT ---
         assigned_clients = select(UserClient.client_id).where(
             UserClient.user_id == current_user.id
         )
 
-        return db.query(Client).filter(
+        clients = db.query(Client).filter(
             Client.status_id == active_status,
             Client.id.in_(assigned_clients)
         ).order_by(Client.business_name).all()
+
+        return [ClientService._format_client(c, db) for c in clients]
     @staticmethod
     def get_client_stats(db: Session, current_user: User) -> Dict:
         # Detect admin
