@@ -195,7 +195,7 @@ def update_sop(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    updated_sop = SOPService.update_sop(sop_id, sop.model_dump(), db)
+    updated_sop = SOPService.update_sop(sop_id, sop.model_dump(exclude_unset=True), db)
     if not updated_sop:
         raise HTTPException(status_code=404, detail="SOP not found")
     return updated_sop
