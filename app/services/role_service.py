@@ -14,56 +14,61 @@ from app.models.status import Status
 class RoleService:
     
     @staticmethod
-    def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session) -> Tuple[List[Dict], int]:
+    def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session):
         skip = (page - 1) * page_size
-        query = db.query(Role).filter(func.upper(Role.name) != 'SUPER_ADMIN')
-        
+
+        query = RoleService._base_roles_query(db)
+
         if status_id:
             query = query.join(Role.status_relation).filter(Status.code == status_id)
-            
+
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
-        
+
         result = []
         for role in roles:
             users_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
-            # Resolve Status Code
-            status_code = role.status_relation.code if role.status_relation else None
-                
             result.append({
                 "id": role.id,
                 "name": role.name,
                 "description": role.description,
                 "status_id": role.status_id,
-                "statusCode": status_code,
+                "statusCode": role.status_relation.code if role.status_relation else None,
                 "can_edit": role.can_edit,
                 "users_count": users_count
             })
-        
+
         return result, total
 
     @staticmethod
-    def get_assignable_roles(page: int, page_size: int, db: Session) -> Tuple[List[Dict], int]:
+    def _base_roles_query(db: Session):
+        return (
+            db.query(Role)
+            .filter(func.upper(Role.name) != 'SUPER_ADMIN')
+        )
+
+    @staticmethod
+    def get_assignable_roles(page: int, page_size: int, db: Session):
         skip = (page - 1) * page_size
-        query = db.query(Role).filter(func.upper(Role.name) != 'SUPER_ADMIN')
+
+        query = RoleService._base_roles_query(db)
+
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
-        
+
         result = []
         for role in roles:
             users_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
-            status_code = role.status_relation.code if role.status_relation else None
-            
             result.append({
                 "id": role.id,
                 "name": role.name,
                 "description": role.description,
                 "status_id": role.status_id,
-                "statusCode": status_code,
+                "statusCode": role.status_relation.code if role.status_relation else None,
                 "can_edit": role.can_edit,
                 "users_count": users_count
             })
-        
+
         return result, total
 
     @staticmethod
@@ -233,15 +238,22 @@ class RoleService:
     
     @staticmethod
     def get_role_stats(db: Session) -> Dict:
-        total_roles = db.query(func.count(Role.id)).scalar()
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        active_roles = db.query(func.count(Role.id)).filter(Role.status_id == active_status.id).scalar() if active_status else 0
-        
+        base = RoleService._base_roles_query(db)
+
+        total_roles = base.count()
+
+        active_roles = (
+            base.join(Role.status_relation)
+            .filter(Status.code == 'ACTIVE')
+            .count()
+        )
+
         return {
             "total_roles": total_roles,
             "active_roles": active_roles,
             "inactive_roles": total_roles - active_roles
         }
+
 
     @staticmethod
     def check_role_name_exists(name: str, exclude_id: Optional[str], db: Session) -> bool:
