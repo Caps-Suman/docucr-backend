@@ -207,17 +207,24 @@ async def update_user(
             raise HTTPException(status_code=400, detail="Phone number must be 10-15 digits")
     
     user_data = user.model_dump(exclude_unset=True)
+    roles_changed = 'role_ids' in user_data
+
     
     # Capture potential changes before update
-    changes = {}
     existing_user = UserService.get_user_by_id(user_id, db)
+    changes = ActivityService.calculate_changes(existing_user, user_data) or {}
+
     if existing_user:
         # Normalize status_id to statusCode for readable logs
         if 'status_id' in user_data and existing_user.get('statusCode'):
             existing_user['status_id'] = existing_user['statusCode']
             
-        changes = ActivityService.calculate_changes(existing_user, user_data, exclude=["password"])
-        
+        changes = ActivityService.calculate_changes(existing_user, user_data, exclude=["password"]) or {}
+        if not changes and not roles_changed:
+            raise HTTPException(400, "No changes provided")
+
+        if roles_changed:
+            changes['Role'] = 'Updated'
         # Rename status_id to Status
         if 'status_id' in changes:
             changes['Status'] = changes.pop('status_id')
