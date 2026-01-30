@@ -38,6 +38,20 @@ class Client(Base):
     # --- System ---
     is_user = Column(Boolean, default=False)
     created_by = Column(String, ForeignKey('docucr.user.id'), nullable=True)
+    
+    @property
+    def user_id(self):
+        import traceback
+        print("DEBUG: Client.user_id ACCESS DETECTED!")
+        traceback.print_stack()
+        return self.created_by
+    
+    @user_id.setter
+    def user_id(self, value):
+        import traceback
+        print(f"DEBUG: Client.user_id SETTING DETECTED: {value}")
+        traceback.print_stack()
+        self.created_by = value
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
     description = Column(Text, nullable=True)
 
