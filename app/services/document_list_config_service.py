@@ -14,6 +14,13 @@ class DocumentListConfigService:
         ).first()
         
         return config.configuration if config else None
+
+    @staticmethod
+    def get_config(db: Session) -> Optional[Dict[str, Any]]:
+        """Get document list configuration"""
+        config = db.query(DocumentListConfig).first()
+        
+        return config.configuration if config else None
     
     @staticmethod
     def save_user_config(db: Session, user_id: str, configuration: Dict[str, Any]) -> Dict[str, Any]:

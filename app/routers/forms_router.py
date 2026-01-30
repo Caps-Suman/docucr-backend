@@ -59,8 +59,7 @@ def get_forms(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-    permission: bool = Depends(Permission("templates", "READ"))
+    current_user: dict = Depends(get_current_user)
 ):
     forms, total = FormService.get_forms(page, page_size, db)
     return FormListResponse(
@@ -73,16 +72,14 @@ def get_forms(
 @router.get("/stats")
 def get_form_stats(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-    permission: bool = Depends(Permission("templates", "READ"))
+    current_user: dict = Depends(get_current_user)
 ):
     return FormService.get_form_stats(db)
 
 @router.get("/active", response_model=FormDetailResponse)
 def get_active_form(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-    permission: bool = Depends(Permission("templates", "READ"))
+    current_user: dict = Depends(get_current_user)
 ):
     form = FormService.get_active_form(db)
     if not form:
@@ -93,8 +90,7 @@ def get_active_form(
 def get_form(
     form_id: str,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-    permission: bool = Depends(Permission("templates", "READ"))
+    current_user: dict = Depends(get_current_user)
 ):
     form = FormService.get_form_by_id(form_id, db)
     if not form:

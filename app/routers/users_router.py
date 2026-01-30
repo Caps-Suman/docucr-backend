@@ -102,8 +102,7 @@ async def get_users(
     search: Optional[str] = None,
     status_id: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    permission: bool = Depends(Permission("user_module", "READ"))
+    current_user: User = Depends(get_current_user)
 ):
     users, total = UserService.get_users(page, page_size, search, status_id, db, current_user)
     return UserListResponse(
@@ -113,11 +112,17 @@ async def get_users(
         page_size=page_size
     )
 
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return UserService._format_user_response(current_user, db)
+
 @router.get("/stats")
 async def get_user_stats(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("user_module", "READ"))
+    db: Session = Depends(get_db)
 ):
     return UserService.get_user_stats(db, current_user)
 
@@ -125,8 +130,7 @@ async def get_user_stats(
 async def get_users_by_role(
     role_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    permission: bool = Depends(Permission("user_module", "READ"))
+    current_user: User = Depends(get_current_user)
 ):
     users = UserService.get_users_by_role(role_id, db, current_user)
     return [UserResponse(**u) for u in users]
@@ -134,8 +138,7 @@ async def get_users_by_role(
 @router.get("/email/{email}", response_model=UserResponse)
 async def get_user_by_email(
     email: str, 
-    db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("user_module", "READ"))
+    db: Session = Depends(get_db)
 ):
     user = UserService.get_user_by_email(email, db)
     if not user:
@@ -145,8 +148,7 @@ async def get_user_by_email(
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: str, 
-    db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("user_module", "READ"))
+    db: Session = Depends(get_db)
 ):
     user = UserService.get_user_by_id(user_id, db)
     if not user:
@@ -403,8 +405,7 @@ from app.routers.clients_router import ClientResponse
 async def get_user_clients(
     user_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    permission: bool = Depends(Permission("user_module", "READ"))
+    current_user: User = Depends(get_current_user)
 ):
     """Get clients mapped to a user"""
     # Check permission or visibility? 

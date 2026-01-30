@@ -69,8 +69,7 @@ async def get_activity_logs(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    permission: bool = Depends(Permission("activity_log", "READ"))
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get activity logs with pagination and filtering.

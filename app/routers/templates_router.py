@@ -68,8 +68,7 @@ class TemplateResponse(BaseModel):
 @router.get("/by-document-type/{document_type_id}", response_model=List[TemplateResponse])
 def get_templates_by_document_type(
     document_type_id: str,
-    db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates_list", "READ"))
+    db: Session = Depends(get_db)
 ):
     """Get all templates for a specific document type"""
     service = TemplateService(db)
@@ -77,8 +76,7 @@ def get_templates_by_document_type(
 
 @router.get("/", response_model=List[TemplateResponse])
 def get_templates(
-    db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates_list", "READ"))
+    db: Session = Depends(get_db)
 ):
     """Get all templates with document type info"""
     service = TemplateService(db)
@@ -120,8 +118,7 @@ def create_template(
 @router.get("/{template_id}", response_model=TemplateResponse)
 def get_template(
     template_id: str,
-    db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates_list", "READ"))
+    db: Session = Depends(get_db)
 ):
     """Get a specific template"""
     service = TemplateService(db)

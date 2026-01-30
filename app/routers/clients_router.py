@@ -127,7 +127,7 @@ class BulkClientCreateResponse(BaseModel):
     failed: int
     errors: List[str]
 
-@router.get("/stats", dependencies=[Depends(Permission("clients", "READ"))])
+@router.get("/stats")
 def get_client_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -163,8 +163,8 @@ async def get_my_client(
 
     return ClientResponse(**ClientService._format_client(client, db))
 
-@router.get("", response_model=ClientListResponse, dependencies=[Depends(Permission("clients", "READ"))])
-@router.get("/", response_model=ClientListResponse, dependencies=[Depends(Permission("clients", "READ"))])
+@router.get("", response_model=ClientListResponse)
+@router.get("/", response_model=ClientListResponse)
 def get_clients(
     page: int = 1,
     page_size: int = 25,
@@ -181,7 +181,7 @@ def get_clients(
         page_size=page_size
     )
 
-@router.get("/{client_id}/users", dependencies=[Depends(Permission("clients", "READ"))])
+@router.get("/{client_id}/users")
 async def get_client_users(client_id: str, db: Session = Depends(get_db)):
     users = db.query(User).join(UserClient, User.id == UserClient.user_id).filter(
         UserClient.client_id == client_id,
@@ -192,7 +192,7 @@ async def get_client_users(client_id: str, db: Session = Depends(get_db)):
     ).all()
     return [{"id": user.id, "username": user.username, "name": f"{user.first_name} {user.last_name}"} for user in users]
 
-@router.get("/{client_id}", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "READ"))])
+@router.get("/{client_id}", response_model=ClientResponse)
 async def get_client(client_id: str, db: Session = Depends(get_db)):
     client = ClientService.get_client_by_id(client_id, db)
     if not client:
@@ -355,12 +355,12 @@ async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db
     ClientService.assign_clients_to_user(user_id, request.client_ids, request.assigned_by, db)
     return {"message": "Clients assigned successfully"}
 
-@router.get("/users/{user_id}", response_model=List[ClientResponse], dependencies=[Depends(Permission("clients", "READ"))])
+@router.get("/users/{user_id}", response_model=List[ClientResponse])
 async def get_user_clients(user_id: str, db: Session = Depends(get_db)):
     clients = ClientService.get_user_clients(user_id, db)
     return [ClientResponse(**client) for client in clients]
 
-@router.post("/check-npis", response_model=NPICheckResponse, dependencies=[Depends(Permission("clients", "READ"))])
+@router.post("/check-npis", response_model=NPICheckResponse)
 async def check_existing_npis(request: NPICheckRequest, db: Session = Depends(get_db)):
     existing = db.query(Client.npi).filter(
         Client.npi.in_(request.npis),

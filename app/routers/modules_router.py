@@ -46,8 +46,7 @@ class ModulesResponse(BaseModel):
 @router.get("/", response_model=ModulesResponse)
 async def get_all_modules(
     db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user),
-    permission: bool = Depends(Permission("users_permissions", "READ"))
+    current_user: User = Depends(get_current_user)
 ):
     modules = ModuleService.get_all_modules(db)
     return ModulesResponse(modules=modules)

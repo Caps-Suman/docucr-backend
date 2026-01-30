@@ -41,8 +41,7 @@ class DocumentTypeResponse(BaseModel):
 
 @router.get("", response_model=List[DocumentTypeResponse])
 def get_document_types(
-    db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("document_types", "READ"))
+    db: Session = Depends(get_db)
 ):
     """Get all document types"""
     service = DocumentTypeService(db)
@@ -50,8 +49,7 @@ def get_document_types(
 
 @router.get("/dropdown", response_model=List[dict])
 def get_document_type_dropdown(
-    db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("templates", "READ"))
+    db: Session = Depends(get_db)
 ):
     """
     Lightweight API for dropdowns
@@ -72,8 +70,7 @@ def get_document_type_dropdown(
 
 @router.get("/active", response_model=List[DocumentTypeResponse])
 def get_active_document_types(
-    db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("document_types", "READ"))
+    db: Session = Depends(get_db)
 ):
     """Get all active document types"""
     service = DocumentTypeService(db)
@@ -109,8 +106,7 @@ def create_document_type(
 def get_document_type(
     document_type_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    permission: bool = Depends(Permission("document_types", "READ"))
+    current_user: User = Depends(get_current_user)
 ):
     """Get a specific document type"""
     service = DocumentTypeService(db, current_user)
