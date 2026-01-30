@@ -498,7 +498,7 @@ class UserService:
                  status_code = status_obj.code
         client_count = (
             db.query(UserClient).filter(UserClient.user_id == user.id).count()
-            + db.query(Client).filter(Client.user_id == user.id).count()
+            + db.query(Client).filter(Client.created_by == user.id).count()
         )
 
 
