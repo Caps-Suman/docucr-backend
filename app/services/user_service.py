@@ -319,6 +319,13 @@ class UserService:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         if active_status:
             user.status_id = active_status.id
+
+            if user.is_client:
+                # Fetch client linked to this user
+                client = db.query(Client).filter(Client.user_id == user.id).first()
+                if client:
+                    client.status_id = active_status.id
+                    
             db.commit()
             db.refresh(user)
         return UserService._format_user_response(user, db)
@@ -332,6 +339,13 @@ class UserService:
         inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
         if inactive_status:
             user.status_id = inactive_status.id
+            
+            if user.is_client:
+                # Fetch client linked to this user
+                client = db.query(Client).filter(Client.user_id == user.id).first()
+                if client:
+                    client.status_id = inactive_status.id
+            
             db.commit()
             db.refresh(user)
         return UserService._format_user_response(user, db)

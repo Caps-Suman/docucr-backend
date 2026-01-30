@@ -84,6 +84,56 @@ class RoleService:
             "can_edit": role.can_edit,
             "users_count": users_count
         }
+
+    @staticmethod
+    def get_users_mapped_to_role(
+        role_id: str,
+        page: int,
+        page_size: int,
+        search: Optional[str],
+        db: Session
+    ) -> Tuple[List[Dict], int]:
+        from app.models.user import User
+        # Check if role exists
+        role = db.query(Role).filter(Role.id == role_id).first()
+        if not role:
+            return [], 0
+
+        # Query users mapped to this role
+        query = db.query(User).join(User.roles).filter(Role.id == role_id)
+
+        # Apply search filter
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(
+                (User.first_name.ilike(search_term)) |
+                (User.last_name.ilike(search_term)) |
+                (User.email.ilike(search_term)) |
+                (User.phone_number.ilike(search_term))
+            )
+
+        # Count total before pagination
+        total = query.count()
+
+        # Apply pagination
+        offset = (page - 1) * page_size
+        users = query.offset(offset).limit(page_size).all()
+
+        # Format result
+        user_list = []
+        for user in users:
+            name_parts = [p for p in [user.first_name, user.middle_name, user.last_name] if p]
+            full_name = " ".join(name_parts)
+            
+            user_list.append({
+                "id": str(user.id),
+                "name": full_name,
+                "email": user.email,
+                "phone": user.phone_number
+            })
+
+        return user_list, total
+
     @staticmethod
     def get_role_modules(role_id: str, db: Session) -> List[Dict]:
         role_modules = db.query(RoleModule).filter(RoleModule.role_id == role_id).all()

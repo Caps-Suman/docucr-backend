@@ -80,8 +80,8 @@ class ClientResponse(BaseModel):
     is_user: bool
     type: Optional[str]
     status_id: Optional[int]
-    statusCode: Optional[str]
-    status_code: Optional[str]
+    statusCode: Optional[str] = None
+    status_code: Optional[str] = None
     description: Optional[str]
 
     # ONLY EXTRA FIELD FOR LIST

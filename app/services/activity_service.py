@@ -143,4 +143,183 @@ class ActivityService:
                     }
 
                     
-        return changes
+
+    
+    # -------------------------------------------------------------------------
+    # PART 2: Scalable Action Handling (Reading & Formatting)
+    # -------------------------------------------------------------------------
+
+    ACTION_CONFIG = {
+        "create": {
+            "label": "Create",
+            "template": "{user} created this {entity}"
+        },
+        "view": {
+            "label": "View",
+            "template": "{user} viewed this {entity}"
+        },
+        "update": {
+            "label": "Update",
+            "template": "{user} updated this {entity}"
+        },
+        "delete": {
+            "label": "Delete",
+            "template": "{user} deleted this {entity}"
+        },
+        "print": {
+            "label": "Print",
+            "template": "{user} printed this {entity}"
+        },
+        "share": {
+            "label": "Share",
+            "template": "{user} shared this {entity}"
+        },
+        "archive": {
+            "label": "Archive",
+            "template": "{user} archived this {entity}"
+        },
+        "download": {
+            "label": "Download",
+            "template": "{user} downloaded this {entity}"
+        },
+        "login": {
+            "label": "Login",
+            "template": "{user} logged in"
+        },
+        "logout": {
+            "label": "Logout",
+            "template": "{user} logged out"
+        },
+        "restore": {
+            "label": "Restore",
+            "template": "{user} restored this {entity}"
+        },
+        # Add more actions here as needed
+    }
+
+    @staticmethod
+    def get_activity_logs(
+        db: Session,
+        limit: int = 50,
+        offset: int = 0,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        action: Optional[str] = None,
+        user_name: Optional[str] = None,
+        start_date: Optional[Any] = None # datetime
+    ) -> dict:
+        """
+        Fetches activity logs filtered by entity, joins user data,
+        and generates human-readable descriptions.
+        """
+        from app.models.user import User  # Avoid circular import
+        from sqlalchemy import desc
+
+        # 1. Fetch Logs (Query builder)
+        query = db.query(ActivityLog)
+        
+        if entity_id:
+            query = query.filter(ActivityLog.entity_id == str(entity_id))
+        
+        if entity_type:
+            query = query.filter(ActivityLog.entity_type == entity_type)
+            
+        if action:
+            query = query.filter(ActivityLog.action == action)
+            
+        if start_date:
+            query = query.filter(ActivityLog.created_at >= start_date)
+
+        # Join User
+        query = query.join(User, ActivityLog.user_id == User.id, isouter=True) 
+
+        if user_name:
+            query = query.filter(
+                (User.first_name.ilike(f"%{user_name}%")) | 
+                (User.last_name.ilike(f"%{user_name}%")) | 
+                (User.username.ilike(f"%{user_name}%")) | 
+                (User.email.ilike(f"%{user_name}%"))
+            )
+        
+        total = query.count()
+        logs = query.order_by(desc(ActivityLog.created_at)).limit(limit).offset(offset).all()
+
+        results = []
+        for log in logs:
+            # 2. Build User Name
+            user_name_display = "System"
+            user_email = None
+            user_phone = None
+            
+            if log.user:
+                parts = [
+                    log.user.first_name,
+                    log.user.middle_name, # Assuming it exists, if not it will be ignored by filter
+                    log.user.last_name
+                ]
+                # Filter None or empty strings
+                user_name_display = " ".join([p for p in parts if p]) or log.user.username or "Unknown User"
+                user_email = log.user.email
+                user_phone = getattr(log.user, "phone", None) # Safe access
+
+            # 3. Generate Description
+            description = ActivityService._generate_description(log, user_name_display)
+
+            # 4. Map to DTO Structure
+            results.append({
+                "id": str(log.id),
+                "name": user_name_display,
+                "email": user_email,
+                "phone": user_phone,
+                "action": log.action,
+                "action_label": ActivityService.ACTION_CONFIG.get(log.action, {}).get("label", log.action.capitalize()),
+                "entity_type": log.entity_type,
+                "entity_id": log.entity_id,
+                "entity_name": None, # Could resolve if needed, but costly
+                "user_id": log.user_id,
+                "description": description,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+                "details": log.details
+            })
+
+        return {
+            "items": results,
+            "total": total
+        }
+
+    @staticmethod
+    def _generate_description(log: ActivityLog, user_name: str) -> str:
+        """
+        Generates dynamic description based on ACTION_CONFIG.
+        """
+        action_key = log.action
+        config = ActivityService.ACTION_CONFIG.get(action_key)
+        
+        entity_name = log.entity_type.capitalize() # Default entity name
+        
+        # If we had entity name resolution logic (fetching the document name), we could use it here.
+        # For now, using generic "document" or entity_type is safer/faster than N+1 queries.
+        # But for 'details', we can interpolate.
+        
+        template = "{user} performed {action} on this {entity}" # Fallback
+        
+        if config and "template" in config:
+            template = config["template"]
+            
+        # Context for formatting
+        context = {
+            "user": user_name,
+            "entity": entity_name,
+            "action": action_key,
+        }
+        
+        # Flatten details into context for simpler templates (e.g. {printer_id})
+        if log.details and isinstance(log.details, dict):
+            for k, v in log.details.items():
+                context[k] = v
+                
+        try:
+            return template.format(**context)
+        except KeyError:
+             # Fallback if template expects keys not in details
+            return f"{user_name} performed '{action_key}' on this {entity_name}"

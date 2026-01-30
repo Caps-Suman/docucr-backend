@@ -75,6 +75,17 @@ class RoleResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class RoleUserResponse(BaseModel):
+    id: str
+    name: str
+    email: str
+    phone: Optional[str]
+
+class UserListResponse(BaseModel):
+    items: List[RoleUserResponse]
+    total: int
+    page: int
+    page_size: int
 
 class RoleListResponse(BaseModel):
     roles: List[RoleResponse]
@@ -140,6 +151,23 @@ async def get_role_modules(
 ):
     modules = RoleService.get_role_modules(role_id, db)
     return {"modules": modules}
+
+@router.get("/{role_id}/users", response_model=UserListResponse)
+async def get_role_users(
+    role_id: str,
+    page: int = 1,
+    page_size: int = 10,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("role_module", "READ"))
+):
+    users, total = RoleService.get_users_mapped_to_role(role_id, page, page_size, search, db)
+    return UserListResponse(
+        items=[RoleUserResponse(**user) for user in users],
+        total=total,
+        page=page,
+        page_size=page_size
+    )
 
 @router.post("", response_model=RoleResponse)
 @router.post("/", response_model=RoleResponse)
