@@ -301,7 +301,7 @@ class DocumentService:
 
         owned_client_ids = (
             db.query(Client.id)
-            .filter(Client.user_id == user_id)
+            .filter(Client.created_by == user_id)
         )
 
         return base.filter(
