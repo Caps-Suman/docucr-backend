@@ -212,14 +212,14 @@ class UserService:
         if user.client_id and user.client_id != client.id:
             raise ValueError("User already linked to another client")
 
-        if client.user_id and client.user_id != user.id:
+        if client.created_by and client.created_by != user.id:
             raise ValueError("Client already has an owner")
 
         # ---- OWNERSHIP ONLY ----
         user.client_id = client.id
         user.is_client = True
 
-        client.user_id = user.id
+        client.created_by = user.id
         client.is_user = True
 
         db.commit()
@@ -516,7 +516,8 @@ class UserService:
             "is_superuser": user.is_superuser,
             "roles": roles,
             "supervisor_id": supervisor_id,
-            "assigned_client_count": client_count
+            "assigned_client_count": client_count,
+            "client_count": client_count
         }
 
     @staticmethod
