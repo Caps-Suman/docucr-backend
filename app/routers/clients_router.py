@@ -355,6 +355,11 @@ async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db
     ClientService.assign_clients_to_user(user_id, request.client_ids, request.assigned_by, db)
     return {"message": "Clients assigned successfully"}
 
+@router.delete("/{client_id}/users/{user_id}/unassign", dependencies=[Depends(Permission("clients", "ADMIN"))])
+async def unassign_user_from_client(client_id: str, user_id: str, db: Session = Depends(get_db)):
+    ClientService.unassign_user_from_client(user_id, client_id, db)
+    return {"message": "User unassigned successfully"}
+
 @router.get("/users/{user_id}", response_model=List[ClientResponse])
 async def get_user_clients(user_id: str, db: Session = Depends(get_db)):
     clients = ClientService.get_user_clients(user_id, db)

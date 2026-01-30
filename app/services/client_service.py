@@ -319,6 +319,18 @@ class ClientService:
         db.commit()
 
     @staticmethod
+    def unassign_user_from_client(
+        user_id: str,
+        client_id: str,
+        db: Session
+    ):
+        db.query(UserClient).filter(
+            UserClient.user_id == user_id,
+            UserClient.client_id == client_id
+        ).delete()
+        db.commit()
+
+    @staticmethod
     def get_user_clients(user_id: str, db: Session) -> List[Dict]:
         user_clients = db.query(Client).join(UserClient, Client.id == UserClient.client_id).filter(
             UserClient.user_id == user_id,
