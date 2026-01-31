@@ -6,6 +6,8 @@ from typing import Optional
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.models import user
+from app.models import user
 from app.services.auth_service import AuthService
 from app.services.activity_service import ActivityService
 from app.models.user import User
@@ -65,13 +67,12 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
     
     if len(roles) == 1:
         tokens = AuthService.generate_tokens(user.email, roles[0]["id"])
-        client_id = None
+        client = None
         client_name = None
 
-        if user.is_client:
-            client = AuthService.get_user_client(user.id, db)
+        if user.is_client and user.client_id:
+            client = AuthService.get_client_by_id(user.client_id, db)
             if client:
-                client_id = str(client.id)
                 client_name = (
                     client.business_name
                     or f"{client.first_name} {client.last_name}".strip()
@@ -86,7 +87,7 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
                 "last_name": user.last_name,
                 "role": roles[0],
                 "is_client": user.is_client,
-                "client_id": client_id,
+                "client_id": user.client_id,
                 "client_name": client_name
             }
         }
@@ -124,7 +125,7 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
     client_name = None
 
     if current_user.is_client:
-        client = AuthService.get_user_client(current_user.id, db)
+        client = AuthService.get_client_by_id(current_user.client_id, db)
         if client:
             client_id = str(client.id)
             client_name = (
@@ -141,7 +142,7 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
             "last_name": current_user.last_name,
             "role": {"id": role.id, "name": role.name},
             "is_client": current_user.is_client,
-            "client_id": client_id,
+            "client_id": current_user.client_id,
             "client_name": client_name
         }
     }

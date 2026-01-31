@@ -79,13 +79,21 @@ async def upload_documents(
     # ─────────────────────────────
     frontend_client_id = parsed_form_data.get("client_id")
 
-    if current_user.is_client:
-        # Client users MUST have a client_id
-        if not current_user.client_id:
-            raise HTTPException(
-                status_code=403,
-                detail="Client user has no assigned client",
+    client_id = current_user.client_id
+    client_name = None
+
+    if current_user.is_client and current_user.client_id:
+        client = (
+            db.query(Client)
+            .filter(Client.id == current_user.client_id)
+            .first()
+        )
+        if client:
+            client_name = (
+                client.business_name
+                or f"{client.first_name} {client.last_name}".strip()
             )
+
 
         # 🔒 FORCE client_id (ignore frontend completely)
         enforced_client_id = str(current_user.client_id)
@@ -107,6 +115,7 @@ async def upload_documents(
         db=db,
         files=files,
         user_id=current_user.id,
+        user=current_user,
         enable_ai=enable_ai,
         document_type_id=document_type_id,
         template_id=template_id,
@@ -402,7 +411,7 @@ def get_document_stats(
     permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get aggregate document statistics for the cards"""
-    return document_service.get_document_stats(db, current_user.id)
+    return document_service.get_document_stats(db=db,user_id=current_user.id,current_user=current_user)
 
 @router.get("", response_model=dict)
 def get_documents(
@@ -421,11 +430,20 @@ def get_documents(
 ):
     """Get user documents with filters"""
     documents, total_count = document_service.get_user_documents(
-        db, current_user.id, skip, limit,
-        status_id, date_from, date_to, search_query, form_filters,
-        document_type_id=document_type_id,  # PASS
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        status_id=status_id,
+        date_from=date_from,
+        date_to=date_to,
+        search_query=search_query,
+        form_filters=form_filters,
+        current_user=current_user,   # ✅ THIS WAS MISSING
+        document_type_id=document_type_id,
         shared_only=shared_only
     )
+
     
     # Get all form fields for this user's scope (simplified to all for now as it's small)
     fields = db.query(FormField).all()

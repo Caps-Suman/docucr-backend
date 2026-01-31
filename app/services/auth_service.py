@@ -30,13 +30,17 @@ class AuthService:
         return active_status and user.status_id == active_status.id
 
     @staticmethod
-    def get_user_client(user_id: str, db: Session):
+    def get_user_client(user_id: str, db: Session) -> Optional[Client]:
         return (
             db.query(Client)
             .join(UserClient, UserClient.client_id == Client.id)
             .filter(UserClient.user_id == user_id)
-            .first()
+            .one_or_none()
         )
+    @staticmethod
+    def get_client_by_id(client_id: str, db: Session):
+        return db.query(Client).filter(Client.id == client_id).one_or_none()
+
     @staticmethod
     def get_user_roles(user_id: str, db: Session) -> List[Dict]:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()

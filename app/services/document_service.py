@@ -25,6 +25,7 @@ from ..services.s3_service import s3_service
 from ..services.websocket_manager import websocket_manager
 from ..services.webhook_service import webhook_service
 from ..core.database import SessionLocal
+from app.models import client
 
 class DocumentService:
     @staticmethod
@@ -179,7 +180,7 @@ class DocumentService:
             raise e
     
     @staticmethod
-    async def process_multiple_uploads(db: Session, files: List[UploadFile], user_id: str, 
+    async def process_multiple_uploads(db: Session, files: List[UploadFile], user_id: str,  user: User,                    
                                      enable_ai: bool = False, document_type_id: str = None, 
                                      template_id: str = None, form_id: str = None, form_data: str = None):
         """Create document records immediately and return, process uploads in background"""
@@ -189,16 +190,6 @@ class DocumentService:
         import json
         from ..models.document_form_data import DocumentFormData
         
-        parsed_form_data = None
-        client_id = None
-        if form_data:
-            try:
-                parsed_form_data = json.loads(form_data)
-                # Extract client_id from form data if present
-                client_id = DocumentService.extract_client_id_from_form_data(db, parsed_form_data)
-            except:
-                parsed_form_data = {}
-        
         # Create all document records first with QUEUED status
         queued_status_id = DocumentService.get_status_id_by_code(db, "QUEUED")
         if not queued_status_id:
@@ -206,6 +197,25 @@ class DocumentService:
              # Assume it exists or use a default?
              # Ideally statuses are seeded.
              pass
+        parsed_form_data = {}
+        extracted_client_id = None
+
+        if form_data:
+            try:
+                parsed_form_data = json.loads(form_data)
+                extracted_client_id = DocumentService.extract_client_id_from_form_data(
+                    db, parsed_form_data
+                )
+            except Exception:
+                parsed_form_data = {}
+
+        # 🔒 HARD RULE: client users use THEIR client_id only
+        if user.is_client and user.client_id:
+            client_id = str(user.client_id)
+        else:
+            client_id = extracted_client_id
+        if user.is_client:
+            parsed_form_data.pop("client_id", None)
 
         for file in files:
             # We must buffer the file content because FastAPI closes UploadFile 
@@ -224,12 +234,12 @@ class DocumentService:
                 file_size=file_size,
                 content_type=file.content_type,
                 user_id=user_id,
+                client_id=client_id,   # ✅ auto-filled here
                 status_id=queued_status_id,
                 upload_progress=0,
                 enable_ai=enable_ai,
                 document_type_id=document_type_id,
                 template_id=template_id,
-                client_id=client_id,
                 total_pages=total_pages   
             )
             db.add(document)
@@ -273,15 +283,10 @@ class DocumentService:
         
         return documents
     @staticmethod
-    def _visible_documents_query(db: Session, user_id: str):
+    def _visible_documents_query(db: Session, user: User):
         from ..models.document_share import DocumentShare
 
-        role_names = [
-            r[0] for r in db.query(Role.name)
-            .join(UserRole)
-            .filter(UserRole.user_id == user_id)
-            .all()
-        ]
+        role_names = [r.name for r in user.roles]
         is_admin = any(r in ["ADMIN", "SUPER_ADMIN"] for r in role_names)
 
         base = db.query(Document)
@@ -289,29 +294,34 @@ class DocumentService:
         if is_admin:
             return base
 
+        # 🔒 CLIENT USER — SINGLE SOURCE OF TRUTH
+        if user.is_client and user.client_id:
+            return base.filter(
+                or_(
+                    Document.user_id == user.id,
+                    Document.client_id == user.client_id
+                )
+            )
+
+        # 👥 STAFF / SALES / OTHERS
         assigned_client_ids = (
             db.query(UserClient.client_id)
-            .filter(UserClient.user_id == user_id)
+            .filter(UserClient.user_id == user.id)
         )
 
         shared_ids = (
             db.query(DocumentShare.document_id)
-            .filter(DocumentShare.user_id == user_id)
-        )
-
-        owned_client_ids = (
-            db.query(Client.id)
-            .filter(Client.created_by == user_id)
+            .filter(DocumentShare.user_id == user.id)
         )
 
         return base.filter(
             or_(
-                Document.user_id == user_id,
+                Document.user_id == user.id,
                 Document.client_id.in_(assigned_client_ids),
-                Document.client_id.in_(owned_client_ids),
                 Document.id.in_(shared_ids)
             )
         )
+
 
 
 
@@ -670,6 +680,7 @@ class DocumentService:
     date_to: str = None,
     search_query: str = None,
     form_filters: str = None,
+    current_user: User = None,
     document_type_id: UUID = None,
     shared_only: bool = False
 ) -> tuple[List[Document], int]:
@@ -683,7 +694,7 @@ class DocumentService:
 
         # 🔐 BASE VISIBILITY (single source of truth)
         query = (
-            DocumentService._visible_documents_query(db, user_id)
+            DocumentService._visible_documents_query(db, current_user)
             .options(joinedload(Document.form_data_relation))
             .options(joinedload(Document.status))
         )
@@ -797,28 +808,14 @@ class DocumentService:
         ).filter(Document.id == document_id)
         
         if not is_admin:
-            # Non-admin users can only access their own documents or assigned client documents
-            # assigned_client_ids = db.query(UserClient.client_id).filter(
-            #     UserClient.user_id == user_id
-            # ).subquery()
-            assigned_client_ids = select(UserClient.client_id).where(
-                UserClient.user_id == user_id
-            )
-            client_documents_query = db.query(Document.id).join(
-                DocumentFormData, Document.id == DocumentFormData.document_id
-            ).join(
-                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-            ).filter(
-                Client.id.in_(assigned_client_ids)
-            )
-            
             query = query.filter(
                 or_(
                     Document.user_id == user_id,
-                    Document.id.in_(client_documents_query)
+                    Document.client_id.in_(
+                        select(UserClient.client_id).where(UserClient.user_id == user_id)
+                    )
                 )
             )
-        
         return query.first()
     
     @staticmethod
@@ -847,24 +844,12 @@ class DocumentService:
         query = db.query(Document).filter(Document.id == document_id)
         
         if not is_admin:
-            # assigned_client_ids = db.query(UserClient.client_id).filter(
-            #     UserClient.user_id == user_id
-            # ).subquery()
-            assigned_client_ids = select(UserClient.client_id).where(
-                UserClient.user_id == user_id
-            )
-            client_documents_query = db.query(Document.id).join(
-                DocumentFormData, Document.id == DocumentFormData.document_id
-            ).join(
-                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-            ).filter(
-                Client.id.in_(assigned_client_ids)
-            )
-            
             query = query.filter(
                 or_(
                     Document.user_id == user_id,
-                    Document.id.in_(client_documents_query)
+                    Document.client_id.in_(
+                        select(UserClient.client_id).where(UserClient.user_id == user_id)
+                    )
                 )
             )
         
@@ -909,26 +894,15 @@ class DocumentService:
         query = db.query(Document).filter(Document.id == document_id)
         
         if not is_admin:
-            # assigned_client_ids = db.query(UserClient.client_id).filter(
-            #     UserClient.user_id == user_id
-            # ).subquery()
-            assigned_client_ids = select(UserClient.client_id).where(
-                UserClient.user_id == user_id
-            )
-            client_documents_query = db.query(Document.id).join(
-                DocumentFormData, Document.id == DocumentFormData.document_id
-            ).join(
-                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-            ).filter(
-                Client.id.in_(assigned_client_ids)
-            )
-            
             query = query.filter(
                 or_(
                     Document.user_id == user_id,
-                    Document.id.in_(client_documents_query)
+                    Document.client_id.in_(
+                        select(UserClient.client_id).where(UserClient.user_id == user_id)
+                    )
                 )
             )
+
         
         document = query.first()
         if not document:
@@ -971,24 +945,12 @@ class DocumentService:
         query = db.query(Document).filter(Document.id == document_id)
         
         if not is_admin:
-            # assigned_client_ids = db.query(UserClient.client_id).filter(
-            #     UserClient.user_id == user_id
-            # ).subquery()
-            assigned_client_ids = select(UserClient.client_id).where(
-                UserClient.user_id == user_id
-            )
-            client_documents_query = db.query(Document.id).join(
-                DocumentFormData, Document.id == DocumentFormData.document_id
-            ).join(
-                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-            ).filter(
-                Client.id.in_(assigned_client_ids)
-            )
-            
             query = query.filter(
                 or_(
                     Document.user_id == user_id,
-                    Document.id.in_(client_documents_query)
+                    Document.client_id.in_(
+                        select(UserClient.client_id).where(UserClient.user_id == user_id)
+                    )
                 )
             )
         
@@ -1057,26 +1019,15 @@ class DocumentService:
         query = db.query(Document).filter(Document.id == document_id)
         
         if not is_admin:
-            # assigned_client_ids = db.query(UserClient.client_id).filter(
-            #     UserClient.user_id == user_id
-            # ).subquery()
-            assigned_client_ids = select(UserClient.client_id).where(
-                UserClient.user_id == user_id
-            )
-            client_documents_query = db.query(Document.id).join(
-                DocumentFormData, Document.id == DocumentFormData.document_id
-            ).join(
-                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-            ).filter(
-                Client.id.in_(assigned_client_ids)
-            )
-            
             query = query.filter(
                 or_(
                     Document.user_id == user_id,
-                    Document.id.in_(client_documents_query)
+                    Document.client_id.in_(
+                        select(UserClient.client_id).where(UserClient.user_id == user_id)
+                    )
                 )
             )
+
         
         document = query.first()
         if not document:
@@ -1114,27 +1065,15 @@ class DocumentService:
         query = db.query(Document).filter(Document.id == document_id)
         
         if not is_admin:
-            # assigned_client_ids = db.query(UserClient.client_id).filter(
-            #     UserClient.user_id == user_id
-            # ).subquery()
-            assigned_client_ids = select(UserClient.client_id).where(
-                UserClient.user_id == user_id
-            )
-            client_documents_query = db.query(Document.id).join(
-                DocumentFormData, Document.id == DocumentFormData.document_id
-            ).join(
-                Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-            ).filter(
-                Client.id.in_(assigned_client_ids)
-            )
-            
             query = query.filter(
                 or_(
                     Document.user_id == user_id,
-                    Document.id.in_(client_documents_query)
+                    Document.client_id.in_(
+                        select(UserClient.client_id).where(UserClient.user_id == user_id)
+                    )
                 )
             )
-        
+
         document = query.first()
         if not document:
             raise Exception("Document not found")
@@ -1202,7 +1141,7 @@ class DocumentService:
             db.close()
 
     @staticmethod
-    def get_document_stats(db: Session, user_id: str):
+    def get_document_stats(db: Session, user_id: str, current_user: User) -> dict:
         """Get document statistics for a user with role-based access control"""
         from sqlalchemy import func
         from ..models.status import Status
@@ -1216,7 +1155,9 @@ class DocumentService:
         from ..services.document_share_service import DocumentShareService
         from sqlalchemy import cast, String, or_\
         
-        base = DocumentService._visible_documents_query(db, user_id)
+        base = DocumentService._visible_documents_query(  
+        db=db,
+        user=current_user)
 
         total_active = base.filter(Document.is_archived == False).count()
         total_archived = base.filter(Document.is_archived == True).count()
