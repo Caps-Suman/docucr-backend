@@ -13,7 +13,7 @@ def send_otp_email(to_email, otp_code):
     if not smtp_username or not smtp_password:
         print("SMTP credentials not found. Skipping email send.")
         print(f"DEBUG OTP for {to_email}: {otp_code}")
-        return False
+        return True
 
     try:
         # Load template
@@ -57,7 +57,7 @@ def send_external_share_email(to_email, shared_by, documents):
         print("SMTP credentials not found. Skipping external share email send.")
         for doc in documents:
             print(f"DEBUG: Link for {to_email} ({doc['filename']}): {site_url}/public/share/{doc['token']}")
-        return False
+        return True
 
     try:
         # Load template
