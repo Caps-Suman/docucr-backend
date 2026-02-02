@@ -13,7 +13,7 @@ from app.models.user_role import UserRole
 from app.models.role import Role
 from app.models.status import Status
 from app.core.security import verify_password, create_access_token, create_refresh_token, get_password_hash
-from app.utils.email import send_otp_email
+from app.utils.email import send_otp_email, send_2fa_email
 from datetime import timezone
 
 class AuthService:
@@ -70,6 +70,43 @@ class AuthService:
             Role.status_id == active_status.id
         ).first()
         return user_role[1] if user_role else None
+
+    @staticmethod
+    def generate_2fa_otp(email: str, db: Session) -> str:
+        otp_code = ''.join(random.choices(string.digits, k=6))
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+        otp_record = db.query(OTP).filter(OTP.email == email).first()
+        if otp_record:
+            otp_record.otp_code = otp_code
+            otp_record.expires_at = expires_at
+            otp_record.is_used = False
+        else:
+            new_otp = OTP(
+                id=str(uuid.uuid4()),
+                email=email,
+                otp_code=otp_code,
+                expires_at=expires_at,
+                is_used=False
+            )
+            db.add(new_otp)
+        db.commit()
+        
+        sent = send_2fa_email(email, otp_code)
+        if not sent:
+            raise Exception("Failed to send 2FA email")
+        
+        return otp_code
+
+    @staticmethod
+    def verify_2fa_otp(email: str, otp: str, db: Session) -> bool:
+        otp_record = db.query(OTP).filter(OTP.email == email, OTP.otp_code == otp).first()
+        if not otp_record or otp_record.is_used or otp_record.expires_at < datetime.now(timezone.utc):
+            return False
+        
+        otp_record.is_used = True
+        db.commit()
+        return True
 
     @staticmethod
     def generate_otp(email: str, db: Session) -> str:
