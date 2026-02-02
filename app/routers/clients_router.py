@@ -133,7 +133,7 @@ class ClientResponse(BaseModel):
     city:Optional[str]=Field(None, min_length=2,max_length=250)
     state_code: Optional[str] = Field(None, min_length=2, max_length=2)
     country: Optional[str] = Field(None, max_length=50)
-    zip_code: Optional[str] = Field(None, min_length=5, max_length=5)
+    zip_code: Optional[str] = Field(None, min_length=10, max_length=10)
     # ONLY EXTRA FIELD FOR LIST
     state_name: Optional[str]
 

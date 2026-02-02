@@ -202,9 +202,6 @@ class ClientService:
         db.commit()
         db.refresh(new_client)
 
-        if user_id:
-            ClientService._link_user(new_client, user_id, db)
-
         return ClientService._format_client(new_client, db)
 
     # @staticmethod
