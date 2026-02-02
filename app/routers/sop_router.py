@@ -10,6 +10,7 @@ from uuid import UUID
 import io
 
 from app.core.database import get_db
+from app.models.user import User
 from app.services.ai_sop_service import AISOPService
 from app.services.sop_service import SOPService
 from app.core.security import get_current_user
@@ -98,7 +99,7 @@ class AISOPExtractResponse(BaseModel):
 def create_sop(
     sop: SOPCreate, 
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOP", "CREATE"))
 ):
     return SOPService.create_sop(sop.model_dump(), db)
 @router.get("/stats", response_model=SOPStatsResponse)
@@ -115,7 +116,7 @@ def get_sops(
     search: Optional[str] = None,
     status_code: Optional[str] = None,   # FIX
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOP", "VIEW"))
 ):
     sops, total = SOPService.get_sops(
         db,
@@ -193,7 +194,7 @@ def update_sop(
     sop_id: str, 
     sop: SOPUpdate, 
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOP", "UPDATE"))
 ):
     updated_sop = SOPService.update_sop(sop_id, sop.model_dump(exclude_unset=True), db)
     if not updated_sop:
@@ -205,7 +206,7 @@ def update_sop_status(
     sop_id: str,
     status_update: SOPStatusUpdate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOP", "UPDATE"))
 ):
     updated_sop = SOPService.update_sop(sop_id, status_update.model_dump(), db)
     if not updated_sop:
@@ -216,7 +217,7 @@ def update_sop_status(
 def delete_sop(
     sop_id: str, 
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOP", "DELETE"))
 ):
     success = SOPService.delete_sop(sop_id, db)
     if not success:
@@ -227,7 +228,7 @@ def delete_sop(
 def download_sop_pdf(
     sop_id: str,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOP", "EXPORT"))
 ):
     sop = SOPService.get_sop_by_id(sop_id, db)
     if not sop:

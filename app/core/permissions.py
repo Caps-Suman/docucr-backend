@@ -15,32 +15,24 @@ class Permission:
         self.module_name = module
         self.privilege_name = privilege
 
-    async def __call__(self, request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    async def __call__(
+        self,
+        user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+    ):
         if user.is_superuser:
-            return True
+            return user
 
-        auth_header = request.headers.get("Authorization")
-        if not auth_header:
-            raise HTTPException(status_code=401, detail="Missing authorization header")
-            
-        try:
-            token = auth_header.split(" ")[1]
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            role_id = payload.get("role_id")
-        except Exception:
-            raise HTTPException(status_code=401, detail="Invalid token")
+        if not user.role_id:
+            raise HTTPException(403, "No active role selected")
 
-        if not role_id:
-            raise HTTPException(status_code=403, detail="No active role selected")
-
-        # Check if user has specific privilege OR 'ADMIN' OR 'MANAGE' privilege
-        # Check Module Level Permission
+        # module-level
         module_perm = (
             db.query(RoleModule)
-            .join(Module, RoleModule.module_id == Module.id)
-            .join(Privilege, RoleModule.privilege_id == Privilege.id)
+            .join(Module)
+            .join(Privilege)
             .filter(
-                RoleModule.role_id == role_id,
+                RoleModule.role_id == user.role_id,
                 Module.name == self.module_name,
                 Privilege.name.in_([self.privilege_name, "MANAGE", "ADMIN"])
             )
@@ -48,28 +40,22 @@ class Permission:
         )
 
         if module_perm:
-            return True
+            return user
 
-        # Check Submodule Level Permission (checking against route_key or name)
+        # submodule-level
         submodule_perm = (
             db.query(RoleSubmodule)
-            .join(Submodule, RoleSubmodule.submodule_id == Submodule.id)
-            .join(Privilege, RoleSubmodule.privilege_id == Privilege.id)
+            .join(Submodule)
+            .join(Privilege)
             .filter(
-                RoleSubmodule.role_id == role_id,
-                (Submodule.name == self.module_name) | (Submodule.route_key == self.module_name),
+                RoleSubmodule.role_id == user.role_id,
+                Submodule.route_key == self.module_name,
                 Privilege.name.in_([self.privilege_name, "MANAGE", "ADMIN"])
             )
             .first()
         )
-        
-        permission = module_perm or submodule_perm
 
-        if not permission:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                # detail=f"You do not have permission to {self.privilege_name.lower()} {self.module_name}."
-                detail=f"You do not have enough access permission!"
-            )
+        if not submodule_perm:
+            raise HTTPException(403, "You do not have enough access permission")
 
-        return True
+        return user
