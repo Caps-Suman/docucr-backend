@@ -1,9 +1,10 @@
+import re
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from app.models.client import Client
 from app.services.activity_service import ActivityService
 from app.core.permissions import Permission
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -41,12 +42,34 @@ class ClientCreate(BaseModel):
     # NEW ADDRESS FIELDS
     address_line_1: Optional[str] = Field(None, max_length=250)
     address_line_2: Optional[str] = Field(None, max_length=250)
+    city:Optional[str]=Field(None, min_length=2,max_length=250)
     state_code: Optional[str] = Field(None, min_length=2, max_length=2)
     state_name: Optional[str] = Field(None, max_length=50)
     country: Optional[str] = Field(default="United States", max_length=50)
-    zip_code: Optional[str] = Field(None, min_length=5, max_length=5)
-    zip_extension: Optional[str] = Field(None, min_length=4, max_length=4)
+    zip_code: Optional[str] = Field(
+        None,
+        description="US ZIP+4 format: 11111-1111"
+    )
+    @field_validator("zip_code")
+    @classmethod
+    def validate_zip(cls, v):
+        if v is None:
+            return v
+        if not re.match(r"^[0-9]{5}-[0-9]{4}$", v):
+            raise ValueError("ZIP code must be in format 11111-1111")
+        return v
+   
+    @field_validator("address_line_1", "city", "state_code", "zip_code", mode="before")
+    @classmethod
+    def validate_us_address(cls, v, info):
+        data = info.data
+        country = data.get("country", "United States")
 
+        if country == "United States" and not v:
+            raise ValueError(
+                f"{info.field_name} is required for US addresses"
+            )
+        return v
 
 class ClientUpdate(BaseModel):
     business_name: Optional[str] = None
@@ -62,12 +85,35 @@ class ClientUpdate(BaseModel):
     # NEW ADDRESS FIELDS
     address_line_1: Optional[str] = Field(None, max_length=250)
     address_line_2: Optional[str] = Field(None, max_length=250)
+    city:Optional[str]=Field(None, min_length=2,max_length=250)
     state_code: Optional[str] = Field(None, min_length=2, max_length=2)
     state_name: Optional[str] = Field(None, max_length=50)
     country: Optional[str] = Field(None, max_length=50)
-    zip_code: Optional[str] = Field(None, min_length=5, max_length=5)
-    zip_extension: Optional[str] = Field(None, min_length=4, max_length=4)
+    zip_code: Optional[str] = Field(
+        None,
+        description="US ZIP+4 format: 11111-1111"
+    )
 
+    @field_validator("zip_code")
+    @classmethod
+    def validate_zip(cls, v):
+        if v is None:
+            return v
+        if not re.match(r"^[0-9]{5}-[0-9]{4}$", v):
+            raise ValueError("ZIP code must be in format 11111-1111")
+        return v
+    
+    @field_validator("address_line_1", "city", "state_code", "zip_code", mode="before")
+    @classmethod
+    def validate_us_address(cls, v, info):
+        data = info.data
+        country = data.get("country", "United States")
+
+        if country == "United States" and not v:
+            raise ValueError(
+                f"{info.field_name} is required for US addresses"
+            )
+        return v
 
 class ClientResponse(BaseModel):
     id: UUID
@@ -82,7 +128,12 @@ class ClientResponse(BaseModel):
     statusCode: Optional[str] = None
     status_code: Optional[str] = None
     description: Optional[str]
-
+    address_line_1: Optional[str] = Field(None, max_length=250)
+    address_line_2: Optional[str] = Field(None, max_length=250)
+    city:Optional[str]=Field(None, min_length=2,max_length=250)
+    state_code: Optional[str] = Field(None, min_length=2, max_length=2)
+    country: Optional[str] = Field(None, max_length=50)
+    zip_code: Optional[str] = Field(None, min_length=5, max_length=5)
     # ONLY EXTRA FIELD FOR LIST
     state_name: Optional[str]
 

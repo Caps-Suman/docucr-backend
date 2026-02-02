@@ -8,11 +8,14 @@ import uuid
 class Client(Base):
     __tablename__ = "client"
     __table_args__ = (
+        CheckConstraint(
+            "zip_code ~ '^[0-9]{5}-[0-9]{4}$'",
+            name="ck_client_zip_9_digit"
+        ),
         CheckConstraint("char_length(state_code) = 2", name="ck_client_state_code_len"),
-        CheckConstraint("zip_code ~ '^[0-9]{5}$'", name="ck_client_zip"),
-        CheckConstraint("zip_extension IS NULL OR zip_extension ~ '^[0-9]{4}$'", name="ck_client_zip_ext"),
         {'schema': 'docucr'}
     )
+
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
 
@@ -29,11 +32,11 @@ class Client(Base):
     # --- Address ---
     address_line_1 = Column(String(250), nullable=True)
     address_line_2 = Column(String(250), nullable=True)
+    city=Column(String(250), nullable=True)
     state_code = Column(String(2), nullable=True)        # e.g. VA, CA
     state_name = Column(String(50), nullable=True)       # e.g. Virginia
     country = Column(String(50), nullable=True, default="United States")
-    zip_code = Column(String(5), nullable=True)
-    zip_extension = Column(String(4), nullable=True)
+    zip_code = Column(String(10), nullable=True)
 
     # --- System ---
     is_user = Column(Boolean, default=False)

@@ -387,7 +387,12 @@ class ClientService:
 
             # ADD THIS ONE LINE ONLY
             "state_name": client.state_name,
-
+            "address_line_1": client.address_line_1,
+            "address_line_2": client.address_line_2,
+            "city":client.city,
+            "state_code": client.state_code,
+            "country": client.country,
+            "zip_code": client.zip_code,
             "assigned_users": assigned_users,
             "created_at": client.created_at.isoformat() if client.created_at else None,
             "updated_at": client.updated_at.isoformat() if client.updated_at else None

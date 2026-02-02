@@ -439,7 +439,7 @@ def get_documents(
         date_to=date_to,
         search_query=search_query,
         form_filters=form_filters,
-        current_user=current_user,   # ✅ THIS WAS MISSING
+        current_user=current_user,   
         document_type_id=document_type_id,
         shared_only=shared_only
     )
