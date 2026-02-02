@@ -31,6 +31,10 @@ router = APIRouter()
 class BillingGuideline(BaseModel):
     title: str
     description: str
+
+class PayerGuideline(BaseModel):
+    payer_name:str
+    description:str
 class SOPBase(BaseModel):
     title: str
     category: str
@@ -40,6 +44,7 @@ class SOPBase(BaseModel):
     workflow_process: Optional[Dict[str, Any]] = None
     # billing_guidelines: Optional[List[Dict[str, Any]]] = None
     billing_guidelines: Optional[List[BillingGuideline]]=None
+    payer_guidelines: Optional[List[PayerGuideline]]=None
     coding_rules: Optional[List[Dict[str, Any]]] = None
     status_id: Optional[int] = None
 

@@ -130,8 +130,24 @@ class AISOPService:
             data["category"] = ""
 
         guidelines = data.get("billing_guidelines", [])
-        normalized_guidelines = []
+        payer_guidelines = data.get("payer_guidelines", [])
 
+        normalized_guidelines = []
+        normalized_payers = []
+
+        for pg in payer_guidelines:
+            if isinstance(pg, str):
+                normalized_payers.append({
+                    "payer_name": "Unknown",
+                    "description": pg
+                })
+            elif isinstance(pg, dict):
+                normalized_payers.append({
+                    "payer_name": pg.get("payer_name") or pg.get("payer") or "Unknown",
+                    "description": pg.get("description") or ""
+                })
+
+        data["payer_guidelines"] = normalized_payers
         for g in guidelines:
             if isinstance(g, str):
                 normalized_guidelines.append({
@@ -291,6 +307,25 @@ class AISOPService:
     - If at least one billing rule exists, billing_guidelines MUST NOT be empty
 
     --------------------------------
+    PAYER GUIDELINES (CRITICAL)
+    --------------------------------
+    Payer guidelines include:
+    - Rules that apply ONLY to a specific insurance payer
+    - Mentions of payer names such as Medicare, Medicaid, Aetna, BCBS, UnitedHealthcare, Cigna, etc.
+    - Statements like:
+    "For Medicare only..."
+    "BCBS requires..."
+    "Do not bill X to Aetna"
+    "Medicaid does not allow..."
+
+    Rules:
+    - EACH payer guideline must be a separate object
+    - payer_name MUST be extracted explicitly from the text
+    - description MUST preserve original wording
+    - If payer-specific rules exist, payer_guidelines MUST NOT be empty
+    - DO NOT mix payer rules into billing_guidelines
+
+    --------------------------------
     OUTPUT FORMAT (STRICT)
     --------------------------------
 
@@ -318,6 +353,12 @@ class AISOPService:
         "description": ""
         }
     ],
+     "payer_guidelines": [
+    {
+      "payer_name": "",
+      "description": ""
+    }
+  ],
     "coding_rules": [
     {
       "cptCode": "",

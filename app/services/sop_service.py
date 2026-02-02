@@ -45,6 +45,7 @@ class SOPService:
         query = SOPService._base_visible_sops_query(db).options(
             defer(SOP.workflow_process),
             defer(SOP.billing_guidelines),
+            defer(SOP.payer_guidelines),
             defer(SOP.coding_rules)
         )
 
@@ -244,7 +245,42 @@ class SOPService:
                 story.append(Paragraph(f"<b>{g_title}</b>", ParagraphStyle('GTitle', parent=bs, textColor=primary_color, fontSize=11, spaceAfter=2)))
                 story.append(Paragraph(g_desc, ParagraphStyle('GDesc', parent=bs, textColor=text_color, leftIndent=10, spaceAfter=8)))
             story.append(Spacer(1, 0.1*inch))
-            
+        # --- Payer Guidelines ---
+        if getattr(sop, "payer_guidelines", None):
+            story.append(Paragraph('Payer Guidelines', section_header))
+
+            for pg in sop.payer_guidelines:
+                payer = pg.get('payer_name') or pg.get('payer') or 'Unknown Payer'
+                desc = pg.get('description', '-')
+
+                story.append(
+                    Paragraph(
+                        f"<b>{payer}</b>",
+                        ParagraphStyle(
+                            'PayerTitle',
+                            parent=bs,
+                            textColor=primary_color,
+                            fontSize=11,
+                            spaceAfter=2
+                        )
+                    )
+                )
+
+                story.append(
+                    Paragraph(
+                        desc,
+                        ParagraphStyle(
+                            'PayerDesc',
+                            parent=bs,
+                            textColor=text_color,
+                            leftIndent=10,
+                            spaceAfter=8
+                        )
+                    )
+                )
+
+            story.append(Spacer(1, 0.15 * inch))
+   
         # --- Coding Rules ---
         if sop.coding_rules:
             story.append(Paragraph('Coding Rules', section_header))
