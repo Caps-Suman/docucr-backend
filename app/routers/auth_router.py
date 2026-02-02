@@ -53,6 +53,59 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
     if not AuthService.check_user_active(user, db):
         raise HTTPException(status_code=403, detail="Account is inactive")
 
+    # Check for SUPER_ADMIN role to bypass 2FA
+    roles = AuthService.get_user_roles(user.id, db)
+    is_super_admin = any(role["name"] == "SUPER_ADMIN" for role in roles)
+
+    if is_super_admin:
+        ActivityService.log(
+            db,
+            action="LOGIN",
+            entity_type="user",
+            entity_id=user.id,
+            user_id=user.id,
+            request=req,
+            background_tasks=background_tasks
+        )
+
+        if len(roles) == 1:
+            tokens = AuthService.generate_tokens(user.email, roles[0]["id"])
+            client_name = None
+            if user.is_client and user.client_id:
+                client = AuthService.get_client_by_id(user.client_id, db)
+                if client:
+                    client_name = client.business_name or f"{client.first_name} {client.last_name}".strip()
+
+            return {
+                **tokens,
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "role": roles[0],
+                    "is_client": user.is_client,
+                    "client_id": user.client_id,
+                    "client_name": client_name
+                }
+            }
+        
+        from app.core.security import create_access_token
+        temp_token = create_access_token(data={"sub": user.email, "temp": True}, expires_delta=timedelta(minutes=5))
+        
+        return {
+            "requires_role_selection": True,
+            "temp_token": temp_token,
+            "roles": roles,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name
+            }
+        }
+
+    # Regular 2FA flow for non-super admins
     try:
         AuthService.generate_2fa_otp(request.email, db)
     except Exception:
