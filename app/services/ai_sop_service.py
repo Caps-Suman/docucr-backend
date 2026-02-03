@@ -10,7 +10,7 @@ from app.services.ai_client import openai_client  # adjust import path
 
 PASS2_SCHEMA = """
 {
-  "coding_rules": [
+  "coding_rules_cpt": [
     {
       "cptCode": null,
       "description": null,
@@ -19,6 +19,13 @@ PASS2_SCHEMA = """
       "chargePerUnit": null,
       "modifier": null,
       "replacementCPT": null
+    }
+  ],
+  "coding_rules_icd": [
+    {
+      "icdCode": null,
+      "description": null,
+      "notes": null
     }
   ]
 }
@@ -130,21 +137,38 @@ class AISOPService:
             data["category"] = ""
 
         guidelines = data.get("billing_guidelines", [])
-        normalized_guidelines = []
+        payer_guidelines = data.get("payer_guidelines", [])
 
-        for g in guidelines:
-            if isinstance(g, str):
-                normalized_guidelines.append({
-                    "title": "Guideline",
-                    "description": g
-                    })
-            elif isinstance(g, dict):
-                normalized_guidelines.append({
-                    "title": g.get("title") or "Guideline",
-                    "description": g.get("description") or ""
+        normalized = []
+        normalized_payers = []
+
+        for pg in payer_guidelines:
+            if isinstance(pg, str):
+                normalized_payers.append({
+                    "payer_name": "Unknown",
+                    "description": pg
+                })
+            elif isinstance(pg, dict):
+                normalized_payers.append({
+                    "payer_name": pg.get("payer_name") or pg.get("payer") or "Unknown",
+                    "description": pg.get("description") or ""
                 })
 
-        data["billing_guidelines"] = normalized_guidelines
+        data["payer_guidelines"] = normalized_payers
+        for group in guidelines:
+            if not isinstance(group, dict):
+                continue
+
+            normalized.append({
+                "category": group.get("category", "Guidelines"),
+                "rules": [
+                    {"description": r.get("description", "")}
+                    for r in group.get("rules", [])
+                    if isinstance(r, dict)
+                ]
+            })
+
+        data["billing_guidelines"] = normalized
         return data
 
     @staticmethod
@@ -215,59 +239,6 @@ class AISOPService:
 
     @staticmethod
     async def extract_narrative_and_rules(text: str) -> dict:
-#         prompt = """
-# You are filling a medical SOP FORM.
-
-# You are NOT summarizing a document.
-# You are ANSWERING FORM FIELDS using the document.
-
-# If a field is not explicitly mentioned, return null.
-# Do NOT guess.
-
-# --------------------------------
-# FORM FIELDS TO FILL
-# --------------------------------
-
-# 1. SOP TITLE
-# 2. CATEGORY
-# 3. BILLING PROVIDER NAME
-# 4. BILLING PROVIDER NPI
-# 5. PROVIDER TAX ID
-# 6. BILLING ADDRESS
-# 7. SOFTWARE
-# 8. CLEARINGHOUSE
-# 9. SUPERBILL SOURCE
-# 10. ELIGIBILITY VERIFICATION PORTALS
-# 11. POSTING CHARGES RULES
-
-# --------------------------------
-# OUTPUT FORMAT (STRICT)
-# --------------------------------
-
-# {
-#   "basic_information": {
-#     "sop_title": "",
-#     "category": ""
-#   },
-#   "provider_information": {
-#     "billing_provider_name": "",
-#     "billing_provider_npi": "",
-#     "provider_tax_id": "",
-#     "billing_address": "",
-#     "software": "",
-#     "clearinghouse": ""
-#   },
-#   "workflow_process": {
-#     "superbill_source": "",
-#     "eligibility_verification_portals": [],
-#     "posting_charges_rules": ""
-#   },
-#   "billing_guidelines": [],
-#   "coding_rules": []
-# }
-
-# DOCUMENT:
-# """ + text
         prompt = """
     You are extracting a medical SOP.
 
@@ -275,21 +246,77 @@ class AISOPService:
     You are extracting EXACT TEXT.
 
     --------------------------------
-    BILLING GUIDELINES (CRITICAL)
+    BILLING GUIDELINES (VERY IMPORTANT)
     --------------------------------
-    Billing guidelines include:
-    - Any rule that explains HOW, WHEN, or WHERE charges are billed
-    - Modifier usage instructions
-    - Deleted CPT instructions
-    - Insurance-specific billing rules
-    - Posting restrictions
-    - "Do not use", "use only", "must bill under", "as per superbill" statements
+
+    Billing guidelines MUST be GROUPED.
+
+    A "group" represents a FAMILY of rules such as:
+    - CPT Code Replacements
+    - Modifier Usage
+    - ICD Code Restrictions
+    - Telehealth Billing
+    - Admin Code Usage
+    - Insurance-Specific Rules
+    - Any other logical heading found in the document
 
     Rules:
-    - EACH guideline must be a separate object
-    - Preserve original wording
-    - If at least one billing rule exists, billing_guidelines MUST NOT be empty
+    - You MUST infer the category name from surrounding headings or repeated phrases
+    - Each group MUST have:
+    - category (string)
+    - rules (array of objects)
+    - Each rule MUST preserve original wording
+    - Do NOT mix unrelated rules in the same group
+    - Do NOT create empty groups
 
+    --------------------------------
+    PAYER GUIDELINES (CRITICAL)
+    --------------------------------
+    Payer guidelines include:
+    - Rules that apply ONLY to a specific insurance payer
+    - Mentions of payer names such as Medicare, Medicaid, Aetna, BCBS, UnitedHealthcare, Cigna, etc.
+    - Statements like:
+    "For Medicare only..."
+    "BCBS requires..."
+    "Do not bill X to Aetna"
+    "Medicaid does not allow..."
+
+    Rules:
+    - EACH payer guideline must be a separate object
+    - payer_name MUST be extracted explicitly from the text
+    - description MUST preserve original wording
+    - If payer-specific rules exist, payer_guidelines MUST NOT be empty
+    - DO NOT mix payer rules into billing_guidelines
+    
+    
+    “If the code matches ICD-10 format (letters + numbers like M16.0, Z79.899), place it in coding_rules_icd.
+    If numeric CPT/HCPCS format, place it in coding_rules_cpt.
+    NEVER mix.”
+
+    --------------------------------
+    CODING RULES (CRITICAL)
+    --------------------------------
+
+    There are TWO distinct coding sections.
+
+    1. CPT CODING RULES
+    - Includes ONLY CPT / HCPCS codes
+    - CPT codes are numeric (e.g., 99213, J0129, 73502)
+    - Includes drug CPTs, infusion CPTs, X-ray CPTs
+    - Includes NDC, units, modifiers, charges
+
+    2. ICD CODING RULES
+    - Includes ONLY ICD-10 diagnosis codes
+    - ICD codes start with a LETTER (e.g., M17.0, Z00.00)
+    - Includes diagnosis restrictions, combinations, exclusions
+    - MUST NOT include CPTs or NDCs
+
+    STRICT RULES:
+    - CPT codes MUST go ONLY into coding_rules_cpt
+    - ICD codes MUST go ONLY into coding_rules_icd
+    - DO NOT mix CPT and ICD in the same array
+    - If unsure, OMIT the rule
+    - Do NOT guess
     --------------------------------
     OUTPUT FORMAT (STRICT)
     --------------------------------
@@ -312,23 +339,40 @@ class AISOPService:
         "eligibility_verification_portals": [],
         "posting_charges_rules": ""
     },
-    "billing_guidelines": [
-        {
-        "title": "",
-        "description": ""
-        }
-    ],
-    "coding_rules": [
+   "billing_guidelines": [
     {
-      "cptCode": "",
-      "description": "",
-      "ndcCode": "",
-      "units": "",
-      "chargePerUnit": "",
-      "modifier": "",
-      "replacementCPT": ""
+        "category": "",
+        "rules": [
+        { "description": "" }
+        ]
     }
     ]
+     "payer_guidelines": [
+    {
+      "payer_name": "",
+      "description": ""
+    }
+  ],
+    {
+    "coding_rules_cpt": [
+        {
+        "cptCode": "",
+        "description": "",
+        "ndcCode": "",
+        "units": "",
+        "chargePerUnit": "",
+        "modifier": "",
+        "replacementCPT": ""
+        }
+    ],
+    "coding_rules_icd": [
+        {
+        "icdCode": "",
+        "description": "",
+        "notes": ""
+        }
+    ]
+    }
     }
 
     DOCUMENT:
@@ -351,9 +395,14 @@ class AISOPService:
 
         # Merge results
         final_result = pass1_result
-        final_result["coding_rules"] = (
-            pass1_result.get("coding_rules", []) +
-            pass2_result.get("coding_rules", [])
+        final_result["coding_rules_cpt"] = (
+            pass1_result.get("coding_rules_cpt", []) +
+            pass2_result.get("coding_rules_cpt", [])
+        )
+
+        final_result["coding_rules_icd"] = (
+            pass1_result.get("coding_rules_icd", []) +
+            pass2_result.get("coding_rules_icd", [])
         )
 
         return final_result
@@ -363,27 +412,27 @@ class AISOPService:
         prompt = f"""
 Extract ONLY TABULAR DATA.
 
-CRITICAL RULE:
-You MUST convert every table row into ONE coding_rules entry.
+--------------------------------
+CPT TABLE EXTRACTION ONLY
+--------------------------------
 
-TABLES:
-1. Infusion and NDC Code Table
-   - CPT → cptCode
-   - NDC → ndcCode
-   - Units → units
-   - Charge → chargePerUnit
+You MUST extract ONLY CPT-based tables.
 
-2. X-ray Code Modifier Mapping
-   - CPT → cptCode
-   - Modifier → modifier
+These include:
+- Infusion CPT + NDC tables
+- X-ray CPT modifier tables
+- Drug CPT billing tables
 
-Rules:
-- ONE CPT = ONE coding_rules entry
-- If CPT appears multiple times, create multiple entries
+RULES:
+- Each ROW becomes ONE coding_rules_cpt entry
+- CPT code MUST be numeric
+- ICD codes MUST NOT appear here
 - Use null if a column is missing
-- DO NOT create any extra keys
+- DO NOT create extra keys
 
-OUTPUT JSON (STRICT):
+--------------------------------
+OUTPUT FORMAT (STRICT)
+--------------------------------
 {PASS2_SCHEMA}
 
 DOCUMENT:

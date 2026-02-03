@@ -21,7 +21,10 @@ class SOP(Base):
     provider_info = Column(JSONB, nullable=True)
     workflow_process = Column(JSONB, nullable=True)
     billing_guidelines = Column(JSONB, nullable=True)
+    payer_guidelines=Column(JSONB, nullable=True)
     coding_rules = Column(JSONB, nullable=True)
+    coding_rules_cpt = Column(JSONB, nullable=True, default=list)
+    coding_rules_icd = Column(JSONB, nullable=True, default=list)
 
     # 🔒 Lifecycle status (ONLY ACTIVE / INACTIVE)
     status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)
