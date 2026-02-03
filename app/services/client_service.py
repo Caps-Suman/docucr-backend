@@ -320,15 +320,41 @@ class ClientService:
         db.commit()
 
     @staticmethod
-    def unassign_user_from_client(
-        user_id: str,
+    def map_users_to_client(
         client_id: str,
+        user_ids: List[str],
+        assigned_by: str,
         db: Session
     ):
+        # Insert ignoring duplicates
+        stmt = insert(UserClient).values([
+            {
+                "id": str(uuid.uuid4()),
+                "user_id": uid,
+                "client_id": client_id,
+                "assigned_by": assigned_by
+            }
+            for uid in user_ids
+        ]).on_conflict_do_nothing(
+            index_elements=["user_id", "client_id"]
+        )
+        
+        db.execute(stmt)
+        db.commit()
+
+    @staticmethod
+    def unassign_users_from_client(
+        client_id: str,
+        user_ids: List[str],
+        db: Session
+    ):
+        if not user_ids:
+            return
+            
         db.query(UserClient).filter(
-            UserClient.user_id == user_id,
-            UserClient.client_id == client_id
-        ).delete()
+            UserClient.client_id == client_id,
+            UserClient.user_id.in_(user_ids)
+        ).delete(synchronize_session=False)
         db.commit()
 
     @staticmethod
@@ -390,6 +416,7 @@ class ClientService:
             "state_code": client.state_code,
             "country": client.country,
             "zip_code": client.zip_code,
+            "user_count": len(assigned_users),
             "assigned_users": assigned_users,
             "created_at": client.created_at.isoformat() if client.created_at else None,
             "updated_at": client.updated_at.isoformat() if client.updated_at else None

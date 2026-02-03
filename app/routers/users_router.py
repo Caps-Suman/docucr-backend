@@ -436,3 +436,29 @@ async def map_clients_to_user(
     )
     
     return {"message": "Clients mapped successfully"}
+
+class UnassignClientsRequest(BaseModel):
+    user_id: str
+    client_ids: List[str]
+
+@router.post("/unassign-clients")
+async def unassign_clients(
+    request: UnassignClientsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    permission: bool = Depends(Permission("user_module", "UPDATE")) # Unassigning is an update action
+):
+    """Unassign one or more clients from a user"""
+    UserService.unassign_clients_from_user(request.user_id, request.client_ids, db)
+    
+    # Log activity
+    ActivityService.log(
+        db=db,
+        action="UPDATE",
+        entity_type="user",
+        entity_id=request.user_id,
+        user_id=current_user.id,
+        details={"action": "unassign_clients", "client_ids": request.client_ids}
+    )
+    
+    return {"message": "Clients unassigned successfully"}

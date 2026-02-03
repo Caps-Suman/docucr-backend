@@ -137,6 +137,7 @@ class ClientResponse(BaseModel):
     # ONLY EXTRA FIELD FOR LIST
     state_name: Optional[str]
 
+    user_count: int = 0
     assigned_users: List[str] = []
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
@@ -231,6 +232,13 @@ def get_clients(
         page_size=page_size
     )
 
+class MapUsersRequest(BaseModel):
+    user_ids: List[str]
+    assigned_by: str
+
+class UnassignUsersToClientRequest(BaseModel):
+    user_ids: List[str]
+
 @router.get("/{client_id}/users")
 async def get_client_users(client_id: str, db: Session = Depends(get_db)):
     users = db.query(User).join(UserClient, User.id == UserClient.user_id).filter(
@@ -240,7 +248,14 @@ async def get_client_users(client_id: str, db: Session = Depends(get_db)):
             Role.name == 'SUPER_ADMIN'
         ).exists()
     ).all()
-    return [{"id": user.id, "username": user.username, "name": f"{user.first_name} {user.last_name}"} for user in users]
+    return [{
+        "id": user.id, 
+        "username": user.username, 
+        "name": f"{user.first_name} {user.last_name}",
+        "email": user.email,
+        "phone_number": user.phone_number,
+        # "created_at": user.created_at # Assuming created_at exists on User model, otherwise skip or join UserClient
+    } for user in users]
 
 @router.get("/{client_id}", response_model=ClientResponse)
 async def get_client(client_id: str, db: Session = Depends(get_db)):
@@ -406,10 +421,15 @@ async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db
     ClientService.assign_clients_to_user(user_id, request.client_ids, request.assigned_by, db)
     return {"message": "Clients assigned successfully"}
 
-@router.delete("/{client_id}/users/{user_id}/unassign", dependencies=[Depends(Permission("clients", "ADMIN"))])
-async def unassign_user_from_client(client_id: str, user_id: str, db: Session = Depends(get_db)):
-    ClientService.unassign_user_from_client(user_id, client_id, db)
-    return {"message": "User unassigned successfully"}
+@router.post("/{client_id}/users/map", dependencies=[Depends(Permission("clients", "ADMIN"))])
+async def map_users_to_client_endpoint(client_id: str, request: MapUsersRequest, db: Session = Depends(get_db)):
+    ClientService.map_users_to_client(client_id, request.user_ids, request.assigned_by, db)
+    return {"message": "Users mapped successfully"}
+
+@router.post("/{client_id}/users/unassign", dependencies=[Depends(Permission("clients", "ADMIN"))])
+async def unassign_users_from_client_endpoint(client_id: str, request: UnassignUsersToClientRequest, db: Session = Depends(get_db)):
+    ClientService.unassign_users_from_client(client_id, request.user_ids, db)
+    return {"message": "Users unassigned successfully"}
 
 @router.get("/users/{user_id}", response_model=List[ClientResponse])
 async def get_user_clients(user_id: str, db: Session = Depends(get_db)):

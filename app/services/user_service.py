@@ -295,6 +295,20 @@ class UserService:
             db.commit()
 
     @staticmethod
+    def unassign_clients_from_user(user_id: str, client_ids: List[str], db: Session):
+        """Unassign multiple clients from a user"""
+        if not client_ids:
+            return
+
+        # Delete mappings
+        db.query(UserClient).filter(
+            UserClient.user_id == user_id,
+            UserClient.client_id.in_(client_ids)
+        ).delete(synchronize_session=False)
+
+        db.commit()
+
+    @staticmethod
     def update_user(user_id: str, user_data: Dict, db: Session) -> Optional[Dict]:
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
