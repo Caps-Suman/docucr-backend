@@ -49,7 +49,8 @@ class SOPBase(BaseModel):
     # billing_guidelines: Optional[List[Dict[str, Any]]] = None
     billing_guidelines: Optional[List[BillingGuidelineGroup]]=None
     payer_guidelines: Optional[List[PayerGuideline]]=None
-    coding_rules: Optional[List[Dict[str, Any]]] = None
+    coding_rules_cpt: Optional[List[Dict[str, Any]]] = None
+    coding_rules_icd: Optional[List[Dict[str, Any]]] = None
     status_id: Optional[int] = None
 
 class SOPCreate(SOPBase):
