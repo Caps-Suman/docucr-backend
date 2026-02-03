@@ -1,3 +1,4 @@
+from collections import defaultdict
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List
@@ -6,6 +7,11 @@ import string
 import uuid
 
 from app.models.client import Client
+from app.models.module import Module
+from app.models.privilege import Privilege
+from app.models.role_module import RoleModule
+from app.models.role_submodule import RoleSubmodule
+from app.models.submodule import Submodule
 from app.models.user import User
 from app.models.otp import OTP
 from app.models.user_client import UserClient
@@ -28,6 +34,37 @@ class AuthService:
     def check_user_active(user: User, db: Session) -> bool:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         return active_status and user.status_id == active_status.id
+    
+    @staticmethod
+    def get_role_permissions(role_id: str, db: Session) -> dict:
+        permissions = defaultdict(set)
+
+        # Module-level permissions
+        module_perms = (
+            db.query(Module.name, Privilege.name)
+            .join(RoleModule, RoleModule.module_id == Module.id)
+            .join(Privilege, RoleModule.privilege_id == Privilege.id)
+            .filter(RoleModule.role_id == role_id)
+            .all()
+        )
+
+        for module_name, privilege_name in module_perms:
+            permissions[module_name.upper()].add(privilege_name.upper())
+
+        # Submodule-level permissions
+        submodule_perms = (
+            db.query(Submodule.route_key, Privilege.name)
+            .join(RoleSubmodule, RoleSubmodule.submodule_id == Submodule.id)
+            .join(Privilege, RoleSubmodule.privilege_id == Privilege.id)
+            .filter(RoleSubmodule.role_id == role_id)
+            .all()
+        )
+
+        for route_key, privilege_name in submodule_perms:
+            permissions[route_key.upper()].add(privilege_name.upper())
+
+        # convert sets → sorted lists
+        return {k: sorted(v) for k, v in permissions.items()}
 
     @staticmethod
     def get_user_client(user_id: str, db: Session) -> Optional[Client]:

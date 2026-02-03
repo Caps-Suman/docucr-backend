@@ -67,6 +67,7 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
     
     if len(roles) == 1:
         tokens = AuthService.generate_tokens(user.email, roles[0]["id"])
+        permissions = AuthService.get_role_permissions(roles[0]["id"], db)
         client = None
         client_name = None
 
@@ -88,7 +89,8 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
                 "role": roles[0],
                 "is_client": user.is_client,
                 "client_id": user.client_id,
-                "client_name": client_name
+                "client_name": client_name,
+                "permissions": permissions 
             }
         }
     
@@ -120,7 +122,8 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
         raise HTTPException(status_code=403, detail="User does not have this role")
     
     tokens = AuthService.generate_tokens(current_user.email, request.role_id)
-    
+    permissions = AuthService.get_role_permissions(role.id, db)
+
     client_id = None
     client_name = None
 
@@ -143,7 +146,8 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
             "role": {"id": role.id, "name": role.name},
             "is_client": current_user.is_client,
             "client_id": current_user.client_id,
-            "client_name": client_name
+            "client_name": client_name,
+            "permissions": permissions
         }
     }
 
