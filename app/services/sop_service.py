@@ -45,7 +45,9 @@ class SOPService:
         query = SOPService._base_visible_sops_query(db).options(
             defer(SOP.workflow_process),
             defer(SOP.billing_guidelines),
-            defer(SOP.coding_rules)
+            defer(SOP.payer_guidelines),
+            defer(SOP.coding_rules_cpt),
+            defer(SOP.coding_rules_icd),
         )
 
         if status_code:
@@ -97,7 +99,19 @@ class SOPService:
         }
     @staticmethod
     def get_sop_by_id(sop_id: str, db: Session) -> Optional[SOP]:
-        return db.query(SOP).filter(SOP.id == sop_id).first()
+        sop = db.query(SOP).filter(SOP.id == sop_id).first()
+        if not sop:
+            return None
+
+        # 🔥 BACKWARD COMPAT FIX
+        if sop.billing_guidelines:
+            first = sop.billing_guidelines[0]
+            if isinstance(first, dict) and "title" in first and "rules" not in first:
+                sop.billing_guidelines = SOPService.upgrade_flat_billing_guidelines(
+                    sop.billing_guidelines
+                )
+
+        return sop
 
     @staticmethod
     def create_sop(sop_data: Dict, db: Session) -> SOP:
@@ -152,6 +166,64 @@ class SOPService:
         db.delete(db_sop)
         db.commit()
         return True
+    @staticmethod
+    def upgrade_flat_billing_guidelines(flat: list[dict]) -> list[dict]:
+        """
+        Converts OLD flat billing_guidelines into NEW grouped format.
+        """
+        grouped: dict[str, list[dict]] = {}
+
+        for item in flat:
+            if not isinstance(item, dict):
+                continue
+
+            title = item.get("title", "Guidelines").strip()
+            desc = item.get("description", "").strip()
+
+            if not desc:
+                continue
+
+            grouped.setdefault(title, []).append({
+                "description": desc
+            })
+
+        return [
+            {
+                "category": category,
+                "rules": rules
+            }
+            for category, rules in grouped.items()
+        ]
+    @staticmethod
+    def _build_coding_table(
+    story,
+    title: str,
+    headers: list[str],
+    rows: list[dict],
+    field_map: list[str],
+    styles,
+    colors_cfg,
+):
+        if not rows:
+            return
+
+        story.append(Paragraph(title, styles["section_header"]))
+
+        header_row = [
+            Paragraph(f"<b>{h}</b>", styles["th"]) for h in headers
+        ]
+        table_data = [header_row]
+
+        for r in rows:
+            table_data.append([
+                Paragraph(str(r.get(f, "") or ""), styles["td"])
+                for f in field_map
+            ])
+
+        table = Table(table_data, repeatRows=1)
+        table.setStyle(colors_cfg)
+        story.append(table)
+        story.append(Spacer(1, 0.2 * inch))
 
     @staticmethod
     def generate_sop_pdf(sop: SOP) -> bytes:
@@ -160,7 +232,40 @@ class SOPService:
         doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch, leftMargin=0.75*inch, rightMargin=0.75*inch)
         styles = getSampleStyleSheet()
         story = []
-        
+
+        # --- Custom Styles & Colors (DEFINE FIRST) ---
+        primary_color = colors.HexColor('#0c4a6e')
+        accent_color  = colors.HexColor('#0ea5e9')
+        header_bg     = colors.HexColor('#e0f2fe')
+        row_even = colors.white
+        row_odd  = colors.HexColor('#f8fafc')
+        text_color = colors.HexColor('#334155')
+        label_color = colors.HexColor('#64748b')
+        bs = styles['BodyText']
+
+        section_header = ParagraphStyle(
+            'SectionHeader',
+            parent=styles['Heading2'],
+            fontSize=14,
+            textColor=primary_color,
+            spaceBefore=12,
+            spaceAfter=6,
+        )
+
+        pdf_styles = {
+            "section_header": section_header,
+            "th": ParagraphStyle('TH', parent=bs, textColor=primary_color, alignment=1),
+            "td": ParagraphStyle('TD', parent=bs, textColor=text_color, fontSize=9),
+        }
+
+        table_styles = TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), header_bg),
+            ('LINEBELOW', (0,0), (-1,0), 1, accent_color),
+            ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('PADDING', (0,0), (-1,-1), 6),
+        ])
+
         # --- Custom Styles & Colors ---
         primary_color = colors.HexColor('#0c4a6e') # Sky 900
         accent_color = colors.HexColor('#0ea5e9')  # Sky 500
@@ -225,72 +330,201 @@ class SOPService:
         # --- Workflow Process ---
         if sop.workflow_process:
             story.append(Paragraph('Workflow Process', section_header))
+
             desc = sop.workflow_process.get('description', '-')
-            story.append(Paragraph(desc, ParagraphStyle('WorkflowBody', parent=bs, textColor=text_color, fontSize=10, leading=14)))
-            
-            portals = sop.workflow_process.get('eligibilityPortals', [])
+            story.append(
+                Paragraph(
+                    desc,
+                    ParagraphStyle(
+                        'WorkflowBody',
+                        parent=bs,
+                        textColor=text_color,
+                        fontSize=10,
+                        leading=14
+                    )
+                )
+            )
+
+            portals = sop.workflow_process.get('eligibility_verification_portals', [])
             if portals:
                 story.append(Spacer(1, 8))
-                p_text = f"<b>ELIGIBILITY PORTALS:</b>  {', '.join(portals)}"
-                story.append(Paragraph(p_text, ParagraphStyle('Portals', parent=bs, textColor=primary_color, backColor=header_bg, borderPadding=6, borderRadius=4)))
-            story.append(Spacer(1, 0.2*inch))
+                p_text = "<b>Eligibility Verification Portals:</b><br/>" + "<br/>".join(
+                    f"• {p}" for p in portals
+                )
+                story.append(
+                    Paragraph(
+                        p_text,
+                        ParagraphStyle(
+                            'Portals',
+                            parent=bs,
+                            textColor=primary_color,
+                            backColor=header_bg,
+                            borderPadding=6,
+                        )
+                    )
+                )
 
-        # --- Billing Guidelines ---
+            story.append(Spacer(1, 0.2 * inch))
+
+
+        # --- Billing Guidelines (GROUPED) ---
         if sop.billing_guidelines:
             story.append(Paragraph('Billing Guidelines', section_header))
-            for g in sop.billing_guidelines:
-                g_title = g.get('title', 'Guideline')
-                g_desc = g.get('description', '')
-                story.append(Paragraph(f"<b>{g_title}</b>", ParagraphStyle('GTitle', parent=bs, textColor=primary_color, fontSize=11, spaceAfter=2)))
-                story.append(Paragraph(g_desc, ParagraphStyle('GDesc', parent=bs, textColor=text_color, leftIndent=10, spaceAfter=8)))
-            story.append(Spacer(1, 0.1*inch))
-            
-        # --- Coding Rules ---
-        if sop.coding_rules:
-            story.append(Paragraph('Coding Rules', section_header))
-            
-            headers = ['CPT', 'Description', 'NDC', 'Units', 'Charge', 'Mod', 'Replace']
-            # Header Row
-            table_data = [[Paragraph(f"<b>{h}</b>", ParagraphStyle('TH', parent=bs, textColor=primary_color, alignment=1)) for h in headers]]
-            
-            # Data Rows
-            def mk_cell(txt, align=0):
-                return Paragraph(str(txt), ParagraphStyle('TD', parent=bs, textColor=text_color, alignment=align, fontSize=9))
 
-            for r in sop.coding_rules:
-                row = [
-                    mk_cell(r.get('cptCode', ''), 1),
-                    mk_cell(r.get('description', '')),
-                    mk_cell(r.get('ndcCode', ''), 1),
-                    mk_cell(r.get('units', ''), 1),
-                    mk_cell(r.get('chargePerUnit', ''), 1),
-                    mk_cell(r.get('modifier', ''), 1),
-                    mk_cell(r.get('replacementCPT', ''), 1),
-                ]
-                table_data.append(row)
+            for group in sop.billing_guidelines:
+                category = group.get("category", "Guidelines")
+
+                # ✅ Category header (ONCE)
+                story.append(
+                    Paragraph(
+                        category,
+                        ParagraphStyle(
+                            'BGCategory',
+                            parent=styles['Heading3'],
+                            textColor=primary_color,
+                            fontSize=12,
+                            spaceBefore=8,
+                            spaceAfter=4
+                        )
+                    )
+                )
+
+                # ✅ Rules under category
+                for rule in group.get("rules", []):
+                    desc = rule.get("description", "")
+                    if not desc:
+                        continue
+
+                    story.append(
+                        Paragraph(
+                            f"• {desc}",
+                            ParagraphStyle(
+                                'BGRule',
+                                parent=bs,
+                                leftIndent=14,
+                                textColor=text_color,
+                                fontSize=10,
+                                spaceAfter=4
+                            )
+                        )
+                    )
+
+            story.append(Spacer(1, 0.15 * inch))
+
+        # --- Payer Guidelines ---
+        if getattr(sop, "payer_guidelines", None):
+            story.append(Paragraph('Payer Guidelines', section_header))
+
+            for pg in sop.payer_guidelines:
+                payer = pg.get('payer_name') or pg.get('payer') or 'Unknown Payer'
+                desc = pg.get('description', '-')
+
+                story.append(
+                    Paragraph(
+                        f"<b>{payer}</b>",
+                        ParagraphStyle(
+                            'PayerTitle',
+                            parent=bs,
+                            textColor=primary_color,
+                            fontSize=11,
+                            spaceAfter=2
+                        )
+                    )
+                )
+
+                story.append(
+                    Paragraph(
+                        desc,
+                        ParagraphStyle(
+                            'PayerDesc',
+                            parent=bs,
+                            textColor=text_color,
+                            leftIndent=10,
+                            spaceAfter=8
+                        )
+                    )
+                )
+
+            story.append(Spacer(1, 0.15 * inch))
+   
+        # --- Coding Rules ---
+        # if sop.coding_rules:
+        #     story.append(Paragraph('Coding Rules', section_header))
             
-            # Adjusted Column Widths to total exactly 7.0 inch
-            # [0.85, 2.35, 1.0, 0.55, 0.85, 0.55, 0.85] = 7.0
-            col_widths = [0.85*inch, 2.35*inch, 1.0*inch, 0.55*inch, 0.85*inch, 0.55*inch, 0.85*inch]
+        #     headers = ['CPT', 'Description', 'NDC', 'Units', 'Charge', 'Mod', 'Replace']
+        #     # Header Row
+        #     table_data = [[Paragraph(f"<b>{h}</b>", ParagraphStyle('TH', parent=bs, textColor=primary_color, alignment=1)) for h in headers]]
             
-            rules_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+        #     # Data Rows
+        #     def mk_cell(txt, align=0):
+        #         return Paragraph(str(txt), ParagraphStyle('TD', parent=bs, textColor=text_color, alignment=align, fontSize=9))
+
+        #     for r in sop.coding_rules:
+        #         row = [
+        #             mk_cell(r.get('cptCode', ''), 1),
+        #             mk_cell(r.get('description', '')),
+        #             mk_cell(r.get('ndcCode', ''), 1),
+        #             mk_cell(r.get('units', ''), 1),
+        #             mk_cell(r.get('chargePerUnit', ''), 1),
+        #             mk_cell(r.get('modifier', ''), 1),
+        #             mk_cell(r.get('replacementCPT', ''), 1),
+        #         ]
+        #         table_data.append(row)
             
-            # Zebra Striping Logic
-            ts = TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), header_bg), # Header BG
-                ('LINEBELOW', (0,0), (-1,0), 1, accent_color), # Accent line under header
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('PADDING', (0,0), (-1,-1), 6),
-                ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')), # Subtle Grid
-            ])
+        #     # Adjusted Column Widths to total exactly 7.0 inch
+        #     # [0.85, 2.35, 1.0, 0.55, 0.85, 0.55, 0.85] = 7.0
+        #     col_widths = [0.85*inch, 2.35*inch, 1.0*inch, 0.55*inch, 0.85*inch, 0.55*inch, 0.85*inch]
             
-            # Apply Zebra striping manually ensuring it matches data rows
-            for i in range(1, len(table_data)):
-                bg = row_odd if i % 2 == 1 else row_even
-                ts.add('BACKGROUND', (0, i), (-1, i), bg)
+        #     rules_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+            
+        #     # Zebra Striping Logic
+        #     ts = TableStyle([
+        #         ('BACKGROUND', (0,0), (-1,0), header_bg), # Header BG
+        #         ('LINEBELOW', (0,0), (-1,0), 1, accent_color), # Accent line under header
+        #         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        #         ('PADDING', (0,0), (-1,-1), 6),
+        #         ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')), # Subtle Grid
+        #     ])
+            
+        #     # Apply Zebra striping manually ensuring it matches data rows
+        #     for i in range(1, len(table_data)):
+        #         bg = row_odd if i % 2 == 1 else row_even
+        #         ts.add('BACKGROUND', (0, i), (-1, i), bg)
                 
-            rules_table.setStyle(ts)
-            story.append(rules_table)
+        #     rules_table.setStyle(ts)
+        #     story.append(rules_table)
+        if sop.coding_rules_cpt:
+            SOPService._build_coding_table(
+                story=story,
+                title="CPT Coding Guidelines",
+                headers=["CPT", "Description", "NDC", "Units", "Charge", "Modifier", "Replace"],
+                rows=sop.coding_rules_cpt,
+                field_map=[
+                    "cptCode",
+                    "description",
+                    "ndcCode",
+                    "units",
+                    "chargePerUnit",
+                    "modifier",
+                    "replacementCPT",
+                ],
+                styles=pdf_styles,
+                colors_cfg=table_styles,
+            )
+        if sop.coding_rules_icd:
+                SOPService._build_coding_table(
+                    story=story,
+                    title="ICD Coding Guidelines",
+                    headers=["ICD Code", "Description", "Notes"],
+                    rows=sop.coding_rules_icd,
+                    field_map=[
+                        "icdCode",
+                        "description",
+                        "notes",
+                    ],
+                    styles=pdf_styles,
+                    colors_cfg=table_styles,
+                )
 
         def add_footer(canvas, doc):
             canvas.saveState()

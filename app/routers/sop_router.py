@@ -10,6 +10,7 @@ from uuid import UUID
 import io
 
 from app.core.database import get_db
+from app.models.user import User
 from app.services.ai_sop_service import AISOPService
 from app.services.sop_service import SOPService
 from app.core.security import get_current_user
@@ -27,9 +28,17 @@ router = APIRouter()
 # So schemas are likely inside routers or models or separate files? 
 # Clients router defined models inline. I will do the same.
 
-class BillingGuideline(BaseModel):
-    title: str
+class BillingRule(BaseModel):
     description: str
+
+class BillingGuidelineGroup(BaseModel):
+    category: str
+    rules: list[BillingRule]
+
+
+class PayerGuideline(BaseModel):
+    payer_name:str
+    description:str
 class SOPBase(BaseModel):
     title: str
     category: str
@@ -38,8 +47,10 @@ class SOPBase(BaseModel):
     provider_info: Optional[Dict[str, Any]] = None
     workflow_process: Optional[Dict[str, Any]] = None
     # billing_guidelines: Optional[List[Dict[str, Any]]] = None
-    billing_guidelines: Optional[List[BillingGuideline]]=None
-    coding_rules: Optional[List[Dict[str, Any]]] = None
+    billing_guidelines: Optional[List[BillingGuidelineGroup]]=None
+    payer_guidelines: Optional[List[PayerGuideline]]=None
+    coding_rules_cpt: Optional[List[Dict[str, Any]]] = None
+    coding_rules_icd: Optional[List[Dict[str, Any]]] = None
     status_id: Optional[int] = None
 
 class SOPCreate(SOPBase):
@@ -98,7 +109,7 @@ class AISOPExtractResponse(BaseModel):
 def create_sop(
     sop: SOPCreate, 
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOPS", "CREATE"))
 ):
     return SOPService.create_sop(sop.model_dump(), db)
 @router.get("/stats", response_model=SOPStatsResponse)
@@ -115,7 +126,7 @@ def get_sops(
     search: Optional[str] = None,
     status_code: Optional[str] = None,   # FIX
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOPS", "READ"))
 ):
     sops, total = SOPService.get_sops(
         db,
@@ -193,7 +204,7 @@ def update_sop(
     sop_id: str, 
     sop: SOPUpdate, 
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOPS", "UPDATE"))
 ):
     updated_sop = SOPService.update_sop(sop_id, sop.model_dump(exclude_unset=True), db)
     if not updated_sop:
@@ -205,7 +216,7 @@ def update_sop_status(
     sop_id: str,
     status_update: SOPStatusUpdate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOPS", "UPDATE"))
 ):
     updated_sop = SOPService.update_sop(sop_id, status_update.model_dump(), db)
     if not updated_sop:
@@ -216,7 +227,7 @@ def update_sop_status(
 def delete_sop(
     sop_id: str, 
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOPS", "DELETE"))
 ):
     success = SOPService.delete_sop(sop_id, db)
     if not success:
@@ -227,7 +238,7 @@ def delete_sop(
 def download_sop_pdf(
     sop_id: str,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOPS", "EXPORT"))
 ):
     sop = SOPService.get_sop_by_id(sop_id, db)
     if not sop:

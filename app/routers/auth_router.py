@@ -27,10 +27,6 @@ class RoleSelectionRequest(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     email: str
 
-class TwoFactorRequest(BaseModel):
-    email: str
-    otp: str
-
 class ResetPasswordRequest(BaseModel):
     email: str
     otp: str
@@ -40,6 +36,7 @@ class ResetPasswordRequest(BaseModel):
 async def login(request: LoginRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     user = AuthService.authenticate_user(request.email, request.password, db)
     if not user:
+        # Optional: Log failed login attempt
         ActivityService.log(
             db, 
             action="LOGIN_FAILED", 
@@ -49,103 +46,6 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
             background_tasks=background_tasks
         )
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
-    if not AuthService.check_user_active(user, db):
-        raise HTTPException(status_code=403, detail="Account is inactive")
-
-    # Check for SUPER_ADMIN role to bypass 2FA
-    roles = AuthService.get_user_roles(user.id, db)
-    is_super_admin = any(role["name"] == "SUPER_ADMIN" for role in roles)
-
-    if is_super_admin:
-        ActivityService.log(
-            db,
-            action="LOGIN",
-            entity_type="user",
-            entity_id=user.id,
-            user_id=user.id,
-            request=req,
-            background_tasks=background_tasks
-        )
-
-        if len(roles) == 1:
-            tokens = AuthService.generate_tokens(user.email, roles[0]["id"])
-            client_name = None
-            if user.is_client and user.client_id:
-                client = AuthService.get_client_by_id(user.client_id, db)
-                if client:
-                    client_name = client.business_name or f"{client.first_name} {client.last_name}".strip()
-
-            return {
-                **tokens,
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "role": roles[0],
-                    "is_client": user.is_client,
-                    "client_id": user.client_id,
-                    "client_name": client_name
-                }
-            }
-        
-        from app.core.security import create_access_token
-        temp_token = create_access_token(data={"sub": user.email, "temp": True}, expires_delta=timedelta(minutes=5))
-        
-        return {
-            "requires_role_selection": True,
-            "temp_token": temp_token,
-            "roles": roles,
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name
-            }
-        }
-
-    # Regular 2FA flow for non-super admins
-    try:
-        AuthService.generate_2fa_otp(request.email, db)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Failed to send 2FA code")
-        
-    ActivityService.log(
-        db,
-        action="2FA_SENT",
-        entity_type="user",
-        entity_id=user.id,
-        user_id=user.id,
-        request=req,
-        background_tasks=background_tasks
-    )
-
-    from app.core.security import create_access_token
-    temp_token = create_access_token(data={"sub": user.email, "temp": True, "2fa": True}, expires_delta=timedelta(minutes=10))
-    
-    return {
-        "requires_2fa": True,
-        "temp_token": temp_token,
-        "message": "2FA code sent to your email"
-    }
-
-@router.post("/verify-2fa")
-async def verify_2fa(request: TwoFactorRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    if not AuthService.verify_2fa_otp(request.email, request.otp, db):
-        ActivityService.log(
-            db,
-            action="2FA_FAILED",
-            entity_type="user",
-            details={"email": request.email},
-            request=req,
-            background_tasks=background_tasks
-        )
-        raise HTTPException(status_code=400, detail="Invalid or expired 2FA code")
-    
-    user = db.query(User).filter(User.email == request.email).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
     
     if not AuthService.check_user_active(user, db):
         raise HTTPException(status_code=403, detail="Account is inactive")
@@ -167,6 +67,7 @@ async def verify_2fa(request: TwoFactorRequest, req: Request, background_tasks: 
     
     if len(roles) == 1:
         tokens = AuthService.generate_tokens(user.email, roles[0]["id"])
+        permissions = AuthService.get_role_permissions(roles[0]["id"], db)
         client = None
         client_name = None
 
@@ -188,7 +89,8 @@ async def verify_2fa(request: TwoFactorRequest, req: Request, background_tasks: 
                 "role": roles[0],
                 "is_client": user.is_client,
                 "client_id": user.client_id,
-                "client_name": client_name
+                "client_name": client_name,
+                "permissions": permissions 
             }
         }
     
@@ -207,32 +109,6 @@ async def verify_2fa(request: TwoFactorRequest, req: Request, background_tasks: 
         }
     }
 
-@router.post("/resend-2fa")
-async def resend_2fa(request: LoginRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    user = AuthService.authenticate_user(request.email, request.password, db)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    
-    if not AuthService.check_user_active(user, db):
-        raise HTTPException(status_code=403, detail="Account is inactive")
-
-    try:
-        AuthService.generate_2fa_otp(request.email, db)
-    except Exception:
-        raise HTTPException(status_code=500, detail="Failed to resend 2FA code")
-        
-    ActivityService.log(
-        db,
-        action="2FA_RESENT",
-        entity_type="user",
-        entity_id=user.id,
-        user_id=user.id,
-        request=req,
-        background_tasks=background_tasks
-    )
-    
-    return {"message": "2FA code resent to your email"}
-
 @router.post("/select-role")
 async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     if current_user.email != request.email:
@@ -246,7 +122,8 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
         raise HTTPException(status_code=403, detail="User does not have this role")
     
     tokens = AuthService.generate_tokens(current_user.email, request.role_id)
-    
+    permissions = AuthService.get_role_permissions(role.id, db)
+
     client_id = None
     client_name = None
 
@@ -269,7 +146,8 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
             "role": {"id": role.id, "name": role.name},
             "is_client": current_user.is_client,
             "client_id": current_user.client_id,
-            "client_name": client_name
+            "client_name": client_name,
+            "permissions": permissions
         }
     }
 
