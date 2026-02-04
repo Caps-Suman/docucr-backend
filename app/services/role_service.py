@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from typing import Optional, List, Dict, Tuple
 import uuid
 
@@ -14,10 +14,13 @@ from app.models.status import Status
 class RoleService:
     
     @staticmethod
-    def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session):
+    def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session, current_user):
         skip = (page - 1) * page_size
 
         query = RoleService._base_roles_query(db)
+
+        if not current_user.is_superuser:
+            query = query.filter(Role.user_id == current_user.id)
 
         if status_id:
             query = query.join(Role.status_relation).filter(Status.code == status_id)
@@ -48,10 +51,13 @@ class RoleService:
         )
 
     @staticmethod
-    def get_assignable_roles(page: int, page_size: int, db: Session):
+    def get_assignable_roles(page: int, page_size: int, db: Session, current_user):
         skip = (page - 1) * page_size
 
         query = RoleService._base_roles_query(db)
+        
+        if not current_user.is_superuser:
+            query = query.filter(Role.user_id == current_user.id)
 
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
@@ -149,14 +155,15 @@ class RoleService:
         return result
 
     @staticmethod
-    def create_role(role_data: Dict, db: Session) -> Dict:
+    def create_role(role_data: Dict, db: Session, current_user) -> Dict:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         
         new_role = Role(
             id=str(uuid.uuid4()),
             name=role_data['name'].upper(),
             description=role_data.get('description'),
-            status_id=active_status.id if active_status else None
+            status_id=active_status.id if active_status else None,
+            user_id=current_user.id if not current_user.is_superuser else None
         )
         
         db.add(new_role)

@@ -100,22 +100,10 @@ class UserService:
                 Role.name == 'SUPER_ADMIN'
             ).exists()
         )
-        if UserService._is_admin(current_user):
+        if current_user.is_superuser:
             pass  # full access
-
-        elif UserService._is_supervisor(current_user):
-            subordinate_ids = (
-                db.query(UserSupervisor.user_id)
-                .filter(UserSupervisor.supervisor_id == current_user.id)
-            )
-
-            query = query.filter(
-                (User.id == current_user.id) |
-                (User.id.in_(subordinate_ids))
-            )
-
         else:
-            query = query.filter(User.id == current_user.id)
+            query = query.filter(User.user_id == current_user.id)
 
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
@@ -164,7 +152,7 @@ class UserService:
         return UserService._format_user_response(user, db)
 
     @staticmethod
-    def create_user(user_data: Dict, db: Session) -> Dict:
+    def create_user(user_data: Dict, db: Session, current_user: User) -> Dict:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         # Fallback if case mismatch or missing
         if not active_status:
@@ -183,7 +171,8 @@ class UserService:
             phone_country_code=user_data.get('phone_country_code'),
             phone_number=user_data.get('phone_number'),
             is_superuser=False,
-            status_id=status_id_val
+            status_id=status_id_val,
+            user_id=current_user.id if not current_user.is_superuser else None
         )
         
         db.add(user)

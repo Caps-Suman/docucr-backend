@@ -14,8 +14,10 @@ class Role(Base):
     can_edit = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    user_id = Column(String, ForeignKey('docucr.user.id'), nullable=True)
     
     status_relation = relationship("Status")
+    user = relationship("User", foreign_keys=[user_id])
     
     users = relationship(
         "User",

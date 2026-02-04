@@ -28,12 +28,13 @@ from .external_share import ExternalShare
 from .user_client import UserClient
 from .user_role import UserRole
 from .user_role_module import UserRoleModule
-from .user_supervisor import UserSupervisor
+from .organisation import Organisation
+from .organisation_role import OrganisationRole
 
 __all__ = [
     'Base', 'Module', 'Client', 'Privilege', 'Role', 'RoleModule', 'Submodule', 'RoleSubmodule', 'User', 'UserRole', 
     'UserRoleModule', 'UserSupervisor', 'DocumentType', 'Template', 'Document',
     'DocumentFormData', 'ExtractedDocument', 'UnverifiedDocument', 'Form', 'FormField', 'Status',
     'DocumentListConfig', 'Printer', 'ActivityLog', 'SOP', 'OTP', 'Webhook',
-    'DocumentShare', 'ExternalShare', 'UserClient', 'UserRole', 'UserRoleModule', 'UserSupervisor'
+    'DocumentShare', 'ExternalShare', 'UserClient', 'UserRole', 'UserRoleModule', 'Organisation', 'OrganisationRole'
 ]

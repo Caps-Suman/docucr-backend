@@ -144,21 +144,10 @@ class ClientService:
     def get_clients(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session, current_user: Optional[User] = None) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         
-        # Check if user has admin privileges
-        is_admin = False
-        if current_user:
-            user_roles = [role.name for role in current_user.roles] if hasattr(current_user, 'roles') else []
-            is_admin = current_user.is_superuser or 'ADMIN' in user_roles or 'SUPER_ADMIN' in user_roles
+        query = db.query(Client).filter(Client.deleted_at.is_(None))
         
-        if is_admin or not current_user:
-            # Admin users see all clients
-            query = db.query(Client).filter(Client.deleted_at.is_(None))
-        else:
-            # Non-admin users see only assigned clients
-            query = db.query(Client).join(UserClient, Client.id == UserClient.client_id).filter(
-                UserClient.user_id == current_user.id,
-                Client.deleted_at.is_(None)
-            )
+        if current_user and not current_user.is_superuser:
+            query = query.filter(Client.created_by == current_user.id)
         
         if status_id:
             query = query.join(Client.status_relation).filter(Status.code == status_id)

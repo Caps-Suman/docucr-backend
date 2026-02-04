@@ -98,9 +98,10 @@ async def get_assignable_roles(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     permission: bool = Depends(Permission("role_module", "READ"))
 ):
-    roles, total = RoleService.get_assignable_roles(page, page_size, db)
+    roles, total = RoleService.get_assignable_roles(page, page_size, db, current_user)
     return RoleListResponse(
         roles=[RoleResponse(**role) for role in roles],
         total=total,
@@ -115,9 +116,10 @@ async def get_roles(
     page_size: int = 10,
     status_id: Optional[str] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     permission: bool = Depends(Permission("role_module", "READ"))
 ):
-    roles, total = RoleService.get_roles(page, page_size, status_id, db)
+    roles, total = RoleService.get_roles(page, page_size, status_id, db, current_user)
     return RoleListResponse(
         roles=[RoleResponse(**role) for role in roles],
         total=total,
@@ -183,7 +185,7 @@ async def create_role(
         raise HTTPException(status_code=400, detail="Role with this name already exists")
     
     role_data = role.model_dump()
-    created_role = RoleService.create_role(role_data, db)
+    created_role = RoleService.create_role(role_data, db, current_user)
     
     ActivityService.log(
         db=db,

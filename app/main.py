@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import printers_router
+from app.routers import printers_router, organisations_router
 from .routers import auth_router, modules_router, roles_router, privileges_router, users_router, statuses_router, profile_router, forms_router, clients_router, document_types_router, templates_router, documents_router, document_list_config_router, document_share_router, dashboard_router, webhook_router, external_share_router, migration_router, activity_log_router, document_ai_router, sop_router
 # Import all models to ensure they are registered with Base metadata
 from .models import user, role, privilege, status, module, document, template, extracted_document, unverified_document, document_list_config, document_share, webhook, external_share, printer
@@ -38,6 +38,7 @@ app.include_router(webhook_router.router)
 app.include_router(external_share_router.router)
 app.include_router(migration_router.router)
 app.include_router(activity_log_router.router)
+app.include_router(organisations_router.router, prefix="/api/organisations", tags=["organisations"])
 app.include_router(sop_router.router, prefix="/api/sops", tags=["sops"])
 app.include_router(printers_router.router, prefix="/api/printers", tags=["printers"])
 
