@@ -19,11 +19,10 @@ class Provider(Base):
     id = Column(UUID, primary_key=True, default=uuid.uuid4)
     client_id = Column(UUID, ForeignKey("docucr.client.id"), nullable=False)
     location_id = Column(UUID, ForeignKey("docucr.client_location.id"), nullable=True)
-    created_by=Column(String, nullable=True)
     first_name = Column(String, nullable=False)
     middle_name = Column(String)
     last_name = Column(String)
-    npi = Column(String)
+    npi = Column(String,unique=True, index=True)
     
     # --- Address ---
     address_line_1 = Column(String(250), nullable=True)
