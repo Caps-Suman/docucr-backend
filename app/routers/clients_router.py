@@ -1,10 +1,11 @@
 import re
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from app.models.client import Client
+from app.models.provider import Provider
 from app.services.activity_service import ActivityService
 from app.core.permissions import Permission
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, constr, field_validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -28,6 +29,32 @@ async def npi_lookup(npi: str):
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch NPI details: {str(e)}")
 
+class ProviderCreate(BaseModel):
+    first_name: str
+    middle_name: Optional[str] = None
+    last_name: str
+    npi: str
+    location_temp_id: str | None = None
+
+    address_line_1: Optional[str] = None
+    address_line_2: Optional[str] = None
+    city: Optional[str] = None
+    state_code: Optional[str] = None
+    state_name: Optional[str] = None
+    country: Optional[str] = None
+    zip_code: Optional[str] = None
+
+class ClientLocationCreate(BaseModel):
+    address_line_1: str
+    address_line_2: Optional[str] = None
+    city: str
+    state_code: str
+    state_name: Optional[str] = None
+    country: Optional[str] = "United States"
+    zip_code: str
+    temp_id:str | None =None
+    is_primary: bool = False
+
 class ClientCreate(BaseModel):
     business_name: Optional[str] = None
     first_name: Optional[str] = None
@@ -36,6 +63,8 @@ class ClientCreate(BaseModel):
     npi: Optional[str] = None
     is_user: bool = False
     type: Optional[str] = None
+    providers: Optional[List[ProviderCreate]] = []
+    locations: Optional[List[ClientLocationCreate]] = None
     status_id: Optional[str] = None
     description: Optional[str] = None
 
@@ -114,6 +143,29 @@ class ClientUpdate(BaseModel):
                 f"{info.field_name} is required for US addresses"
             )
         return v
+class ProviderResponse(BaseModel):
+    id: UUID
+    first_name: str
+    middle_name: Optional[str]
+    last_name: str
+    npi: Optional[str]
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+class ClientLocationResponse(BaseModel):
+    id: UUID
+    address_line_1: str
+    address_line_2: Optional[str]
+    city: str
+    state_code: str
+    state_name: Optional[str]
+    country: Optional[str]
+    zip_code: str
+    is_primary: bool
+
+    class Config:
+        from_attributes = True
 
 class ClientResponse(BaseModel):
     id: UUID
@@ -128,14 +180,19 @@ class ClientResponse(BaseModel):
     statusCode: Optional[str] = None
     status_code: Optional[str] = None
     description: Optional[str]
-    address_line_1: Optional[str] = Field(None, max_length=250)
-    address_line_2: Optional[str] = Field(None, max_length=250)
-    city:Optional[str]=Field(None, min_length=2,max_length=250)
-    state_code: Optional[str] = Field(None, min_length=2, max_length=2)
-    country: Optional[str] = Field(None, max_length=50)
-    zip_code: Optional[str] = Field(None, min_length=10, max_length=10)
-    # ONLY EXTRA FIELD FOR LIST
+
+    # Address fields (NPA1 only)
+    address_line_1: Optional[str]
+    address_line_2: Optional[str]
+    city: Optional[str]
+    state_code: Optional[str]
+    country: Optional[str]
+    zip_code: Optional[str]
     state_name: Optional[str]
+
+    # 👇 NEW — NPA2 ONLY
+    providers: List[ProviderResponse] = []
+    locations: List[ClientLocationResponse] = []
 
     user_count: int = 0
     assigned_users: List[str] = []
@@ -144,6 +201,28 @@ class ClientResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class ProviderCreateSchema(BaseModel):
+    first_name: str
+    middle_name: Optional[str] = None
+    last_name: str
+    npi: str
+
+    # Address
+    address_line_1: Optional[str] = Field(None, max_length=250)
+    address_line_2: Optional[str] = Field(None, max_length=250)
+    city: Optional[str]
+    state_code: Optional[str] = Field(None, min_length=2, max_length=2)
+    state_name: Optional[str]
+    country: Optional[str] = "United States"
+    zip_code: Optional[str]
+
+    @field_validator("zip_code")
+    @classmethod
+    def validate_zip(cls, v):
+        if v and not re.match(r"^[0-9]{5}-[0-9]{4}$", v):
+            raise ValueError("ZIP code must be in format 11111-1111")
+        return v
 
 
 
@@ -277,6 +356,12 @@ async def create_client(
     
     client_data = client.model_dump()
     client_data['created_by'] = current_user.id
+<<<<<<< HEAD
+    print("RAW REQUEST JSON >>>", client_data)
+    print("RAW LOCATIONS >>>", client_data.get("locations"))
+
+=======
+>>>>>>> ebf383aa8c573090e9f7c7267c4d17dc6d3fd945
     created_client = ClientService.create_client(client_data, db, current_user)
     
     ActivityService.log(
@@ -291,6 +376,45 @@ async def create_client(
     )
     
     return ClientResponse(**created_client)
+
+@router.post(
+    "/{client_id}/providers",
+    dependencies=[Depends(Permission("clients", "UPDATE"))]
+)
+def add_providers(
+    client_id: str,
+    providers: List[ProviderCreateSchema],
+    db: Session = Depends(get_db),
+):
+    client = db.query(Client).filter(
+        Client.id == client_id,
+        Client.deleted_at.is_(None)
+    ).first()
+
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    if client.type != "NPA2":
+        raise HTTPException(
+            status_code=400,
+            detail="Providers can only be added to NPA2 clients"
+        )
+
+    for p in providers:
+        if ClientService.check_npi_exists(p.npi, None, db):
+            raise HTTPException(
+                status_code=400,
+                detail=f"NPI already exists: {p.npi}"
+            )
+
+        db.add(Provider(
+            client_id=client.id,
+            **p.model_dump()
+        ))
+
+    db.commit()
+    return {"success": True}
+
 
 @router.put("/{client_id}", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def update_client(
