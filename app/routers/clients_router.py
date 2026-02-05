@@ -336,12 +336,12 @@ async def get_client_users(client_id: str, db: Session = Depends(get_db)):
         # "created_at": user.created_at # Assuming created_at exists on User model, otherwise skip or join UserClient
     } for user in users]
 
-@router.get("/{client_id}", response_model=ClientResponse)
-async def get_client(client_id: str, db: Session = Depends(get_db)):
-    client = ClientService.get_client_by_id(client_id, db)
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-    return ClientResponse(**client)
+# @router.get("/{client_id}", response_model=ClientResponse)
+# async def get_client(client_id: str, db: Session = Depends(get_db)):
+#     client = ClientService.get_client_by_id(client_id, db)
+#     if not client:
+#         raise HTTPException(status_code=404, detail="Client not found")
+#     return ClientResponse(**client)
 
 @router.post("/", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "CREATE"))])
 async def create_client(
@@ -356,12 +356,9 @@ async def create_client(
     
     client_data = client.model_dump()
     client_data['created_by'] = current_user.id
-<<<<<<< HEAD
     print("RAW REQUEST JSON >>>", client_data)
     print("RAW LOCATIONS >>>", client_data.get("locations"))
 
-=======
->>>>>>> ebf383aa8c573090e9f7c7267c4d17dc6d3fd945
     created_client = ClientService.create_client(client_data, db, current_user)
     
     ActivityService.log(
@@ -415,6 +412,18 @@ def add_providers(
     db.commit()
     return {"success": True}
 
+@router.get("/{client_id}", response_model=dict)
+def get_client_by_id(
+    client_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    client = ClientService.get_client_by_id(client_id, db)
+
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    return client
 
 @router.put("/{client_id}", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "UPDATE"))])
 async def update_client(

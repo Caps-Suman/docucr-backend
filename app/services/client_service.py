@@ -12,7 +12,6 @@ from app.models.user import User
 from app.models.user_client import UserClient
 from app.models.user_role import UserRole
 from app.models.role import Role
-from app.models.organisation import Organisation
 from app.models.status import Status
 from app.services.user_service import UserService
 import logging
@@ -136,10 +135,6 @@ class ClientService:
             Client.status_id == active_status.id
         ).count() if active_status else 0
 
-
-
-
-
         inactive_clients = base_query.filter(
             Client.status_id == inactive_status.id
         ).count() if inactive_status else 0
@@ -154,15 +149,21 @@ class ClientService:
     def get_clients(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session, current_user: Optional[User] = None) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         
-        query = db.query(Client).filter(Client.deleted_at.is_(None))
+        # Check if user has admin privileges
+        is_admin = False
+        if current_user:
+            user_roles = [role.name for role in current_user.roles] if hasattr(current_user, 'roles') else []
+            is_admin = current_user.is_superuser or 'ADMIN' in user_roles or 'SUPER_ADMIN' in user_roles
         
-        # if current_user and not current_user.is_superuser:
-        #     query = query.filter(Client.created_by == current_user.id)
-        if not current_user.is_superuser:
-            if getattr(current_user, 'is_client', False):
-                query = query.filter(Client.created_by == str(current_user.id))
-            else:
-                 query = query.filter(Client.organisation_id == str(current_user.id))
+        if is_admin or not current_user:
+            # Admin users see all clients
+            query = db.query(Client).filter(Client.deleted_at.is_(None))
+        else:
+            # Non-admin users see only assigned clients
+            query = db.query(Client).join(UserClient, Client.id == UserClient.client_id).filter(
+                UserClient.user_id == current_user.id,
+                Client.deleted_at.is_(None)
+            )
         
         if status_id:
             query = query.join(Client.status_relation).filter(Status.code == status_id)
@@ -186,49 +187,11 @@ class ClientService:
     @staticmethod
     def create_client(client_data: Dict, db: Session, current_user: User):
 
-<<<<<<< HEAD
         try:
             providers = client_data.pop("providers", []) or []
             locations = client_data.pop("locations", []) or []
             primary_temp_id = client_data.pop("primary_temp_id", None)
             print("LOCATIONS RECEIVED >>>", locations)
-=======
-    @staticmethod
-    def create_client(client_data: Dict, db: Session, current_user: Optional[User] = None) -> Dict:
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        
-        organisation_id_val = None
-        created_by_val = None
-
-        if current_user:
-            if isinstance(current_user, Organisation):
-                 created_by_val = None
-                 organisation_id_val = str(current_user.id)
-            elif isinstance(current_user, User):
-                if not current_user.is_superuser:
-                    created_by_val = str(current_user.id)
-                    if current_user.organisation_id:
-                        organisation_id_val = str(current_user.organisation_id)
-                else:
-                    created_by_val = None
-
-        client_data_copy = client_data.copy()
-        # Remove fields we handle explicitly or don't want to pass blindly
-        client_data_copy.pop('status_id', None)
-        client_data_copy.pop('user_id', None)  # This was used in old logic
-        client_data_copy.pop('created_by', None) # Removing if passed in payload
-        client_data_copy.pop('organisation_id', None) 
-
-        new_client = Client(
-            status_id=active_status.id if active_status else None,
-            created_by=created_by_val,
-            organisation_id=organisation_id_val,
-            **client_data_copy
-        )
-        db.add(new_client)
-        db.commit()
-        db.refresh(new_client)
->>>>>>> ebf383aa8c573090e9f7c7267c4d17dc6d3fd945
 
             # ---------------- CREATE CLIENT ----------------
             client = Client(
@@ -497,15 +460,105 @@ class ClientService:
         if not client:
             return None
 
+        # extract complex payload
+        providers = client_data.pop("providers", None)
+        locations = client_data.pop("locations", None)
+        primary_temp_id = client_data.pop("primary_temp_id", None)
+
         try:
-            # ---- NPA2 primary address protection ----
+            # -------------------------------------------
+            # PROTECT PRIMARY ADDRESS FOR NPI2
+            # -------------------------------------------
             if client.type == "NPI2":
                 required_primary = ["address_line_1", "city", "state_code", "zip_code"]
                 for f in required_primary:
                     if f in client_data and not client_data[f]:
                         raise ValueError("Primary address cannot be removed for NPI2")
 
-            # ---- Apply client field updates ----
+            # -------------------------------------------
+            # ALWAYS MAP PRIMARY LOCATION
+            # -------------------------------------------
+            temp_to_real: Dict[str, str] = {}
+
+            primary_loc = db.query(ClientLocation).filter(
+                ClientLocation.client_id == client.id,
+                ClientLocation.is_primary == True
+            ).first()
+
+            if not primary_loc:
+                raise RuntimeError("Primary location missing")
+
+            if primary_temp_id:
+                temp_to_real[primary_temp_id] = primary_loc.id
+
+            # -------------------------------------------
+            # HANDLE LOCATIONS UPDATE
+            # -------------------------------------------
+            if locations is not None:
+
+                # delete old non-primary locations
+                db.query(ClientLocation).filter(
+                    ClientLocation.client_id == client.id,
+                    ClientLocation.is_primary == False
+                ).delete()
+
+                for loc in locations:
+                    if not loc.get("address_line_1"):
+                        continue
+
+                    new_loc = ClientLocation(
+                        client_id=client.id,
+                        address_line_1=loc.get("address_line_1"),
+                        address_line_2=loc.get("address_line_2"),
+                        city=loc.get("city"),
+                        state_code=loc.get("state_code"),
+                        state_name=loc.get("state_name"),
+                        zip_code=loc.get("zip_code"),
+                        country=loc.get("country"),
+                        is_primary=False,
+                    )
+
+                    db.add(new_loc)
+                    db.flush()
+
+                    temp_id = loc.get("temp_id")
+                    if temp_id:
+                        temp_to_real[temp_id] = new_loc.id
+
+            # -------------------------------------------
+            # HANDLE PROVIDERS UPDATE
+            # -------------------------------------------
+            if providers is not None:
+
+                # VALIDATE mapping first
+                for p in providers:
+                    temp_id = p.get("location_temp_id")
+                    if not temp_id or temp_id not in temp_to_real:
+                        raise ValueError(f"Invalid provider location mapping: {temp_id}")
+
+                # delete old providers AFTER validation
+                db.query(Provider).filter(
+                    Provider.client_id == client.id
+                ).delete()
+
+                for p in providers:
+                    temp_id = p.get("location_temp_id")
+                    real_location_id = temp_to_real[temp_id]
+
+                    provider_clean = {
+                        k: v for k, v in p.items() if k != "location_temp_id"
+                    }
+
+                    db.add(Provider(
+                        client_id=client.id,
+                        location_id=real_location_id,
+                        created_by=client.created_by,
+                        **provider_clean
+                    ))
+
+            # -------------------------------------------
+            # UPDATE CLIENT FIELDS
+            # -------------------------------------------
             for key, value in client_data.items():
                 if key == "status_id" and value is not None:
                     if isinstance(value, str) and not value.isdigit():
@@ -517,7 +570,9 @@ class ClientService:
                 elif key not in {"status_id", "user_id"}:
                     setattr(client, key, value)
 
-            # ---- Sync primary ClientLocation for NPA2 ----
+            # -------------------------------------------
+            # SYNC PRIMARY LOCATION FROM CLIENT FIELDS
+            # -------------------------------------------
             if client.type == "NPI2":
                 primary_fields = {
                     "address_line_1",
@@ -530,18 +585,6 @@ class ClientService:
                 }
 
                 if primary_fields.intersection(client_data.keys()):
-                    primary_loc = (
-                        db.query(ClientLocation)
-                        .filter(
-                            ClientLocation.client_id == client.id,
-                            ClientLocation.is_primary.is_(True),
-                        )
-                        .first()
-                    )
-
-                    if not primary_loc:
-                        raise RuntimeError("Primary location missing for NPI2 client")
-
                     for f in primary_fields:
                         setattr(primary_loc, f, getattr(client, f))
 
@@ -552,6 +595,7 @@ class ClientService:
         except Exception:
             db.rollback()
             raise
+
 
 
     @staticmethod
@@ -689,6 +733,17 @@ class ClientService:
             db.query(Provider).filter(Provider.npi == npi).exists()
         ).scalar()
 
+    @staticmethod
+    def get_client_by_id(client_id: str, db: Session) -> Optional[Dict]:
+        client = (
+            db.query(Client)
+            .filter(Client.id == client_id, Client.deleted_at.is_(None))
+            .first()
+        )
+        if not client:
+            return None
+
+        return ClientService._format_client(client, db, detailed=True)
 
     @staticmethod
     def _format_client(client: Client, db: Session = None, detailed: bool = True) -> Dict:
@@ -722,7 +777,7 @@ class ClientService:
                     "state_name": p.state_name,
                     "country": p.country,
                     "zip_code": p.zip_code,
-
+                    "location_id":p.location_id,
                     "created_at": p.created_at,
                 }
                 for p in provider_rows
