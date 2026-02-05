@@ -34,15 +34,11 @@ class ResetPasswordRequest(BaseModel):
 
 @router.post("/login")
 async def login(request: LoginRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    print(f"DEBUG: Login attempt for {request.email}")
     user = AuthService.authenticate_user(request.email, request.password, db)
-    print(f"DEBUG: User found? {user is not None}")
     
     if not user:
         # Fallback: Try Organisation Login
-        print("DEBUG: Trying Organisation Login...")
         org = AuthService.authenticate_organisation(request.email, request.password, db)
-        print(f"DEBUG: Org found? {org is not None}")
         if not org:
             # Optional: Log failed login attempt
             ActivityService.log(
@@ -59,7 +55,6 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
             raise HTTPException(status_code=403, detail="Account is inactive")
         
         roles = AuthService.get_organisation_roles(org.id, db)
-        print('org-roles: ',roles)
         if not roles:
             raise HTTPException(status_code=403, detail="No active roles assigned")
 

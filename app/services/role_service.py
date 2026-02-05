@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Tuple
 import uuid
 
 from app.models.role import Role
+from app.models.user import User
 from app.models.organisation import Organisation
 from app.models.organisation_role import OrganisationRole
 from app.models.user_role import UserRole
