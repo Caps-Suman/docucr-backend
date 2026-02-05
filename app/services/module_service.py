@@ -6,6 +6,8 @@ from app.models.module import Module
 from app.models.privilege import Privilege
 from app.models.role_module import RoleModule
 from app.models.user_role import UserRole
+from app.models.organisation import Organisation
+from app.models.organisation_role import OrganisationRole
 
 
 class ModuleService:
@@ -42,8 +44,11 @@ class ModuleService:
     @staticmethod
     def get_user_modules(email: str, db: Session, role_id: str = None) -> List[Dict]:
         user = db.query(User).filter(User.email == email).first()
+        org = None
         if not user:
-            return []
+            org = db.query(Organisation).filter(Organisation.email == email).first()
+            if not org:
+                return []
         
         # Query for RoleModule (Module-level permissions)
         query = db.query(
@@ -60,12 +65,24 @@ class ModuleService:
             Privilege.name.label('privilege_name')
         ).join(
             RoleModule, Module.id == RoleModule.module_id
-        ).join(
-            UserRole, RoleModule.role_id == UserRole.role_id
-        ).join(
+        )
+
+        if user:
+            query = query.join(
+                UserRole, RoleModule.role_id == UserRole.role_id
+            ).filter(
+                UserRole.user_id == user.id
+            )
+        elif org:
+            query = query.join(
+                 OrganisationRole, RoleModule.role_id == OrganisationRole.role_id
+            ).filter(
+                OrganisationRole.organisation_id == org.id
+            )
+
+        # Complete the common join and filter
+        query = query.join(
             Privilege, RoleModule.privilege_id == Privilege.id
-        ).filter(
-            UserRole.user_id == user.id
         )
 
         if role_id:
@@ -98,12 +115,24 @@ class ModuleService:
             Submodule, Module.id == Submodule.module_id
         ).join(
             RoleSubmodule, Submodule.id == RoleSubmodule.submodule_id
-        ).join(
-            UserRole, RoleSubmodule.role_id == UserRole.role_id
-        ).join(
+        )
+
+        if user:
+            sub_query = sub_query.join(
+                UserRole, RoleSubmodule.role_id == UserRole.role_id
+            ).filter(
+                UserRole.user_id == user.id
+            )
+        elif org:
+            sub_query = sub_query.join(
+                OrganisationRole, RoleSubmodule.role_id == OrganisationRole.role_id
+            ).filter(
+                OrganisationRole.organisation_id == org.id
+            )
+
+        # Complete the common join and filter for submodules
+        sub_query = sub_query.join(
             Privilege, RoleSubmodule.privilege_id == Privilege.id
-        ).filter(
-            UserRole.user_id == user.id
         )
 
         if role_id:

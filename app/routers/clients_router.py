@@ -356,9 +356,12 @@ async def create_client(
     
     client_data = client.model_dump()
     client_data['created_by'] = current_user.id
+<<<<<<< HEAD
     print("RAW REQUEST JSON >>>", client_data)
     print("RAW LOCATIONS >>>", client_data.get("locations"))
 
+=======
+>>>>>>> ebf383aa8c573090e9f7c7267c4d17dc6d3fd945
     created_client = ClientService.create_client(client_data, db, current_user)
     
     ActivityService.log(

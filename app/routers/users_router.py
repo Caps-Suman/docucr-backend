@@ -170,7 +170,7 @@ async def create_user(
         raise HTTPException(status_code=400, detail="Username already exists")
     
     user_data = user.model_dump()
-    created_user = UserService.create_user(user_data, db)
+    created_user = UserService.create_user(user_data, db, current_user)
     
     # Log activity
     ActivityService.log(

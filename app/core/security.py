@@ -9,6 +9,7 @@ import os
 
 from app.core.database import get_db
 from app.models.user import User
+from app.models.organisation import Organisation
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
@@ -52,8 +53,14 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     
     user = db.query(User).filter(User.email == email).first()
+    print('user: ',user)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        # Fallback to Organisation
+        org = db.query(Organisation).filter(Organisation.email == email).first()
+        print('orgg: ',org)
+        if org is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        return org
     
     return user
 

@@ -12,6 +12,7 @@ from app.models.user import User
 from app.models.user_client import UserClient
 from app.models.user_role import UserRole
 from app.models.role import Role
+from app.models.organisation import Organisation
 from app.models.status import Status
 from app.services.user_service import UserService
 import logging
@@ -135,6 +136,10 @@ class ClientService:
             Client.status_id == active_status.id
         ).count() if active_status else 0
 
+
+
+
+
         inactive_clients = base_query.filter(
             Client.status_id == inactive_status.id
         ).count() if inactive_status else 0
@@ -149,21 +154,15 @@ class ClientService:
     def get_clients(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session, current_user: Optional[User] = None) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         
-        # Check if user has admin privileges
-        is_admin = False
-        if current_user:
-            user_roles = [role.name for role in current_user.roles] if hasattr(current_user, 'roles') else []
-            is_admin = current_user.is_superuser or 'ADMIN' in user_roles or 'SUPER_ADMIN' in user_roles
+        query = db.query(Client).filter(Client.deleted_at.is_(None))
         
-        if is_admin or not current_user:
-            # Admin users see all clients
-            query = db.query(Client).filter(Client.deleted_at.is_(None))
-        else:
-            # Non-admin users see only assigned clients
-            query = db.query(Client).join(UserClient, Client.id == UserClient.client_id).filter(
-                UserClient.user_id == current_user.id,
-                Client.deleted_at.is_(None)
-            )
+        # if current_user and not current_user.is_superuser:
+        #     query = query.filter(Client.created_by == current_user.id)
+        if not current_user.is_superuser:
+            if getattr(current_user, 'is_client', False):
+                query = query.filter(Client.created_by == str(current_user.id))
+            else:
+                 query = query.filter(Client.organisation_id == str(current_user.id))
         
         if status_id:
             query = query.join(Client.status_relation).filter(Status.code == status_id)
@@ -187,11 +186,49 @@ class ClientService:
     @staticmethod
     def create_client(client_data: Dict, db: Session, current_user: User):
 
+<<<<<<< HEAD
         try:
             providers = client_data.pop("providers", []) or []
             locations = client_data.pop("locations", []) or []
             primary_temp_id = client_data.pop("primary_temp_id", None)
             print("LOCATIONS RECEIVED >>>", locations)
+=======
+    @staticmethod
+    def create_client(client_data: Dict, db: Session, current_user: Optional[User] = None) -> Dict:
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
+        
+        organisation_id_val = None
+        created_by_val = None
+
+        if current_user:
+            if isinstance(current_user, Organisation):
+                 created_by_val = None
+                 organisation_id_val = str(current_user.id)
+            elif isinstance(current_user, User):
+                if not current_user.is_superuser:
+                    created_by_val = str(current_user.id)
+                    if current_user.organisation_id:
+                        organisation_id_val = str(current_user.organisation_id)
+                else:
+                    created_by_val = None
+
+        client_data_copy = client_data.copy()
+        # Remove fields we handle explicitly or don't want to pass blindly
+        client_data_copy.pop('status_id', None)
+        client_data_copy.pop('user_id', None)  # This was used in old logic
+        client_data_copy.pop('created_by', None) # Removing if passed in payload
+        client_data_copy.pop('organisation_id', None) 
+
+        new_client = Client(
+            status_id=active_status.id if active_status else None,
+            created_by=created_by_val,
+            organisation_id=organisation_id_val,
+            **client_data_copy
+        )
+        db.add(new_client)
+        db.commit()
+        db.refresh(new_client)
+>>>>>>> ebf383aa8c573090e9f7c7267c4d17dc6d3fd945
 
             # ---------------- CREATE CLIENT ----------------
             client = Client(

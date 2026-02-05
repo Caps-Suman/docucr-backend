@@ -10,6 +10,7 @@ from app.models.status import Status
 from app.models.user_supervisor import UserSupervisor
 from app.models.user_client import UserClient
 from app.models.client import Client
+from app.models.organisation import Organisation
 from app.core.security import get_password_hash
 
 
@@ -100,22 +101,16 @@ class UserService:
                 Role.name == 'SUPER_ADMIN'
             ).exists()
         )
-        if UserService._is_admin(current_user):
-            pass  # full access
+        # if current_user.is_superuser:
+        #     pass  
+        # else:
+        #     query = query.filter(User.created_by == current_user.id)
 
-        elif UserService._is_supervisor(current_user):
-            subordinate_ids = (
-                db.query(UserSupervisor.user_id)
-                .filter(UserSupervisor.supervisor_id == current_user.id)
-            )
-
-            query = query.filter(
-                (User.id == current_user.id) |
-                (User.id.in_(subordinate_ids))
-            )
-
-        else:
-            query = query.filter(User.id == current_user.id)
+        if not current_user.is_superuser:
+            if getattr(current_user, 'is_client', False):
+                query = query.filter(User.created_by == str(current_user.id))
+            else:
+                 query = query.filter(User.organisation_id == str(current_user.id))
 
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
@@ -164,13 +159,27 @@ class UserService:
         return UserService._format_user_response(user, db)
 
     @staticmethod
-    def create_user(user_data: Dict, db: Session) -> Dict:
+    def create_user(user_data: Dict, db: Session, current_user: User) -> Dict:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         # Fallback if case mismatch or missing
         if not active_status:
              active_status = db.query(Status).filter(Status.code == 'Active').first()
         
         status_id_val = active_status.id if active_status else None
+
+        organisation_id_val = user_data.get('organisation_id')
+        created_by_val = None
+
+        if isinstance(current_user, Organisation):
+            created_by_val = None
+            organisation_id_val = str(current_user.id)
+        elif isinstance(current_user, User):
+            if not current_user.is_superuser:
+                created_by_val = str(current_user.id)
+                if current_user.organisation_id:
+                    organisation_id_val = str(current_user.organisation_id)
+            else:
+                created_by_val = None
 
         user = User(
             id=str(uuid.uuid4()),
@@ -183,7 +192,9 @@ class UserService:
             phone_country_code=user_data.get('phone_country_code'),
             phone_number=user_data.get('phone_number'),
             is_superuser=False,
-            status_id=status_id_val
+            status_id=status_id_val,
+            organisation_id=organisation_id_val,
+            created_by=created_by_val
         )
         
         db.add(user)

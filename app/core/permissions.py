@@ -36,6 +36,7 @@ class Permission:
         role_id: str = Depends(get_current_role_id),
         db: Session = Depends(get_db),
     ):
+
         if user.is_superuser:
             return user
 
@@ -66,7 +67,7 @@ class Permission:
             .join(Privilege)
             .filter(
                 RoleSubmodule.role_id == role_id,
-                func.lower(Submodule.route_key) == self.module_name,
+                func.lower(Submodule.name) == self.module_name,
                 func.upper(Privilege.name).in_([
                     self.privilege_name,
                     "MANAGE",
