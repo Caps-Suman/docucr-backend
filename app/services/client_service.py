@@ -12,7 +12,6 @@ from app.models.user import User
 from app.models.user_client import UserClient
 from app.models.user_role import UserRole
 from app.models.role import Role
-from app.models.organisation import Organisation
 from app.models.status import Status
 from app.services.user_service import UserService
 import logging
@@ -135,10 +134,6 @@ class ClientService:
         active_clients = base_query.filter(
             Client.status_id == active_status.id
         ).count() if active_status else 0
-
-
-
-
 
         inactive_clients = base_query.filter(
             Client.status_id == inactive_status.id
@@ -485,15 +480,105 @@ class ClientService:
         if not client:
             return None
 
+        # extract complex payload
+        providers = client_data.pop("providers", None)
+        locations = client_data.pop("locations", None)
+        primary_temp_id = client_data.pop("primary_temp_id", None)
+
         try:
-            # ---- NPA2 primary address protection ----
+            # -------------------------------------------
+            # PROTECT PRIMARY ADDRESS FOR NPI2
+            # -------------------------------------------
             if client.type == "NPI2":
                 required_primary = ["address_line_1", "city", "state_code", "zip_code"]
                 for f in required_primary:
                     if f in client_data and not client_data[f]:
                         raise ValueError("Primary address cannot be removed for NPI2")
 
-            # ---- Apply client field updates ----
+            # -------------------------------------------
+            # ALWAYS MAP PRIMARY LOCATION
+            # -------------------------------------------
+            temp_to_real: Dict[str, str] = {}
+
+            primary_loc = db.query(ClientLocation).filter(
+                ClientLocation.client_id == client.id,
+                ClientLocation.is_primary == True
+            ).first()
+
+            if not primary_loc:
+                raise RuntimeError("Primary location missing")
+
+            if primary_temp_id:
+                temp_to_real[primary_temp_id] = primary_loc.id
+
+            # -------------------------------------------
+            # HANDLE LOCATIONS UPDATE
+            # -------------------------------------------
+            if locations is not None:
+
+                # delete old non-primary locations
+                db.query(ClientLocation).filter(
+                    ClientLocation.client_id == client.id,
+                    ClientLocation.is_primary == False
+                ).delete()
+
+                for loc in locations:
+                    if not loc.get("address_line_1"):
+                        continue
+
+                    new_loc = ClientLocation(
+                        client_id=client.id,
+                        address_line_1=loc.get("address_line_1"),
+                        address_line_2=loc.get("address_line_2"),
+                        city=loc.get("city"),
+                        state_code=loc.get("state_code"),
+                        state_name=loc.get("state_name"),
+                        zip_code=loc.get("zip_code"),
+                        country=loc.get("country"),
+                        is_primary=False,
+                    )
+
+                    db.add(new_loc)
+                    db.flush()
+
+                    temp_id = loc.get("temp_id")
+                    if temp_id:
+                        temp_to_real[temp_id] = new_loc.id
+
+            # -------------------------------------------
+            # HANDLE PROVIDERS UPDATE
+            # -------------------------------------------
+            if providers is not None:
+
+                # VALIDATE mapping first
+                for p in providers:
+                    temp_id = p.get("location_temp_id")
+                    if not temp_id or temp_id not in temp_to_real:
+                        raise ValueError(f"Invalid provider location mapping: {temp_id}")
+
+                # delete old providers AFTER validation
+                db.query(Provider).filter(
+                    Provider.client_id == client.id
+                ).delete()
+
+                for p in providers:
+                    temp_id = p.get("location_temp_id")
+                    real_location_id = temp_to_real[temp_id]
+
+                    provider_clean = {
+                        k: v for k, v in p.items() if k != "location_temp_id"
+                    }
+
+                    db.add(Provider(
+                        client_id=client.id,
+                        location_id=real_location_id,
+                        created_by=client.created_by,
+                        **provider_clean
+                    ))
+
+            # -------------------------------------------
+            # UPDATE CLIENT FIELDS
+            # -------------------------------------------
             for key, value in client_data.items():
                 if key == "status_id" and value is not None:
                     if isinstance(value, str) and not value.isdigit():
@@ -505,7 +590,9 @@ class ClientService:
                 elif key not in {"status_id", "user_id"}:
                     setattr(client, key, value)
 
-            # ---- Sync primary ClientLocation for NPA2 ----
+            # -------------------------------------------
+            # SYNC PRIMARY LOCATION FROM CLIENT FIELDS
+            # -------------------------------------------
             if client.type == "NPI2":
                 primary_fields = {
                     "address_line_1",
@@ -518,18 +605,6 @@ class ClientService:
                 }
 
                 if primary_fields.intersection(client_data.keys()):
-                    primary_loc = (
-                        db.query(ClientLocation)
-                        .filter(
-                            ClientLocation.client_id == client.id,
-                            ClientLocation.is_primary.is_(True),
-                        )
-                        .first()
-                    )
-
-                    if not primary_loc:
-                        raise RuntimeError("Primary location missing for NPI2 client")
-
                     for f in primary_fields:
                         setattr(primary_loc, f, getattr(client, f))
 
@@ -540,6 +615,7 @@ class ClientService:
         except Exception:
             db.rollback()
             raise
+
 
 
     @staticmethod
@@ -677,6 +753,17 @@ class ClientService:
             db.query(Provider).filter(Provider.npi == npi).exists()
         ).scalar()
 
+    @staticmethod
+    def get_client_by_id(client_id: str, db: Session) -> Optional[Dict]:
+        client = (
+            db.query(Client)
+            .filter(Client.id == client_id, Client.deleted_at.is_(None))
+            .first()
+        )
+        if not client:
+            return None
+
+        return ClientService._format_client(client, db, detailed=True)
 
     @staticmethod
     def _format_client(client: Client, db: Session = None, detailed: bool = True) -> Dict:
@@ -710,7 +797,7 @@ class ClientService:
                     "state_name": p.state_name,
                     "country": p.country,
                     "zip_code": p.zip_code,
-
+                    "location_id":p.location_id,
                     "created_at": p.created_at,
                 }
                 for p in provider_rows
