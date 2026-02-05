@@ -46,9 +46,14 @@ class ModulesResponse(BaseModel):
 @router.get("/", response_model=ModulesResponse)
 async def get_all_modules(
     db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    role_id: str = Depends(get_current_role_id)
 ):
-    modules = ModuleService.get_all_modules(db)
+    if getattr(current_user, 'is_superuser', False):
+        modules = ModuleService.get_all_modules(db)
+    else:
+        modules = ModuleService.get_user_modules(current_user.email, db, role_id)
+    
     return ModulesResponse(modules=modules)
 
 @router.get("/user-modules", response_model=ModulesResponse)
