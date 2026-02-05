@@ -18,8 +18,19 @@ class Organisation(Base):
     phone_country_code = Column(String(5), nullable=True)
     phone_number = Column(String(15), nullable=True)
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
+    is_superuser = Column(Boolean, default=False)
+    is_client = Column(Boolean, default=False)
+    is_supervisor = Column(Boolean, default=False)
+    client_id = Column(UUID(as_uuid=True), ForeignKey('docucr.client.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     status_relation = relationship("Status", back_populates="organisations")
     
+    roles = relationship(
+        "Role",
+        secondary="docucr.organisation_role",
+        back_populates="organisations",
+        lazy="selectin",
+        overlaps="organisation_roles,role_organisations,organisation,role"
+    )

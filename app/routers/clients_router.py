@@ -277,7 +277,7 @@ async def create_client(
     
     client_data = client.model_dump()
     client_data['created_by'] = current_user.id
-    created_client = ClientService.create_client(client_data, db)
+    created_client = ClientService.create_client(client_data, db, current_user)
     
     ActivityService.log(
         db=db,

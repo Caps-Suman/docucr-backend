@@ -14,14 +14,22 @@ class Role(Base):
     can_edit = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    user_id = Column(String, ForeignKey('docucr.user.id'), nullable=True)
+    created_by = Column(String, ForeignKey('docucr.user.id'), nullable=True)
+    organisation_id = Column(String, ForeignKey('docucr.organisation.id'), nullable=True)
     
     status_relation = relationship("Status")
-    user = relationship("User", foreign_keys=[user_id])
+    user = relationship("User", foreign_keys=[created_by], primaryjoin="remote(User.id) == Role.created_by")
     
     users = relationship(
         "User",
         secondary="docucr.user_role",
         back_populates="roles",
         overlaps="user_roles,role_users,user,role"
+    )
+
+    organisations = relationship(
+        "Organisation",
+        secondary="docucr.organisation_role",
+        back_populates="roles",
+        overlaps="organisation_roles,role_organisations,organisation,role"
     )

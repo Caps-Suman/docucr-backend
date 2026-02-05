@@ -24,7 +24,8 @@ class User(Base):
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    user_id = Column(String, ForeignKey('docucr.user.id'), nullable=True)
+    created_by = Column(String, ForeignKey('docucr.user.id'), nullable=True)
+    organisation_id = Column(String, ForeignKey('docucr.organisation.id'), nullable=True)
 
     creator = relationship("User", remote_side=[id], backref="created_users")
 

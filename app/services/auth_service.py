@@ -18,6 +18,8 @@ from app.models.user_client import UserClient
 from app.models.user_role import UserRole
 from app.models.role import Role
 from app.models.status import Status
+from app.models.organisation import Organisation
+from app.models.organisation_role import OrganisationRole
 from app.core.security import verify_password, create_access_token, create_refresh_token, get_password_hash
 from app.utils.email import send_otp_email
 from datetime import timezone
@@ -34,6 +36,18 @@ class AuthService:
     def check_user_active(user: User, db: Session) -> bool:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         return active_status and user.status_id == active_status.id
+
+    @staticmethod
+    def authenticate_organisation(email: str, password: str, db: Session) -> Optional[Organisation]:
+        org = db.query(Organisation).filter(Organisation.email == email).first()
+        if not org or not verify_password(password, org.hashed_password):
+            return None
+        return org
+
+    @staticmethod
+    def check_organisation_active(org: Organisation, db: Session) -> bool:
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
+        return active_status and org.status_id == active_status.id
     
     @staticmethod
     def get_role_permissions(role_id: str, db: Session) -> dict:
@@ -86,6 +100,15 @@ class AuthService:
             Role.status_id == active_status.id
         ).all()
         return [{"id": role.id, "name": role.name} for _, role in user_roles]
+
+    @staticmethod
+    def get_organisation_roles(org_id: str, db: Session) -> List[Dict]:
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
+        org_roles = db.query(OrganisationRole, Role).join(Role, OrganisationRole.role_id == Role.id).filter(
+            OrganisationRole.organisation_id == org_id,
+            Role.status_id == active_status.id
+        ).all()
+        return [{"id": role.id, "name": role.name} for _, role in org_roles]
 
     @staticmethod
     def generate_tokens(email: str, role_id: str) -> Dict:

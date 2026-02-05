@@ -10,6 +10,7 @@ from app.models.status import Status
 from app.models.user_supervisor import UserSupervisor
 from app.models.user_client import UserClient
 from app.models.client import Client
+from app.models.organisation import Organisation
 from app.core.security import get_password_hash
 
 
@@ -100,10 +101,16 @@ class UserService:
                 Role.name == 'SUPER_ADMIN'
             ).exists()
         )
-        if current_user.is_superuser:
-            pass  # full access
-        else:
-            query = query.filter(User.user_id == current_user.id)
+        # if current_user.is_superuser:
+        #     pass  
+        # else:
+        #     query = query.filter(User.created_by == current_user.id)
+
+        if not current_user.is_superuser:
+            if getattr(current_user, 'is_client', False):
+                query = query.filter(User.created_by == str(current_user.id))
+            else:
+                 query = query.filter(User.organisation_id == str(current_user.id))
 
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
@@ -160,6 +167,20 @@ class UserService:
         
         status_id_val = active_status.id if active_status else None
 
+        organisation_id_val = user_data.get('organisation_id')
+        created_by_val = None
+
+        if isinstance(current_user, Organisation):
+            created_by_val = None
+            organisation_id_val = str(current_user.id)
+        elif isinstance(current_user, User):
+            if not current_user.is_superuser:
+                created_by_val = str(current_user.id)
+                if current_user.organisation_id:
+                    organisation_id_val = str(current_user.organisation_id)
+            else:
+                created_by_val = None
+
         user = User(
             id=str(uuid.uuid4()),
             email=user_data['email'].lower(),
@@ -172,7 +193,8 @@ class UserService:
             phone_number=user_data.get('phone_number'),
             is_superuser=False,
             status_id=status_id_val,
-            user_id=current_user.id if not current_user.is_superuser else None
+            organisation_id=organisation_id_val,
+            created_by=created_by_val
         )
         
         db.add(user)

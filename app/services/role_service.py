@@ -4,6 +4,8 @@ from typing import Optional, List, Dict, Tuple
 import uuid
 
 from app.models.role import Role
+from app.models.organisation import Organisation
+from app.models.organisation_role import OrganisationRole
 from app.models.user_role import UserRole
 from app.models.role_module import RoleModule
 from app.models.role_submodule import RoleSubmodule
@@ -20,7 +22,10 @@ class RoleService:
         query = RoleService._base_roles_query(db)
 
         if not current_user.is_superuser:
-            query = query.filter(Role.user_id == current_user.id)
+            if getattr(current_user, 'is_client', False):
+                query = query.filter(Role.created_by == str(current_user.id))
+            else:
+                 query = query.filter(Role.organisation_id == str(current_user.id))
 
         if status_id:
             query = query.join(Role.status_relation).filter(Status.code == status_id)
@@ -56,8 +61,14 @@ class RoleService:
 
         query = RoleService._base_roles_query(db)
         
+        # if not current_user.is_superuser:
+        #     query = query.filter(Role.created_by == current_user.id)
+
         if not current_user.is_superuser:
-            query = query.filter(Role.user_id == current_user.id)
+            if getattr(current_user, 'is_client', False):
+                query = query.filter(Role.created_by == str(current_user.id))
+            else:
+                 query = query.filter(Role.organisation_id == str(current_user.id))
 
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
@@ -158,12 +169,27 @@ class RoleService:
     def create_role(role_data: Dict, db: Session, current_user) -> Dict:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         
+        organisation_id_val = None
+        created_by_val = None
+
+        if isinstance(current_user, Organisation):
+            created_by_val = None
+            organisation_id_val = str(current_user.id)
+        elif isinstance(current_user, User):
+            if not current_user.is_superuser:
+                created_by_val = str(current_user.id)
+                if current_user.organisation_id:
+                    organisation_id_val = str(current_user.organisation_id)
+            else:
+                created_by_val = None
+
         new_role = Role(
             id=str(uuid.uuid4()),
             name=role_data['name'].upper(),
             description=role_data.get('description'),
             status_id=active_status.id if active_status else None,
-            user_id=current_user.id if not current_user.is_superuser else None
+            created_by=created_by_val,
+            organisation_id=organisation_id_val
         )
         
         db.add(new_role)

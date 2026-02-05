@@ -34,18 +34,64 @@ class ResetPasswordRequest(BaseModel):
 
 @router.post("/login")
 async def login(request: LoginRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    print(f"DEBUG: Login attempt for {request.email}")
     user = AuthService.authenticate_user(request.email, request.password, db)
+    print(f"DEBUG: User found? {user is not None}")
+    
     if not user:
-        # Optional: Log failed login attempt
+        # Fallback: Try Organisation Login
+        print("DEBUG: Trying Organisation Login...")
+        org = AuthService.authenticate_organisation(request.email, request.password, db)
+        print(f"DEBUG: Org found? {org is not None}")
+        if not org:
+            # Optional: Log failed login attempt
+            ActivityService.log(
+                db, 
+                action="LOGIN_FAILED", 
+                entity_type="user", 
+                details={"email": request.email}, 
+                request=req,
+                background_tasks=background_tasks
+            )
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        if not AuthService.check_organisation_active(org, db):
+            raise HTTPException(status_code=403, detail="Account is inactive")
+        
+        roles = AuthService.get_organisation_roles(org.id, db)
+        print('org-roles: ',roles)
+        if not roles:
+            raise HTTPException(status_code=403, detail="No active roles assigned")
+
         ActivityService.log(
-            db, 
-            action="LOGIN_FAILED", 
-            entity_type="user", 
-            details={"email": request.email}, 
-            request=req,
-            background_tasks=background_tasks
+             db,
+             action="LOGIN",
+             entity_type="organisation",
+             entity_id=org.id,
+             request=req,
+             background_tasks=background_tasks
         )
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        # Organisation always has one role context usually, logic similar to single role user
+        # Assuming organisations don't have client mapping logic for now or it's different
+        
+        tokens = AuthService.generate_tokens(org.email, roles[0]["id"])
+        permissions = AuthService.get_role_permissions(roles[0]["id"], db)
+
+        return {
+            **tokens,
+            "user": {
+                "id": org.id,
+                "email": org.email,
+                "first_name": org.first_name,
+                "last_name": org.last_name,
+                "role": roles[0],
+                "is_client": False, # Organisations aren't clients in this context
+                "client_id": None,
+                "client_name": None,
+                "permissions": permissions 
+            }
+        }
     
     if not AuthService.check_user_active(user, db):
         raise HTTPException(status_code=403, detail="Account is inactive")
@@ -90,7 +136,7 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
                 "is_client": user.is_client,
                 "client_id": user.client_id,
                 "client_name": client_name,
-                "permissions": permissions 
+                "permissions": permissions
             }
         }
     
