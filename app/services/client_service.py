@@ -149,21 +149,15 @@ class ClientService:
     def get_clients(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session, current_user: Optional[User] = None) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         
-        # Check if user has admin privileges
-        is_admin = False
-        if current_user:
-            user_roles = [role.name for role in current_user.roles] if hasattr(current_user, 'roles') else []
-            is_admin = current_user.is_superuser or 'ADMIN' in user_roles or 'SUPER_ADMIN' in user_roles
+        query = db.query(Client).filter(Client.deleted_at.is_(None))
         
-        if is_admin or not current_user:
-            # Admin users see all clients
-            query = db.query(Client).filter(Client.deleted_at.is_(None))
-        else:
-            # Non-admin users see only assigned clients
-            query = db.query(Client).join(UserClient, Client.id == UserClient.client_id).filter(
-                UserClient.user_id == current_user.id,
-                Client.deleted_at.is_(None)
-            )
+        # if current_user and not current_user.is_superuser:
+        #     query = query.filter(Client.created_by == current_user.id)
+        if not current_user.is_superuser:
+            if getattr(current_user, 'is_client', False):
+                query = query.filter(Client.created_by == str(current_user.id))
+            else:
+                 query = query.filter(Client.organisation_id == str(current_user.id))
         
         if status_id:
             query = query.join(Client.status_relation).filter(Status.code == status_id)
@@ -184,49 +178,74 @@ class ClientService:
         
         return [ClientService._format_client(c, db, detailed=False) for c in clients], total
 
-    @staticmethod
-    def create_client(client_data: Dict, db: Session, current_user: User):
+    # @staticmethod
+    # def create_client(client_data: Dict, db: Session, current_user: User):
 
+    @staticmethod
+    def create_client(client_data: Dict, db: Session, current_user: Optional[User] = None) -> Dict:
         try:
+            # ---------------- EXTRACT NESTED DATA ----------------
             providers = client_data.pop("providers", []) or []
             locations = client_data.pop("locations", []) or []
             primary_temp_id = client_data.pop("primary_temp_id", None)
-            print("LOCATIONS RECEIVED >>>", locations)
+
+            # ---------------- STATUS ----------------
+            active_status = (
+                db.query(Status)
+                .filter(Status.code == "ACTIVE")
+                .first()
+            )
+
+            # ---------------- CREATED BY / ORG LOGIC ----------------
+            created_by_val = None
+            organisation_id_val = None
+
+            if current_user:
+                if isinstance(current_user, Organisation):
+                    organisation_id_val = str(current_user.id)
+
+                elif isinstance(current_user, User):
+                    if not current_user.is_superuser:
+                        created_by_val = str(current_user.id)
+                        organisation_id_val = (
+                            str(current_user.organisation_id)
+                            if current_user.organisation_id
+                            else None
+                        )
+
+            # ---------------- CLEAN CLIENT PAYLOAD ----------------
+            client_payload = client_data.copy()
+            client_payload.pop("status_id", None)
+            client_payload.pop("created_by", None)
+            client_payload.pop("organisation_id", None)
+            client_payload.pop("user_id", None)
 
             # ---------------- CREATE CLIENT ----------------
             client = Client(
-                business_name=client_data.get("business_name"),
-                npi=client_data.get("npi"),
-                type=client_data.get("type"),
-                address_line_1=client_data.get("address_line_1"),
-                address_line_2=client_data.get("address_line_2"),
-                city=client_data.get("city"),
-                state_code=client_data.get("state_code"),
-                state_name=client_data.get("state_name"),
-                country=client_data.get("country"),
-                zip_code=client_data.get("zip_code"),
-                created_by=current_user.id,
-                status_id=db.query(Status.id).filter(Status.code == "ACTIVE").scalar()
+                status_id=active_status.id if active_status else None,
+                created_by=created_by_val,
+                organisation_id=organisation_id_val,
+                **client_payload
             )
 
             db.add(client)
-            db.flush()  # now client.id exists
+            db.flush()  # client.id available
 
-            # ---------------- TEMP → REAL MAP ----------------
-            temp_to_real = {}
+            # ---------------- TEMP → REAL LOCATION MAP ----------------
+            temp_to_real: Dict[str, int] = {}
 
             # ---------------- PRIMARY LOCATION ----------------
             primary_location = ClientLocation(
                 client_id=client.id,
-                address_line_1=client_data.get("address_line_1"),
-                address_line_2=client_data.get("address_line_2"),
-                city=client_data.get("city"),
-                state_code=client_data.get("state_code"),
-                state_name=client_data.get("state_name"),
-                zip_code=client_data.get("zip_code"),
-                country=client_data.get("country"),
+                address_line_1=client.address_line_1,
+                address_line_2=client.address_line_2,
+                city=client.city,
+                state_code=client.state_code,
+                state_name=client.state_name,
+                zip_code=client.zip_code,
+                country=client.country,
                 is_primary=True,
-                created_by=current_user.id,
+                created_by=created_by_val,
             )
 
             db.add(primary_location)
@@ -237,14 +256,11 @@ class ClientService:
 
             # ---------------- EXTRA LOCATIONS ----------------
             for loc in locations:
-                # skip empty UI rows
                 if not loc.get("address_line_1"):
                     continue
 
                 temp_id = loc.get("temp_id")
-
                 if not temp_id:
-                    print("BROKEN LOCATION OBJECT:", loc)
                     raise ValueError("Location missing temp_id")
 
                 new_loc = ClientLocation(
@@ -257,43 +273,47 @@ class ClientService:
                     zip_code=loc.get("zip_code"),
                     country=loc.get("country"),
                     is_primary=False,
-                    created_by=current_user.id,
+                    created_by=created_by_val,
                 )
 
                 db.add(new_loc)
                 db.flush()
-
                 temp_to_real[temp_id] = new_loc.id
 
-
             # ---------------- PROVIDERS ----------------
-            for p in providers:
-                temp_id = p.get("location_temp_id")
-
+            for provider in providers:
+                temp_id = provider.get("location_temp_id")
                 if not temp_id:
                     raise ValueError("Provider must choose organization location")
 
                 real_location_id = temp_to_real.get(temp_id)
-
                 if not real_location_id:
                     raise ValueError(f"Invalid provider location mapping: {temp_id}")
 
-                provider_clean = {k: v for k, v in p.items() if k != "location_temp_id"}
+                provider_data = {
+                    k: v for k, v in provider.items()
+                    if k != "location_temp_id"
+                }
 
-                db.add(Provider(
-                    client_id=client.id,
-                    location_id=real_location_id,
-                    created_by=current_user.id,
-                    **provider_clean
-                ))
+                db.add(
+                    Provider(
+                        client_id=client.id,
+                        location_id=real_location_id,
+                        created_by=created_by_val,
+                        **provider_data
+                    )
+                )
 
+            # ---------------- COMMIT ----------------
             db.commit()
             db.refresh(client)
+
             return ClientService._format_client(client, db)
 
         except Exception:
             db.rollback()
             raise
+
 
     # @staticmethod
     # def create_client(client_data: Dict, db: Session, current_user: User) -> Dict:
