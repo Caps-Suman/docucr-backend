@@ -10,6 +10,8 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 DB_SCHEMA = os.getenv('DB_SCHEMA', 'docucr')
 
 engine = create_engine(DATABASE_URL)
+print(engine.url)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

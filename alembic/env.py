@@ -4,7 +4,8 @@ from alembic import context
 import os
 import sys
 from dotenv import load_dotenv
-
+from app.models.provider import Provider
+from app.models.client_location import ClientLocation
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 load_dotenv()
