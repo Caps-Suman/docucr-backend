@@ -18,6 +18,11 @@ class AssignClientsRequest(BaseModel):
     client_ids: List[str]
     assigned_by: str
 
+class OrganisationResponse(BaseModel):
+    id: str
+    email: str
+    username: str
+
 class UserCreate(BaseModel):
     email: str
     username: str = Field(..., min_length=3, max_length=50)
@@ -115,11 +120,37 @@ async def get_users(
         page_size=page_size
     )
 
+# @router.get("/me", response_model=UserResponse)
+# async def get_current_user_profile(
+#     current_user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db)
+# ):
+#     return UserService._format_user_response(current_user, db)
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_profile(
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    if isinstance(current_user, Organisation):
+        return {
+            "id": current_user.id,
+            "email": current_user.email,
+            "username": current_user.username,
+            "first_name": current_user.first_name,
+            "middle_name": current_user.middle_name,
+            "last_name": current_user.last_name,
+            "phone_country_code": current_user.phone_country_code,
+            "phone_number": current_user.phone_number,
+            "status_id": current_user.status_id,
+            "statusCode": None,
+            "is_superuser": False,
+            "roles": [],
+            "supervisor_id": None,
+            "client_count": 0,
+            "created_by_name": None,
+            "organisation_name": current_user.username
+        }
+
     return UserService._format_user_response(current_user, db)
 
 @router.get("/stats")
