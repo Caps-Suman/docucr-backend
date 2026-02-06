@@ -58,6 +58,7 @@ class OrganisationService:
 
         new_org = Organisation(
             id=str(uuid.uuid4()),
+            name=org_data['name'], # Added name
             email=org_data['email'],
             username=org_data['username'],
             hashed_password=hashed_pw,
@@ -167,10 +168,11 @@ class OrganisationService:
             "first_name": org.first_name,
             "middle_name": org.middle_name,
             "last_name": org.last_name,
-            "name": f"{org.first_name} {org.middle_name + ' ' if org.middle_name else ''}{org.last_name}",
+            "name": org.name, # Use DB column
             "phone_country_code": org.phone_country_code,
             "phone_number": org.phone_number,
             "status_id": org.status_id,
+
             "statusCode": status_code,
             "created_at": org.created_at.isoformat() if org.created_at else None,
             "updated_at": org.updated_at.isoformat() if org.updated_at else None

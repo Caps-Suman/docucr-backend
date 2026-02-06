@@ -16,6 +16,7 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 # --- Schemas ---
 
 class OrganisationCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100) # Added name field
     email: str
     username: str = Field(..., min_length=3, max_length=50)
     first_name: str = Field(..., min_length=1, max_length=50)
@@ -42,6 +43,7 @@ class OrganisationCreate(BaseModel):
         return v.strip()
 
 class OrganisationUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100) # Added name field
     email: Optional[str] = None
     username: Optional[str] = Field(None, min_length=3, max_length=50)
     first_name: Optional[str] = Field(None, min_length=1, max_length=50)

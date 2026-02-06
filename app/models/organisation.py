@@ -9,6 +9,7 @@ class Organisation(Base):
     __table_args__ = {'schema': 'docucr'}
     
     id = Column(String, primary_key=True, index=True)
+    name = Column(String, nullable=False) # Added name field
     email = Column(String, unique=True, nullable=False, index=True)
     username = Column(String, unique=True, nullable=False, index=True)
     hashed_password = Column(String, nullable=False)
