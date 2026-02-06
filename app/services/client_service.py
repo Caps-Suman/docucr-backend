@@ -8,7 +8,8 @@ from sqlalchemy.dialects.postgresql import insert
 from app.models.client import Client
 from app.models.client_location import ClientLocation
 from app.models.organisation import Organisation
-from app.models.provider import Provider # Added this import based on the context of the instruction
+from app.models.provider import Provider
+from app.models.provider_client_mapping import ProviderClientMapping
 from app.models.user import User
 from app.models.user_client import UserClient
 from app.models.user_role import UserRole
@@ -165,8 +166,8 @@ class ClientService:
         
         # Subquery for provider count
         provider_count = (
-            db.query(func.count(Provider.id))
-            .filter(Provider.client_id == Client.id)
+            db.query(func.count(ProviderClientMapping.id))
+            .filter(ProviderClientMapping.client_id == Client.id)
             .correlate(Client)
             .as_scalar()
         )
@@ -317,17 +318,43 @@ class ClientService:
 
                 provider_data = {
                     k: v for k, v in provider.items()
-                    if k != "location_temp_id"
+                    if k not in ["location_temp_id", "location_id", "created_by"]
                 }
+                
+                # Check directly in payload for npi
+                npi_val = provider_data.get("npi")
+                if not npi_val:
+                     raise ValueError("Provider NPI is required")
 
-                db.add(
-                    Provider(
-                        client_id=client.id,
-                        location_id=real_location_id,
+                # Check if provider exists
+                existing_provider = db.query(Provider).filter(Provider.npi == npi_val).first()
+
+                if existing_provider:
+                     # Link existing provider
+                     mapping = ProviderClientMapping(
+                         provider_id=existing_provider.id,
+                         client_id=client.id,
+                         location_id=real_location_id,
+                         created_by=created_by_val
+                     )
+                     db.add(mapping)
+                else:
+                    # Create new provider
+                    new_prov = Provider(
+                        # location_id removed from Provider
                         created_by=created_by_val,
                         **provider_data
                     )
-                )
+                    db.add(new_prov)
+                    db.flush() # get ID
+                    
+                    mapping = ProviderClientMapping(
+                         provider_id=new_prov.id,
+                         client_id=client.id,
+                         location_id=real_location_id,
+                         created_by=created_by_val
+                     )
+                    db.add(mapping)
 
             # ---------------- COMMIT ----------------
             db.commit()
@@ -626,67 +653,82 @@ class ClientService:
             # -------------------------------------------------
             # 3. PROVIDERS HANDLING
             # -------------------------------------------------
+            # -------------------------------------------------
+            # 3. PROVIDERS HANDLING
+            # -------------------------------------------------
             if providers_data is not None:
-                # Fetch existing providers
-                existing_providers = db.query(Provider).filter(
-                    Provider.client_id == client.id
+                # Fetch existing mappings
+                existing_mappings = db.query(ProviderClientMapping).filter(
+                     ProviderClientMapping.client_id == client.id
                 ).all()
-                existing_prov_map = {str(p.id): p for p in existing_providers}
+                existing_mapped_provider_ids = {str(m.provider_id) for m in existing_mappings}
+                mapping_map = {str(m.provider_id): m for m in existing_mappings}
                 
-                payload_prov_ids = set()
+                payload_provider_ids = set()
 
                 for p_item in providers_data:
-                    # Resolve Location
-                    # Case A: Explicit location_id provided (existing location)
+                    # Resolve Location (same logic as before)
                     location_id = p_item.get("location_id")
-                    
-                    # Case B: temp_id provided (mapped to real ID above)
                     location_temp = p_item.get("location_temp_id")
                     if location_temp:
                         location_id = temp_to_real.get(location_temp)
                         if not location_id:
-                            # Fallback: maybe the temp ID IS the real ID (if editing existing loc without temp mapping)
-                             # Or use primary if mapping fails?
-                             # Let's check if it looks like a UUID
                              try:
                                  uuid.UUID(location_temp)
                                  location_id = location_temp
                              except:
-                                 # Invalid mapping
-                                 # raise ValueError(f"Invalid provider location mapping: {location_temp}") 
-                                 pass # Ignore or fail? Better to fail safely or map to primary?
+                                 pass 
                     
-                    # If still no location_id, default to primary
                     if not location_id:
                          location_id = primary_loc.id
 
-                    # Identify Existing vs New
-                    p_id = p_item.get("id")
+                    # Resolve Provider by NPI
+                    npi_val = p_item.get("npi")
+                    if not npi_val:
+                        pass
+
+                    provider_obj = None
+                    if npi_val:
+                        provider_obj = db.query(Provider).filter(Provider.npi == npi_val).first()
                     
-                    if p_id and str(p_id) in existing_prov_map:
-                         # --- UPDATE EXISTING ---
-                         prov_obj = existing_prov_map[str(p_id)]
-                         prov_obj.location_id = location_id # Update link
-                         
-                         prov_obj.first_name = p_item.get("first_name", prov_obj.first_name)
-                         prov_obj.middle_name = p_item.get("middle_name", prov_obj.middle_name)
-                         prov_obj.last_name = p_item.get("last_name", prov_obj.last_name)
-                         prov_obj.npi = p_item.get("npi", prov_obj.npi)
-                         
-                         prov_obj.address_line_1 = p_item.get("address_line_1", prov_obj.address_line_1)
-                         prov_obj.address_line_2 = p_item.get("address_line_2", prov_obj.address_line_2)
-                         prov_obj.city = p_item.get("city", prov_obj.city)
-                         prov_obj.state_code = p_item.get("state_code", prov_obj.state_code)
-                         prov_obj.state_name = p_item.get("state_name", prov_obj.state_name)
-                         prov_obj.country = p_item.get("country", prov_obj.country)
-                         prov_obj.zip_code = p_item.get("zip_code", prov_obj.zip_code)
-                         
-                         payload_prov_ids.add(str(p_id))
+                    if provider_obj:
+                        # PROVIDER EXISTS GLOBAL
+                        # Update details
+                        # provider_obj.location_id = location_id # REMOVED from Provider
+                        
+                        provider_obj.first_name = p_item.get("first_name", provider_obj.first_name)
+                        provider_obj.middle_name = p_item.get("middle_name", provider_obj.middle_name)
+                        provider_obj.last_name = p_item.get("last_name", provider_obj.last_name)
+                        # npi is unique key, so if we found it by npi, we don't change npi usually.
+                        
+                        provider_obj.address_line_1 = p_item.get("address_line_1", provider_obj.address_line_1)
+                        provider_obj.address_line_2 = p_item.get("address_line_2", provider_obj.address_line_2)
+                        provider_obj.city = p_item.get("city", provider_obj.city)
+                        provider_obj.state_code = p_item.get("state_code", provider_obj.state_code)
+                        provider_obj.state_name = p_item.get("state_name", provider_obj.state_name)
+                        provider_obj.country = p_item.get("country", provider_obj.country)
+                        provider_obj.zip_code = p_item.get("zip_code", provider_obj.zip_code)
+
+                        # Update Mapping (location_id)
+                        if str(provider_obj.id) in mapping_map:
+                             existing_map = mapping_map[str(provider_obj.id)]
+                             existing_map.location_id = location_id
+                        else:
+                             # Create new mapping
+                             new_map = ProviderClientMapping(
+                                 provider_id=provider_obj.id,
+                                 client_id=client.id,
+                                 location_id=location_id,
+                                 created_by=client.created_by
+                             )
+                             db.add(new_map)
+                        
+                        payload_provider_ids.add(str(provider_obj.id))
+
                     else:
-                         # --- CREATE NEW ---
+                         # CREATE NEW PROVIDER
                          new_prov = Provider(
-                             client_id=client.id,
-                             location_id=location_id,
+                             # location_id=location_id, # REMOVED
                              first_name=p_item.get("first_name"),
                              middle_name=p_item.get("middle_name"),
                              last_name=p_item.get("last_name"),
@@ -701,11 +743,24 @@ class ClientService:
                              created_by=client.created_by
                          )
                          db.add(new_prov)
+                         db.flush()
+                         
+                         # Create Mapping
+                         new_map = ProviderClientMapping(
+                                 provider_id=new_prov.id,
+                                 client_id=client.id,
+                                 location_id=location_id,
+                                 created_by=client.created_by
+                             )
+                         db.add(new_map)
+                         payload_provider_ids.add(str(new_prov.id))
+
                 
-                # --- DELETE MISSING ---
-                for eid, eprov in existing_prov_map.items():
-                    if eid not in payload_prov_ids:
-                        db.delete(eprov)
+                # --- REMOVE UNMAPPED ---
+                # Delete mapping, NOT provider
+                for existing_map in existing_mappings:
+                    if str(existing_map.provider_id) not in payload_provider_ids:
+                        db.delete(existing_map)
 
             db.commit()
             db.refresh(client)
@@ -898,8 +953,9 @@ class ClientService:
 
         if db and detailed and client.type == "NPI2":
             provider_rows = (
-                db.query(Provider)
-                .filter(Provider.client_id == client.id)
+                db.query(Provider, ProviderClientMapping)
+                .join(ProviderClientMapping, Provider.id == ProviderClientMapping.provider_id)
+                .filter(ProviderClientMapping.client_id == client.id)
                 .all()
             )
 
@@ -917,10 +973,10 @@ class ClientService:
                     "state_name": p.state_name,
                     "country": p.country,
                     "zip_code": p.zip_code,
-                    "location_id": p.location_id,
+                    "location_id": m.location_id, # Fetch from mapping
                     "created_at": p.created_at,
                 }
-                for p in provider_rows
+                for p, m in provider_rows
             ]
             location_rows = (
                 db.query(ClientLocation)
@@ -998,7 +1054,11 @@ class ClientService:
     ) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         
-        query = db.query(Provider).filter(Provider.client_id == client_id)
+        query = (
+            db.query(Provider)
+            .join(ProviderClientMapping, Provider.id == ProviderClientMapping.provider_id)
+            .filter(ProviderClientMapping.client_id == client_id)
+        )
         
         if search:
             search_term = f"%{search}%"
