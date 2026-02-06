@@ -84,6 +84,8 @@ class UserResponse(BaseModel):
     roles: List[dict]
     supervisor_id: Optional[str]
     client_count: int = 0
+    created_by_name: Optional[str] = None
+    organisation_name: Optional[str] = None
     
     class Config:
         from_attributes = True

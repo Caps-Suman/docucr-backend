@@ -150,7 +150,17 @@ class ClientService:
     def get_clients(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session, current_user: Optional[User] = None) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         
-        query = db.query(Client).filter(Client.deleted_at.is_(None))
+        stmt = db.query(Client).filter(Client.deleted_at.is_(None))
+        
+        # Subquery for provider count
+        provider_count = (
+            db.query(func.count(Provider.id))
+            .filter(Provider.client_id == Client.id)
+            .correlate(Client)
+            .as_scalar()
+        )
+        
+        query = db.query(Client, provider_count).filter(Client.deleted_at.is_(None))
         
         # if current_user and not current_user.is_superuser:
         #     query = query.filter(Client.created_by == current_user.id)
@@ -175,9 +185,12 @@ class ClientService:
             )
         
         total = query.count()
-        clients = query.order_by(Client.created_at.desc()).offset(skip).limit(page_size).all()
+        results = query.order_by(Client.created_at.desc()).offset(skip).limit(page_size).all()
         
-        return [ClientService._format_client(c, db, detailed=False) for c in clients], total
+        return [
+            ClientService._format_client(client, db, detailed=False, provider_count=count) 
+            for client, count in results
+        ], total
 
     # @staticmethod
     # def create_client(client_data: Dict, db: Session, current_user: User):
@@ -729,7 +742,7 @@ class ClientService:
         return ClientService._format_client(client, db, detailed=True)
 
     @staticmethod
-    def _format_client(client: Client, db: Session = None, detailed: bool = True) -> Dict:
+    def _format_client(client: Client, db: Session = None, detailed: bool = True, provider_count: int = 0) -> Dict:
         status_code = None
         if db and client.status_id:
             status = db.query(Status).filter(Status.id == client.status_id).first()
@@ -793,36 +806,78 @@ class ClientService:
         ) if db else False
 
         return {
-            "id": str(client.id),
+            "id": client.id,
             "business_name": client.business_name,
             "first_name": client.first_name,
             "middle_name": client.middle_name,
             "last_name": client.last_name,
             "npi": client.npi,
             "is_user": client.is_user,
+            "provider_count": provider_count,
             "type": client.type,
             "status_id": client.status_id,
             "status_code": status_code,
-            "statusCode": status_code,
             "description": client.description,
-
-            # NPA1 / base address fields
+            "created_at": client.created_at,
+            "updated_at": client.updated_at,
+            
+            # --- ADDRESS FIELDS ---
             "address_line_1": client.address_line_1,
             "address_line_2": client.address_line_2,
             "city": client.city,
             "state_code": client.state_code,
             "state_name": client.state_name,
-            "country": client.country,
             "zip_code": client.zip_code,
-
-            # NPA2 only
+            "country": client.country,
+            
+            # --- NESTED DATA --- 
             "providers": providers,
             "locations": locations,
 
-            "user_count": 0,
-            "assigned_users": [],
-            "created_at": client.created_at,
-            "updated_at": client.updated_at,
+            # --- USER COUNTS (Already existed) ---
+            "user_count": client.user_count if hasattr(client, 'user_count') else 0,
+            "assigned_users": client.assigned_users if hasattr(client, 'assigned_users') else [],
             "has_owner": has_owner,
             "has_any_user": has_owner or has_any_user,
         }
+
+    @staticmethod
+    def get_providers_by_client(
+        client_id: str,
+        page: int,
+        page_size: int,
+        search: Optional[str],
+        db: Session
+    ) -> Tuple[List[Dict], int]:
+        skip = (page - 1) * page_size
+        
+        query = db.query(Provider).filter(Provider.client_id == client_id)
+        
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(
+                or_(
+                    Provider.first_name.ilike(search_term),
+                    Provider.middle_name.ilike(search_term),
+                    Provider.last_name.ilike(search_term),
+                    Provider.npi.ilike(search_term)
+                )
+            )
+            
+        total = query.count()
+        providers = query.order_by(Provider.created_at.desc()).offset(skip).limit(page_size).all()
+        
+        formatted_providers = [
+            {
+                "id": str(p.id),
+                "first_name": p.first_name,
+                "middle_name": p.middle_name,
+                "last_name": p.last_name,
+                "npi": p.npi,
+                "type": "Individual", # Default as per requirement
+                "created_at": p.created_at
+            }
+            for p in providers
+        ]
+        
+        return formatted_providers, total
