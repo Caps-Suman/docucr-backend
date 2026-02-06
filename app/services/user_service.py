@@ -460,16 +460,20 @@ class UserService:
             .exists()
         )
 
-        # -------- CLIENT USER --------
-        if isinstance(current_user, User) and current_user.is_client:
+        # 🔥 SUPERADMIN
+        if isinstance(current_user, User) and current_user.is_superuser:
+            pass
+
+        # 🔥 CLIENT USER
+        elif isinstance(current_user, User) and current_user.is_client:
             query = query.filter(User.created_by == str(current_user.id))
 
-        # -------- ORG LOGIN --------
+        # 🔥 ORG LOGIN
         elif isinstance(current_user, Organisation):
             query = query.filter(User.organisation_id == str(current_user.id))
 
-        # -------- NORMAL ORG USER --------
-        elif isinstance(current_user, User) and not current_user.is_superuser:
+        # 🔥 ORG USER
+        elif isinstance(current_user, User):
             query = query.filter(User.organisation_id == str(current_user.organisation_id))
 
         total = query.count()
@@ -485,6 +489,7 @@ class UserService:
             "active_users": active,
             "inactive_users": inactive
         }
+
 
     # @staticmethod
     # def get_user_stats(db: Session, current_user: User) -> Dict:

@@ -113,31 +113,27 @@ class ClientService:
 
         base_query = db.query(Client).filter(Client.deleted_at.is_(None))
 
-        # ---------- SUPERADMIN ----------
+        # 🔥 SUPERADMIN
         if isinstance(current_user, User) and current_user.is_superuser:
             pass
 
-        # ---------- CLIENT USER ----------
+        # 🔥 CLIENT USER
         elif isinstance(current_user, User) and current_user.is_client:
             base_query = base_query.filter(
                 Client.created_by == str(current_user.id)
             )
 
-        # ---------- ORG LOGIN ----------
+        # 🔥 ORG LOGIN
         elif isinstance(current_user, Organisation):
             base_query = base_query.filter(
                 Client.organisation_id == str(current_user.id)
             )
 
-        # ---------- ORG USER ----------
+        # 🔥 ORG USER
         elif isinstance(current_user, User):
             base_query = base_query.filter(
                 Client.organisation_id == str(current_user.organisation_id)
             )
-
-        # ❌ DO NOT join UserClient for client users
-        # ❌ DO NOT join UserClient for org admin
-        # Only for normal assigned users
 
         total_clients = base_query.count()
 
@@ -159,6 +155,7 @@ class ClientService:
             "active_clients": active_clients,
             "inactive_clients": inactive_clients
         }
+
 
     @staticmethod
     def get_clients(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session, current_user: Optional[User] = None) -> Tuple[List[Dict], int]:

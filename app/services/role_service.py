@@ -35,20 +35,21 @@ class RoleService:
 
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
-
+        
         result = []
         for role in roles:
             users_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
             result.append({
                 "id": role.id,
                 "name": role.name,
+                "created_by":role.created_by,
                 "description": role.description,
                 "status_id": role.status_id,
                 "statusCode": role.status_relation.code if role.status_relation else None,
                 "can_edit": role.can_edit,
                 "users_count": users_count
             })
-
+            print("role_data",result)
         return result, total
 
     @staticmethod
@@ -207,6 +208,7 @@ class RoleService:
         return {
             "id": new_role.id,
             "name": new_role.name,
+            "created_by":new_role.created_by,
             "description": new_role.description,
             "status_id": new_role.status_id,
             "statusCode": status_code,
@@ -282,18 +284,21 @@ class RoleService:
 
         query = db.query(Role).filter(func.upper(Role.name) != "SUPER_ADMIN")
 
-        # -------- CLIENT USER --------
-        if isinstance(current_user, User) and current_user.is_client:
+        # 🔥 SUPERADMIN → see everything
+        if isinstance(current_user, User) and current_user.is_superuser:
+            pass
+
+        # 🔥 CLIENT USER
+        elif isinstance(current_user, User) and current_user.is_client:
             query = query.filter(Role.created_by == str(current_user.id))
 
-        # -------- ORG USER --------
+        # 🔥 ORG LOGIN
         elif isinstance(current_user, Organisation):
             query = query.filter(Role.organisation_id == str(current_user.id))
 
-        elif isinstance(current_user, User) and not current_user.is_superuser:
+        # 🔥 ORG USER
+        elif isinstance(current_user, User):
             query = query.filter(Role.organisation_id == str(current_user.organisation_id))
-
-        # superadmin sees all
 
         total = query.count()
 
@@ -308,7 +313,6 @@ class RoleService:
             "active_roles": active,
             "inactive_roles": total - active
         }
-
 
 
     @staticmethod
