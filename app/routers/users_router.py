@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from app.models.organisation import Organisation
 from app.services.activity_service import ActivityService
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, field_validator
@@ -269,18 +270,25 @@ async def activate_user(
         )
 
     # ---- ROLE CHECK ----
-    role_names = [role.name for role in current_user.roles]
-    is_admin = (
-        current_user.is_superuser or
-        "ADMIN" in role_names or
-        "SUPER_ADMIN" in role_names
-    )
+    # ---- allow org OR admin ----
+    is_org = not isinstance(current_user, User)  # organisation login
+    is_admin = False
 
-    if not is_admin:
-        raise HTTPException(
-            status_code=403,
-            detail="You are not allowed to activate users"
+    is_org = isinstance(current_user, Organisation)
+
+    is_admin = False
+    if isinstance(current_user, User):
+        role_names = [r.name for r in current_user.roles]
+        is_admin = (
+            current_user.is_superuser
+            or "ADMIN" in role_names
+            or "SUPER_ADMIN" in role_names
         )
+
+    if not (is_admin or is_org):
+        raise HTTPException(403, "Not allowed")
+
+
 
     # ---- TARGET USER VALIDATION ----
     target_user = db.query(User).filter(User.id == user_id).first()
@@ -294,7 +302,7 @@ async def activate_user(
         )
 
     # ---- ACTIVATE ----
-    user = UserService.activate_user(user_id, db)
+    user = UserService.activate_user(user_id,db,current_user)
     if not user:
         raise HTTPException(status_code=400, detail="Cannot activate user")
 
@@ -329,18 +337,23 @@ async def deactivate_user(
         )
 
     # ---- ROLE CHECK ----
-    role_names = [role.name for role in current_user.roles]
-    is_admin = (
-        current_user.is_superuser or
-        "ADMIN" in role_names or
-        "SUPER_ADMIN" in role_names
-    )
+    is_org = not isinstance(current_user, User)
+    is_admin = False
 
-    if not is_admin:
+    if isinstance(current_user, User):
+        role_names = [role.name for role in current_user.roles]
+        is_admin = (
+            current_user.is_superuser or
+            "ADMIN" in role_names or
+            "SUPER_ADMIN" in role_names
+        )
+
+    if not (is_admin or is_org):
         raise HTTPException(
             status_code=403,
             detail="You are not allowed to deactivate users"
         )
+
 
     # ---- TARGET USER SAFETY ----
     target_user = db.query(User).filter(User.id == user_id).first()
@@ -354,7 +367,7 @@ async def deactivate_user(
         )
 
     # ---- DEACTIVATE ----
-    user = UserService.deactivate_user(user_id, db)
+    user = UserService.deactivate_user(user_id, db, current_user)
     if not user:
         raise HTTPException(status_code=400, detail="Cannot deactivate user")
 

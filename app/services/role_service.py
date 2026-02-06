@@ -12,6 +12,7 @@ from app.models.role_module import RoleModule
 from app.models.role_submodule import RoleSubmodule
 from app.models.user_role_module import UserRoleModule
 from app.models.status import Status
+from app.services.user_service import UserService
 
 
 def is_superadmin(user):
@@ -318,17 +319,9 @@ class RoleService:
     @staticmethod
     def get_role_stats(db, current_user):
 
-        if isinstance(current_user, Organisation):
-            org_id = str(current_user.id)
-        elif isinstance(current_user, User):
-            if current_user.is_superuser:
-                org_id = None
-            else:
-                org_id = str(current_user.organisation_id)
-        else:
-            org_id = None
+        org_id = UserService.resolve_org_id(current_user)
 
-        query = db.query(Role)
+        query = db.query(Role).filter(func.upper(Role.name) != "SUPER_ADMIN")
 
         if org_id:
             query = query.filter(Role.organisation_id == org_id)
