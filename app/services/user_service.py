@@ -586,7 +586,7 @@ class UserService:
              org = db.query(Organisation).filter(Organisation.id == org_id).first()
              if org:
                  # Organisation doesn't have business_name, using first/last or username
-                 organisation_name = f"{org.first_name or ''} {org.last_name or ''}".strip()
+                 organisation_name = f"{org.name}".strip()
                  if not organisation_name:
                      organisation_name = org.username
 

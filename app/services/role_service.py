@@ -35,21 +35,44 @@ class RoleService:
 
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
-        
+
         result = []
         for role in roles:
+             # Fetch Created By Name
+            created_by_name = None
+            created_by_id = getattr(role, 'created_by', None)
+            if created_by_id:
+                creator = db.query(User).filter(User.id == created_by_id).first()
+                if creator:
+                   created_by_name = f"{creator.first_name or ''} {creator.last_name or ''}".strip()
+                   if not created_by_name:
+                       created_by_name = creator.username
+
+            # Fetch Organisation Name
+            organisation_name = None
+            org_id = getattr(role, 'organisation_id', None)
+            if org_id:
+                 org = db.query(Organisation).filter(Organisation.id == org_id).first()
+                 if org:
+                     # Organisation doesn't have business_name, using first/last or username
+                     organisation_name = f"{org.name}".strip()
+                     if not organisation_name:
+                         organisation_name = org.username
+            
             users_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
             result.append({
                 "id": role.id,
                 "name": role.name,
-                "created_by":role.created_by,
+                # "created_by":role.created_by,
+                "created_by_name": created_by_name,
+                "organisation_name": organisation_name,
                 "description": role.description,
                 "status_id": role.status_id,
                 "statusCode": role.status_relation.code if role.status_relation else None,
                 "can_edit": role.can_edit,
                 "users_count": users_count
             })
-            print("role_data",result)
+            
         return result, total
 
     @staticmethod

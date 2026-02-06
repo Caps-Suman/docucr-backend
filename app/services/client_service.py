@@ -877,6 +877,17 @@ class ClientService:
             status = db.query(Status).filter(Status.id == client.status_id).first()
             status_code = status.code if status else None
 
+         # Fetch Organisation Name
+        organisation_name = None
+        org_id = getattr(client, 'organisation_id', None)
+        if org_id:
+             org = db.query(Organisation).filter(Organisation.id == org_id).first()
+             if org:
+                 # Organisation doesn't have business_name, using first/last or username
+                 organisation_name = f"{org.name}".strip()
+                 if not organisation_name:
+                     organisation_name = org.username
+
          # Get assigned users (excluding SUPER_ADMIN)
         assigned_users = []
         if db:
@@ -961,6 +972,7 @@ class ClientService:
             "description": client.description,
             "created_at": client.created_at,
             "updated_at": client.updated_at,
+            "organisation_name": organisation_name,
             
             # --- ADDRESS FIELDS ---
             "address_line_1": client.address_line_1,

@@ -196,6 +196,7 @@ class ClientResponse(BaseModel):
     statusCode: Optional[str] = None
     status_code: Optional[str] = None
     description: Optional[str]
+    organisation_name: Optional[str] = None
 
     # Address fields (NPA1 only)
     address_line_1: Optional[str]

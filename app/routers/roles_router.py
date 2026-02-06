@@ -71,6 +71,8 @@ class RoleResponse(BaseModel):
     statusCode: Optional[str]
     can_edit: bool
     users_count: int
+    created_by_name: Optional[str] = None
+    organisation_name: Optional[str] = None
 
     class Config:
         from_attributes = True
