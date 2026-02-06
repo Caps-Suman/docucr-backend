@@ -196,137 +196,139 @@ class ClientService:
     # def create_client(client_data: Dict, db: Session, current_user: User):
 
     @staticmethod
-    def create_client(client_data: Dict, db: Session, current_user: Optional[User] = None) -> Dict:
-        try:
-            # ---------------- EXTRACT NESTED DATA ----------------
-            providers = client_data.pop("providers", []) or []
-            locations = client_data.pop("locations", []) or []
-            primary_temp_id = client_data.pop("primary_temp_id", None)
+    def create_client(client_data: Dict, db: Session, current_user=None):
 
-            # ---------------- STATUS ----------------
-            active_status = (
-                db.query(Status)
-                .filter(Status.code == "ACTIVE")
-                .first()
-            )
+        client_type = client_data.get("type")
 
-            # ---------------- CREATED BY / ORG LOGIC ----------------
-            created_by_val = None
-            organisation_id_val = None
-
-            if current_user:
-                if isinstance(current_user, Organisation):
-                    organisation_id_val = str(current_user.id)
-
-                elif isinstance(current_user, User):
-                    if not current_user.is_superuser:
-                        created_by_val = str(current_user.id)
-                        organisation_id_val = (
-                            str(current_user.organisation_id)
-                            if current_user.organisation_id
-                            else None
-                        )
-
-            # ---------------- CLEAN CLIENT PAYLOAD ----------------
-            client_payload = client_data.copy()
-            client_payload.pop("status_id", None)
-            client_payload.pop("created_by", None)
-            client_payload.pop("organisation_id", None)
-            client_payload.pop("user_id", None)
-
-            # ---------------- CREATE CLIENT ----------------
-            client = Client(
-                status_id=active_status.id if active_status else None,
-                created_by=created_by_val,
-                organisation_id=organisation_id_val,
-                **client_payload
-            )
-
+        # --------------------------------------------------
+        # 🟢 INDIVIDUAL CLIENT (NPI1)
+        # --------------------------------------------------
+        if client_type == "NPI1":
+            client = Client(**client_data)
             db.add(client)
-            db.flush()  # client.id available
+            db.flush()
 
-            # ---------------- TEMP → REAL LOCATION MAP ----------------
-            temp_to_real: Dict[str, int] = {}
+            # create single primary location
+            primary_loc = ClientLocation(
+                client_id=client.id,
+                address_line_1=client.address_line_1,
+                address_line_2=client.address_line_2,
+                city=client.city,
+                state_code=client.state_code,
+                state_name=client.state_name,
+                zip_code=client.zip_code,
+                country=client.country,
+                is_primary=True,
+            )
+            db.add(primary_loc)
 
-            # ---------------- PRIMARY LOCATION ----------------
-            # primary_location = ClientLocation(
-            #     client_id=client.id,
-            #     address_line_1=client.address_line_1,
-            #     address_line_2=client.address_line_2,
-            #     city=client.city,
-            #     state_code=client.state_code,
-            #     state_name=client.state_name,
-            #     zip_code=client.zip_code,
-            #     country=client.country,
-            #     is_primary=True,
-            #     created_by=created_by_val,
-            # )
+            db.commit()
+            db.refresh(client)
+            return ClientService._format_client(client, db)
 
-            # db.add(primary_location)
-            # db.flush()
+        # --------------------------------------------------
+        # 🔵 ORG CLIENT (NPI2)
+        # --------------------------------------------------
+        providers = client_data.get("providers") or []
+        locations = client_data.get("locations") or []
+        primary_temp_id = client_data.get("primary_temp_id")
 
-            # if primary_temp_id:
-            #     temp_to_real[primary_temp_id] = primary_location.id
+        if not primary_temp_id:
+            raise ValueError("primary_temp_id is required for org")
 
-            # ---------------- EXTRA LOCATIONS ----------------
-            for loc in locations:
-                if not loc.get("address_line_1"):
-                    continue
+        client_data.pop("providers", None)
+        client_data.pop("locations", None)
+        client_data.pop("primary_temp_id", None)
 
-                temp_id = loc.get("temp_id")
-                if not temp_id:
-                    raise ValueError("Location missing temp_id")
+        client = Client(**client_data)
+        db.add(client)
+        db.flush()
 
-                new_loc = ClientLocation(
-                    client_id=client.id,
-                    address_line_1=loc.get("address_line_1"),
-                    address_line_2=loc.get("address_line_2"),
-                    city=loc.get("city"),
-                    state_code=loc.get("state_code"),
-                    state_name=loc.get("state_name"),
-                    zip_code=loc.get("zip_code"),
-                    country=loc.get("country"),
-                    is_primary=loc.get("is_primary"),
-                    created_by=created_by_val,
+        temp_to_real = {}
+
+        # PRIMARY
+        primary_loc_payload = next(
+            (l for l in locations if l.get("temp_id") == primary_temp_id),
+            None
+        )
+
+        if not primary_loc_payload:
+            raise ValueError("Primary location not found")
+
+        primary_loc = ClientLocation(
+            client_id=client.id,
+            is_primary=True,
+            **primary_loc_payload
+        )
+        db.add(primary_loc)
+        db.flush()
+
+        temp_to_real[primary_temp_id] = primary_loc.id
+
+        # EXTRAS
+        for loc in locations:
+            if loc.get("temp_id") == primary_temp_id:
+                continue
+
+            if not loc.get("temp_id"):
+                raise ValueError("Location missing temp_id")
+
+            new_loc = ClientLocation(
+                client_id=client.id,
+                is_primary=False,
+                **loc
+            )
+            db.add(new_loc)
+            db.flush()
+
+            temp_to_real[loc["temp_id"]] = new_loc.id
+
+        # PROVIDERS
+        for p in providers:
+            temp_id = p.get("location_temp_id")
+            if temp_id not in temp_to_real:
+                raise ValueError("Invalid provider location mapping")
+
+            real_location_id = temp_to_real[temp_id]
+
+            provider_obj = db.query(Provider).filter(
+                Provider.npi == p["npi"]
+            ).first()
+
+            if not provider_obj:
+                provider_obj = Provider(
+                    npi=p["npi"],
+                    first_name=p.get("first_name"),
+                    middle_name=p.get("middle_name"),
+                    last_name=p.get("last_name"),
+                    address_line_1=p.get("address_line_1"),
+                    address_line_2=p.get("address_line_2"),
+                    city=p.get("city"),
+                    state_code=p.get("state_code"),
+                    state_name=p.get("state_name"),
+                    country=p.get("country"),
+                    zip_code=p.get("zip_code"),
                 )
-
-                db.add(new_loc)
+                db.add(provider_obj)
                 db.flush()
-                temp_to_real[temp_id] = new_loc.id
 
-            # ---------------- PROVIDERS ----------------
-            for provider in providers:
-                temp_id = provider.get("location_temp_id")
-                if not temp_id:
-                    raise ValueError("Provider must choose organization location")
+            exists_map = db.query(ProviderClientMap).filter(
+                ProviderClientMap.provider_id == provider_obj.id,
+                ProviderClientMap.client_id == client.id
+            ).first()
 
-                real_location_id = temp_to_real.get(temp_id)
-                if not real_location_id:
-                    raise ValueError(f"Invalid provider location mapping: {temp_id}")
-
-                provider_data = {
-                    k: v for k, v in provider.items()
-                    if k != "location_temp_id"
-                }
-
+            if not exists_map:
                 db.add(
-                    Provider(
+                    ProviderClientMap(
+                        provider_id=provider_obj.id,
                         client_id=client.id,
-                        location_id=real_location_id,
-                        created_by=created_by_val,
-                        **provider_data
+                        location_id=real_location_id
                     )
                 )
 
-            # ---------------- COMMIT ----------------
-            db.commit()
-            db.refresh(client)
-
-            return ClientService._format_client(client, db)
-
-        except Exception:
-            db.rollback()
-            raise
+        db.commit()
+        db.refresh(client)
+        return ClientService._format_client(client, db)
 
       
 
