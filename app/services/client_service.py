@@ -8,8 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.models.client import Client
 from app.models.client_location import ClientLocation
 from app.models.organisation import Organisation
-from app.models.provider import Provider
-from app.models.provider_client_map import ProviderClientMap
+from app.models.provider import Provider # Added this import based on the context of the instruction
 from app.models.user import User
 from app.models.user_client import UserClient
 from app.models.user_role import UserRole
@@ -184,115 +183,132 @@ class ClientService:
     # def create_client(client_data: Dict, db: Session, current_user: User):
 
     @staticmethod
-    def create_client(client_data: Dict, db: Session, current_user=None):
-
-        providers = client_data.get("providers") or []
-        locations = client_data.get("locations") or []
-        primary_temp_id = client_data.get("primary_temp_id")
-
-        if not primary_temp_id:
-            raise ValueError("primary_temp_id is required")
-
-        if not locations:
-            raise ValueError("At least one location is required")
-
-        # remove nested fields
-        client_data.pop("providers", None)
-        client_data.pop("locations", None)
-        client_data.pop("primary_temp_id", None)
-
+    def create_client(client_data: Dict, db: Session, current_user: Optional[User] = None) -> Dict:
         try:
-            # -------------------------------------------------
-            # CREATE CLIENT
-            # -------------------------------------------------
-            client = Client(**client_data)
+            # ---------------- EXTRACT NESTED DATA ----------------
+            providers = client_data.pop("providers", []) or []
+            locations = client_data.pop("locations", []) or []
+            primary_temp_id = client_data.pop("primary_temp_id", None)
+
+            # ---------------- STATUS ----------------
+            active_status = (
+                db.query(Status)
+                .filter(Status.code == "ACTIVE")
+                .first()
+            )
+
+            # ---------------- CREATED BY / ORG LOGIC ----------------
+            created_by_val = None
+            organisation_id_val = None
+
+            if current_user:
+                if isinstance(current_user, Organisation):
+                    organisation_id_val = str(current_user.id)
+
+                elif isinstance(current_user, User):
+                    if not current_user.is_superuser:
+                        created_by_val = str(current_user.id)
+                        organisation_id_val = (
+                            str(current_user.organisation_id)
+                            if current_user.organisation_id
+                            else None
+                        )
+
+            # ---------------- CLEAN CLIENT PAYLOAD ----------------
+            client_payload = client_data.copy()
+            client_payload.pop("status_id", None)
+            client_payload.pop("created_by", None)
+            client_payload.pop("organisation_id", None)
+            client_payload.pop("user_id", None)
+
+            # ---------------- CREATE CLIENT ----------------
+            client = Client(
+                status_id=active_status.id if active_status else None,
+                created_by=created_by_val,
+                organisation_id=organisation_id_val,
+                **client_payload
+            )
+
             db.add(client)
-            db.flush()
+            db.flush()  # client.id available
 
-            # -------------------------------------------------
-            # CREATE LOCATIONS
-            # -------------------------------------------------
-            temp_to_real: Dict[str, str] = {}
+            # ---------------- TEMP → REAL LOCATION MAP ----------------
+            temp_to_real: Dict[str, int] = {}
 
-            primary_payload = next(
-                (l for l in locations if l.get("temp_id") == primary_temp_id),
-                None
-            )
+            # ---------------- PRIMARY LOCATION ----------------
+            # primary_location = ClientLocation(
+            #     client_id=client.id,
+            #     address_line_1=client.address_line_1,
+            #     address_line_2=client.address_line_2,
+            #     city=client.city,
+            #     state_code=client.state_code,
+            #     state_name=client.state_name,
+            #     zip_code=client.zip_code,
+            #     country=client.country,
+            #     is_primary=True,
+            #     created_by=created_by_val,
+            # )
 
-            if not primary_payload:
-                raise ValueError("Primary location not found")
+            # db.add(primary_location)
+            # db.flush()
 
-            primary_loc = ClientLocation(
-                client_id=client.id,
-                is_primary=True,
-                **primary_payload
-            )
-            db.add(primary_loc)
-            db.flush()
-            temp_to_real[primary_temp_id] = primary_loc.id
+            # if primary_temp_id:
+            #     temp_to_real[primary_temp_id] = primary_location.id
 
+            # ---------------- EXTRA LOCATIONS ----------------
             for loc in locations:
-                if loc.get("temp_id") == primary_temp_id:
+                if not loc.get("address_line_1"):
                     continue
+
+                temp_id = loc.get("temp_id")
+                if not temp_id:
+                    raise ValueError("Location missing temp_id")
 
                 new_loc = ClientLocation(
                     client_id=client.id,
-                    is_primary=False,
-                    **loc
+                    address_line_1=loc.get("address_line_1"),
+                    address_line_2=loc.get("address_line_2"),
+                    city=loc.get("city"),
+                    state_code=loc.get("state_code"),
+                    state_name=loc.get("state_name"),
+                    zip_code=loc.get("zip_code"),
+                    country=loc.get("country"),
+                    is_primary=loc.get("is_primary"),
+                    created_by=created_by_val,
                 )
+
                 db.add(new_loc)
                 db.flush()
-                temp_to_real[loc["temp_id"]] = new_loc.id
+                temp_to_real[temp_id] = new_loc.id
 
-            # -------------------------------------------------
-            # PROVIDERS + MAP
-            # -------------------------------------------------
-            for p in providers:
-                temp_id = p.get("location_temp_id")
+            # ---------------- PROVIDERS ----------------
+            for provider in providers:
+                temp_id = provider.get("location_temp_id")
+                if not temp_id:
+                    raise ValueError("Provider must choose organization location")
 
-                if temp_id not in temp_to_real:
+                real_location_id = temp_to_real.get(temp_id)
+                if not real_location_id:
                     raise ValueError(f"Invalid provider location mapping: {temp_id}")
 
-                location_id = temp_to_real[temp_id]
+                provider_data = {
+                    k: v for k, v in provider.items()
+                    if k != "location_temp_id"
+                }
 
-                provider = db.query(Provider).filter(
-                    Provider.npi == p["npi"]
-                ).first()
-
-                if not provider:
-                    provider = Provider(
-                        npi=p["npi"],
-                        first_name=p.get("first_name"),
-                        middle_name=p.get("middle_name"),
-                        last_name=p.get("last_name"),
-                        address_line_1=p.get("address_line_1"),
-                        address_line_2=p.get("address_line_2"),
-                        city=p.get("city"),
-                        state_code=p.get("state_code"),
-                        state_name=p.get("state_name"),
-                        country=p.get("country"),
-                        zip_code=p.get("zip_code"),
+                db.add(
+                    Provider(
+                        client_id=client.id,
+                        location_id=real_location_id,
+                        created_by=created_by_val,
+                        **provider_data
                     )
-                    db.add(provider)
-                    db.flush()
+                )
 
-                # enforce unique provider-client mapping
-                exists = db.query(ProviderClientMap).filter(
-                    ProviderClientMap.provider_id == provider.id,
-                    ProviderClientMap.client_id == client.id
-                ).first()
-
-                if not exists:
-                    db.add(
-                        ProviderClientMap(
-                            provider_id=provider.id,
-                            client_id=client.id,
-                            location_id=location_id
-                        )
-                    )
-
+            # ---------------- COMMIT ----------------
             db.commit()
             db.refresh(client)
+
             return ClientService._format_client(client, db)
 
         except Exception:
@@ -734,9 +750,8 @@ class ClientService:
 
         if db and detailed and client.type == "NPI2":
             provider_rows = (
-                db.query(Provider, ProviderClientMap.location_id)
-                .join(ProviderClientMap, Provider.id == ProviderClientMap.provider_id)
-                .filter(ProviderClientMap.client_id == client.id)
+                db.query(Provider)
+                .filter(Provider.client_id == client.id)
                 .all()
             )
 
@@ -754,9 +769,10 @@ class ClientService:
                     "state_name": p.state_name,
                     "country": p.country,
                     "zip_code": p.zip_code,
-                    "location_id": loc_id,
+                    "location_id": p.location_id,
+                    "created_at": p.created_at,
                 }
-                for p, loc_id in provider_rows
+                for p in provider_rows
             ]
             location_rows = (
                 db.query(ClientLocation)
