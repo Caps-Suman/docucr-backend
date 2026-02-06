@@ -30,11 +30,13 @@ async def npi_lookup(npi: str):
         raise HTTPException(status_code=500, detail=f"Failed to fetch NPI details: {str(e)}")
 
 class ProviderCreate(BaseModel):
+    id: Optional[UUID] = None  # Added for updates
     first_name: str
     middle_name: Optional[str] = None
     last_name: str
     npi: str
     location_temp_id: str | None = None
+    location_id: Optional[UUID] = None # Added for updates
 
     address_line_1: Optional[str] = None
     address_line_2: Optional[str] = None
@@ -45,6 +47,7 @@ class ProviderCreate(BaseModel):
     zip_code: Optional[str] = None
 
 class ClientLocationCreate(BaseModel):
+    id: Optional[UUID] = None # Added for updates
     address_line_1: str
     address_line_2: Optional[str] = None
     city: str
@@ -65,6 +68,7 @@ class ClientCreate(BaseModel):
     type: Optional[str] = None
     providers: Optional[List[ProviderCreate]] = []
     locations: Optional[List[ClientLocationCreate]] = None
+    primary_temp_id: Optional[str] = None
     status_id: Optional[str] = None
     description: Optional[str] = None
 
@@ -110,6 +114,11 @@ class ClientUpdate(BaseModel):
     type: Optional[str] = None
     status_id: Optional[str] = None
     description: Optional[str] = None
+    
+    # NESTED UPDATE FIELDS
+    locations: Optional[List[ClientLocationCreate]] = None
+    providers: Optional[List[ProviderCreate]] = None
+    primary_temp_id: Optional[str] = None
 
     # NEW ADDRESS FIELDS
     address_line_1: Optional[str] = Field(None, max_length=250)
