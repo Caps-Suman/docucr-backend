@@ -557,8 +557,6 @@ class ClientService:
             # If locations_data is None, we DO NOT touch secondary locations (PATCH behavior).
             # If locations_data is [], we DELETE all secondary locations.
             if locations_data is not None:
-                print(f"DEBUG: Processing locations_data: {len(locations_data)} items")
-                print(f"DEBUG: primary_temp_id: {primary_temp_id}")
                 
                 # Get existing secondary locations
                 existing_locs = db.query(ClientLocation).filter(
@@ -572,7 +570,6 @@ class ClientService:
                 for loc_item in locations_data:
                     # Skip primary if it accidentally got into this array
                     if loc_item.get("is_primary"): 
-                        print("DEBUG: Skipping primary location item")
                         continue
                         
                     # Identify if it's an existing location (has ID) or new (no ID / temp_id)
@@ -580,7 +577,6 @@ class ClientService:
                     
                     if loc_id and str(loc_id) in existing_loc_map:
                         # --- UPDATE EXISTING ---
-                        print(f"DEBUG: Updating existing location {loc_id}")
                         loc_obj = existing_loc_map[str(loc_id)]
                         for k, v in loc_item.items():
                             if k in ["id", "temp_id", "is_primary"]: continue
@@ -594,10 +590,8 @@ class ClientService:
                             
                     elif loc_item.get("temp_id") and loc_item.get("temp_id") != primary_temp_id:
                          # --- CREATE NEW ---
-                         print(f"DEBUG: Creating new location. TempID: {loc_item.get('temp_id')}")
                          # Ensure valid address
                          if not loc_item.get("address_line_1"): 
-                             print("DEBUG: Skipping new location due to missing address_line_1")
                              continue
 
                          new_loc = ClientLocation(
@@ -614,7 +608,6 @@ class ClientService:
                          )
                          db.add(new_loc)
                          db.flush() # Get ID
-                         print(f"DEBUG: Created new location {new_loc.id}")
                          
                          temp_to_real[loc_item["temp_id"]] = str(new_loc.id)
                          # Note: we don't add to payload_loc_ids because it wasn't in existing map
