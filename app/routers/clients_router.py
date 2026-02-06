@@ -149,10 +149,17 @@ class ProviderResponse(BaseModel):
     middle_name: Optional[str]
     last_name: str
     npi: Optional[str]
+    type: Optional[str] = "Individual" # Added type field
     created_at: Optional[datetime]
 
     class Config:
         from_attributes = True
+
+class ProviderListResponse(BaseModel):
+    providers: List[ProviderResponse]
+    total: int
+    page: int
+    page_size: int
 class ClientLocationResponse(BaseModel):
     id: UUID
     address_line_1: str
@@ -194,7 +201,10 @@ class ClientResponse(BaseModel):
     providers: List[ProviderResponse] = []
     locations: List[ClientLocationResponse] = []
 
+    locations: List[ClientLocationResponse] = []
+
     user_count: int = 0
+    provider_count: int = 0
     assigned_users: List[str] = []
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
@@ -408,6 +418,30 @@ def add_providers(
 
     db.commit()
     return {"success": True}
+
+@router.get("/{client_id}/providers", response_model=ProviderListResponse)
+def get_client_providers(
+    client_id: str,
+    page: int = 1,
+    page_size: int = 10,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user) # Ensure security
+):
+    providers, total = ClientService.get_providers_by_client(
+        client_id=client_id,
+        page=page,
+        page_size=page_size,
+        search=search,
+        db=db
+    )
+    
+    return ProviderListResponse(
+        providers=[ProviderResponse(**p) for p in providers],
+        total=total,
+        page=page,
+        page_size=page_size
+    )
 
 @router.get("/{client_id}", response_model=dict)
 def get_client_by_id(

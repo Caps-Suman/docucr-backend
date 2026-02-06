@@ -527,6 +527,25 @@ class UserService:
         )
 
 
+        # Fetch Created By Name
+        created_by_name = None
+        if user.created_by:
+            creator = db.query(User).filter(User.id == user.created_by).first()
+            if creator:
+               created_by_name = f"{creator.first_name or ''} {creator.last_name or ''}".strip()
+               if not created_by_name:
+                   created_by_name = creator.username
+
+        # Fetch Organisation Name
+        organisation_name = None
+        if user.organisation_id:
+             org = db.query(Organisation).filter(Organisation.id == user.organisation_id).first()
+             if org:
+                 # Organisation doesn't have business_name, using first/last or username
+                 organisation_name = f"{org.first_name or ''} {org.last_name or ''}".strip()
+                 if not organisation_name:
+                     organisation_name = org.username
+
         return {
             "id": user.id,
             "email": user.email,
@@ -542,7 +561,9 @@ class UserService:
             "roles": roles,
             "supervisor_id": supervisor_id,
             "assigned_client_count": client_count,
-            "client_count": client_count
+            "client_count": client_count,
+            "created_by_name": created_by_name,
+            "organisation_name": organisation_name
         }
 
     @staticmethod
