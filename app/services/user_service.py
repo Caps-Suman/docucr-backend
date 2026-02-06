@@ -43,24 +43,12 @@ class UserService:
             )
 
         return query.filter(User.id == current_user.id)
-    @staticmethod
-    def get_org_id(current_user):
-        if isinstance(current_user, Organisation):
-            return str(current_user.id)
-
-        if isinstance(current_user, User):
-            if current_user.is_superuser:
-                return None
-            return str(current_user.organisation_id)
-
-        return None
 
     @staticmethod
     def _get_role_names(user: User) -> List[str]:
         return [role.name for role in user.roles]
     @staticmethod
-    def get_users_by_role(role_id: str, db: Session, current_user):
-
+    def get_users_by_role(role_id: str, db: Session, current_user: User) -> List[Dict]:
         query = (
             db.query(User)
             .join(UserRole, UserRole.user_id == User.id)
@@ -76,41 +64,19 @@ class UserService:
             )
         )
 
-        # ---- resolve org ----
-        if isinstance(current_user, Organisation):
-            org_id = str(current_user.id)
-        elif isinstance(current_user, User):
-            org_id = str(current_user.organisation_id)
-        else:
-            org_id = None
-
-        if org_id:
-            query = query.filter(User.organisation_id == org_id)
-
-        # ---- supervisor restriction ----
-        if isinstance(current_user, User) and not current_user.is_superuser:
+        # Visibility rules
+        if not UserService._is_admin(current_user):
             if current_user.is_supervisor:
                 subordinate_ids = (
                     db.query(UserSupervisor.user_id)
                     .filter(UserSupervisor.supervisor_id == current_user.id)
                 )
                 query = query.filter(User.id.in_(subordinate_ids))
-            elif not current_user.is_superuser:
-                query = query.filter(User.id == current_user.id)
+            else:
+                query = query.filter(False)
 
         users = query.all()
-
-        # 🔴 IMPORTANT: return FULL formatted users
         return [UserService._format_user_response(u, db) for u in users]
-
-    @staticmethod
-    def resolve_org_id(current_user):
-        if isinstance(current_user, Organisation):
-            return str(current_user.id)
-        if isinstance(current_user, User):
-            return str(current_user.organisation_id) if current_user.organisation_id else None
-        return None
-
 
     @staticmethod
     def _is_admin(user: User) -> bool:
@@ -141,10 +107,10 @@ class UserService:
         #     query = query.filter(User.created_by == current_user.id)
 
         if not current_user.is_superuser:
-            org_id = UserService.resolve_org_id(current_user)
-            if org_id:
-                query = query.filter(User.organisation_id == org_id)
-
+            if getattr(current_user, 'is_client', False):
+                query = query.filter(User.created_by == str(current_user.id))
+            else:
+                 query = query.filter(User.organisation_id == str(current_user.id))
 
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
@@ -392,53 +358,97 @@ class UserService:
         return UserService._format_user_response(user, db)
     
     @staticmethod
-    def activate_user(user_id: str, db: Session, current_user):
+    def activate_user(user_id: str, db: Session) -> Optional[Dict]:
         user = db.query(User).filter(User.id == user_id).first()
-        if not user:
+        if not user or user.is_superuser:
             return None
+        
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
+        if active_status:
+            user.status_id = active_status.id
 
-        org_id = UserService.get_org_id(current_user)
-        if org_id and str(user.organisation_id) != org_id:
-            raise ValueError("You cannot modify users from another organisation")
-
-        if user.is_superuser:
-            raise ValueError("Cannot activate superuser")
-
-        active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
-        user.status_id = active_status.id
-
-        db.commit()
-        db.refresh(user)
+            if user.is_client:
+                # Fetch client linked to this user
+                client = db.query(Client).filter(Client.created_by == user.id).first()
+                if client:
+                    client.status_id = active_status.id
+                    
+            db.commit()
+            db.refresh(user)
         return UserService._format_user_response(user, db)
 
     @staticmethod
-    def deactivate_user(user_id: str, db: Session, current_user):
+    def deactivate_user(user_id: str, db: Session) -> Optional[Dict]:
         user = db.query(User).filter(User.id == user_id).first()
-        if not user:
+        if not user or user.is_superuser:
             return None
-
-        # ---- org restriction ----
-        org_id = UserService.get_org_id(current_user)
-        if org_id and str(user.organisation_id) != org_id:
-            raise ValueError("You cannot modify users from another organisation")
-
-        if user.is_superuser:
-            raise ValueError("Cannot deactivate superuser")
-
-        inactive_status = db.query(Status).filter(Status.code == "INACTIVE").first()
-        if not inactive_status:
-            raise ValueError("Inactive status not found")
-
-        user.status_id = inactive_status.id
-        db.commit()
-        db.refresh(user)
-
+        
+        inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
+        if inactive_status:
+            user.status_id = inactive_status.id
+            
+            if user.is_client:
+                # Fetch client linked to this user
+                client = db.query(Client).filter(Client.created_by == user.id).first()
+                if client:
+                    client.status_id = inactive_status.id
+            
+            db.commit()
+            db.refresh(user)
         return UserService._format_user_response(user, db)
+    # @staticmethod
+    # def get_user_stats(db: Session, current_user: User) -> Dict:
+    #     role_names = [role.name for role in current_user.roles]
+
+    #     base_query = db.query(User).filter(
+    #         ~db.query(UserRole)
+    #         .join(Role)
+    #         .filter(
+    #             UserRole.user_id == User.id,
+    #             Role.name == "SUPER_ADMIN"
+    #         )
+    #         .exists()
+    #     )
+
+    #     # ---- VISIBILITY ----
+    #     if current_user.is_superuser or "ADMIN" in role_names or "SUPER_ADMIN" in role_names:
+    #         pass
+    #     elif current_user.is_supervisor:
+    #         subordinate_ids = (
+    #             db.query(UserSupervisor.user_id)
+    #             .filter(UserSupervisor.supervisor_id == current_user.id)
+    #         )
+    #         base_query = base_query.filter(
+    #             (User.id == current_user.id) |
+    #             (User.id.in_(subordinate_ids))
+    #         )
+    #     else:
+    #         base_query = base_query.filter(User.id == current_user.id)
+
+    #     total_users = base_query.count()
+
+    #     active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+    #     inactive_status = db.query(Status).filter(Status.code == "INACTIVE").first()
+
+    #     active_users = (
+    #         base_query.filter(User.status_id == active_status.id).count()
+    #         if active_status else 0
+    #     )
+
+    #     inactive_users = (
+    #         base_query.filter(User.status_id == inactive_status.id).count()
+    #         if inactive_status else 0
+    #     )
+
+    #     return {
+    #         "total_users": total_users,
+    #         "active_users": active_users,
+    #         "inactive_users": inactive_users,
+    #         "admin_users": base_query.filter(User.is_superuser == True).count()
+    #     }
 
     @staticmethod
     def get_user_stats(db: Session, current_user) -> Dict:
-
-        org_id = UserService.resolve_org_id(current_user)
 
         query = db.query(User).filter(
             ~db.query(UserRole)
@@ -450,8 +460,17 @@ class UserService:
             .exists()
         )
 
-        if org_id:
-            query = query.filter(User.organisation_id == org_id)
+        # -------- CLIENT USER --------
+        if isinstance(current_user, User) and current_user.is_client:
+            query = query.filter(User.created_by == str(current_user.id))
+
+        # -------- ORG LOGIN --------
+        elif isinstance(current_user, Organisation):
+            query = query.filter(User.organisation_id == str(current_user.id))
+
+        # -------- NORMAL ORG USER --------
+        elif isinstance(current_user, User) and not current_user.is_superuser:
+            query = query.filter(User.organisation_id == str(current_user.organisation_id))
 
         total = query.count()
 
@@ -466,8 +485,6 @@ class UserService:
             "active_users": active,
             "inactive_users": inactive
         }
-
-
 
     # @staticmethod
     # def get_user_stats(db: Session, current_user: User) -> Dict:
@@ -633,6 +650,13 @@ class UserService:
         ))
 
         db.commit()
+    @staticmethod
+    def resolve_org_id(current_user):
+        if isinstance(current_user, Organisation):
+            return str(current_user.id)
+        if isinstance(current_user, User):
+            return str(current_user.organisation_id) if current_user.organisation_id else None
+        return None
 
 
     @staticmethod

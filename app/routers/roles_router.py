@@ -213,8 +213,22 @@ async def update_role(
     permission: bool = Depends(Permission("role_module", "UPDATE")),
     current_user: User = Depends(get_current_user)
 ):
-    if role.name and RoleService.check_role_name_exists(role.name, role_id, db, current_user):
-        raise HTTPException(status_code=400, detail="Role with this name already exists")
+    existing_role = RoleService.get_role_by_id(role_id, db)
+    if not existing_role:
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    role_data = role.model_dump(exclude_unset=True)
+
+    # ONLY run duplicate check if name is being updated AND changed
+    if "name" in role_data and role_data["name"]:
+        new_name = role_data["name"].upper()
+
+        if new_name != existing_role["name"]:
+            if RoleService.check_role_name_exists(new_name, role_id, db):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Role with this name already exists"
+                )
     
     role_data = role.model_dump(exclude_unset=True)
     

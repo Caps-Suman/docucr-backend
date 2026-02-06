@@ -109,36 +109,50 @@ class ClientService:
         db.commit()
  
     @staticmethod
-    def get_client_stats(db: Session, current_user: User) -> Dict:
-        # Detect admin
-        user_roles = [role.name for role in current_user.roles]
-        is_admin = (
-            current_user.is_superuser or
-            'ADMIN' in user_roles or
-            'SUPER_ADMIN' in user_roles
-        )
+    def get_client_stats(db: Session, current_user) -> Dict:
 
         base_query = db.query(Client).filter(Client.deleted_at.is_(None))
 
-        if not is_admin:
-            base_query = base_query.join(
-                UserClient, Client.id == UserClient.client_id
-            ).filter(
-                UserClient.user_id == current_user.id
+        # ---------- SUPERADMIN ----------
+        if isinstance(current_user, User) and current_user.is_superuser:
+            pass
+
+        # ---------- CLIENT USER ----------
+        elif isinstance(current_user, User) and current_user.is_client:
+            base_query = base_query.filter(
+                Client.created_by == str(current_user.id)
             )
+
+        # ---------- ORG LOGIN ----------
+        elif isinstance(current_user, Organisation):
+            base_query = base_query.filter(
+                Client.organisation_id == str(current_user.id)
+            )
+
+        # ---------- ORG USER ----------
+        elif isinstance(current_user, User):
+            base_query = base_query.filter(
+                Client.organisation_id == str(current_user.organisation_id)
+            )
+
+        # ❌ DO NOT join UserClient for client users
+        # ❌ DO NOT join UserClient for org admin
+        # Only for normal assigned users
 
         total_clients = base_query.count()
 
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
+        active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+        inactive_status = db.query(Status).filter(Status.code == "INACTIVE").first()
 
-        active_clients = base_query.filter(
-            Client.status_id == active_status.id
-        ).count() if active_status else 0
+        active_clients = (
+            base_query.filter(Client.status_id == active_status.id).count()
+            if active_status else 0
+        )
 
-        inactive_clients = base_query.filter(
-            Client.status_id == inactive_status.id
-        ).count() if inactive_status else 0
+        inactive_clients = (
+            base_query.filter(Client.status_id == inactive_status.id).count()
+            if inactive_status else 0
+        )
 
         return {
             "total_clients": total_clients,
