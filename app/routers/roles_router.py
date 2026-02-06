@@ -130,9 +130,10 @@ async def get_roles(
 @router.get("/stats")
 async def get_role_stats(
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     permission: bool = Depends(Permission("role_module", "READ"))
 ):
-    return RoleService.get_role_stats(db)
+    return RoleService.get_role_stats(db,current_user)
 
 @router.get("/{role_id}", response_model=RoleResponse)
 async def get_role(
@@ -181,12 +182,13 @@ async def create_role(
     permission: bool = Depends(Permission("role_module", "CREATE")),
     current_user: User = Depends(get_current_user)
 ):
-    if RoleService.check_role_name_exists(role.name, None, db):
-        raise HTTPException(status_code=400, detail="Role with this name already exists")
-    
     role_data = role.model_dump()
-    created_role = RoleService.create_role(role_data, db, current_user)
-    
+
+    try:
+        created_role = RoleService.create_role(role_data, db, current_user)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     ActivityService.log(
         db=db,
         action="CREATE",
@@ -197,8 +199,9 @@ async def create_role(
         request=request,
         background_tasks=background_tasks
     )
-    
+
     return RoleResponse(**created_role)
+
 
 @router.put("/{role_id}", response_model=RoleResponse)
 async def update_role(
@@ -210,7 +213,7 @@ async def update_role(
     permission: bool = Depends(Permission("role_module", "UPDATE")),
     current_user: User = Depends(get_current_user)
 ):
-    if role.name and RoleService.check_role_name_exists(role.name, role_id, db):
+    if role.name and RoleService.check_role_name_exists(role.name, role_id, db, current_user):
         raise HTTPException(status_code=400, detail="Role with this name already exists")
     
     role_data = role.model_dump(exclude_unset=True)
@@ -226,11 +229,13 @@ async def update_role(
         changes = ActivityService.calculate_changes(existing_role, role_data) or {}
         modules_changed = 'modules' in role_data
 
-        if not changes and not modules_changed:
+        # allow status-only updates
+        if not changes and not modules_changed and 'status_id' not in role_data:
             raise HTTPException(
                 status_code=400,
                 detail="No changes provided for update"
             )
+
 
         # Rename status_id to Status
         if 'status_id' in changes:

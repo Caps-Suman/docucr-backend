@@ -14,29 +14,62 @@ from app.models.user_role_module import UserRoleModule
 from app.models.status import Status
 
 
+def is_superadmin(user):
+    return isinstance(user, User) and user.is_superuser
+
+def is_client_user(user):
+    return isinstance(user, User) and getattr(user, "is_client", False)
+
+def is_org_user(user):
+    return (
+        isinstance(user, User)
+        and not user.is_superuser
+        and not getattr(user, "is_client", False)
+        and user.organisation_id is not None
+    )
+
+def is_org_object(user):
+    return isinstance(user, Organisation)
+
 class RoleService:
     
     @staticmethod
-    def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session, current_user):
+    def get_roles(page, page_size, status_id, db, current_user):
         skip = (page - 1) * page_size
 
-        query = RoleService._base_roles_query(db)
-
-        if not current_user.is_superuser:
-            if getattr(current_user, 'is_client', False):
-                query = query.filter(Role.created_by == str(current_user.id))
+        if isinstance(current_user, Organisation):
+            org_id = str(current_user.id)
+        elif isinstance(current_user, User):
+            if current_user.is_superuser:
+                org_id = None
             else:
-                 query = query.filter(Role.organisation_id == str(current_user.id))
+                org_id = str(current_user.organisation_id)
+        else:
+            org_id = None
+
+        query = (
+            db.query(Role, User)
+            .outerjoin(User, User.id == Role.created_by)
+            .filter(func.upper(Role.name) != "SUPER_ADMIN")
+        )
+
+        if org_id:
+            query = query.filter(Role.organisation_id == org_id)
 
         if status_id:
             query = query.join(Role.status_relation).filter(Status.code == status_id)
 
         total = query.count()
-        roles = query.offset(skip).limit(page_size).all()
+        rows = query.offset(skip).limit(page_size).all()
 
         result = []
-        for role in roles:
+        for role, creator in rows:
             users_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
+
+            creator_name = None
+            if creator:
+                creator_name = f"{creator.first_name} {creator.last_name}".strip()
+
             result.append({
                 "id": role.id,
                 "name": role.name,
@@ -44,7 +77,8 @@ class RoleService:
                 "status_id": role.status_id,
                 "statusCode": role.status_relation.code if role.status_relation else None,
                 "can_edit": role.can_edit,
-                "users_count": users_count
+                "users_count": users_count,
+                "created_by": creator_name
             })
 
         return result, total
@@ -57,19 +91,24 @@ class RoleService:
         )
 
     @staticmethod
-    def get_assignable_roles(page: int, page_size: int, db: Session, current_user):
+    def get_assignable_roles(page, page_size, db, current_user):
         skip = (page - 1) * page_size
 
-        query = RoleService._base_roles_query(db)
-        
-        # if not current_user.is_superuser:
-        #     query = query.filter(Role.created_by == current_user.id)
-
-        if not current_user.is_superuser:
-            if getattr(current_user, 'is_client', False):
-                query = query.filter(Role.created_by == str(current_user.id))
+        # resolve org
+        if isinstance(current_user, Organisation):
+            org_id = str(current_user.id)
+        elif isinstance(current_user, User):
+            if current_user.is_superuser:
+                org_id = None
             else:
-                 query = query.filter(Role.organisation_id == str(current_user.id))
+                org_id = str(current_user.organisation_id)
+        else:
+            org_id = None
+
+        query = db.query(Role).filter(func.upper(Role.name) != "SUPER_ADMIN")
+
+        if org_id:
+            query = query.filter(Role.organisation_id == org_id)
 
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
@@ -77,6 +116,7 @@ class RoleService:
         result = []
         for role in roles:
             users_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
+
             result.append({
                 "id": role.id,
                 "name": role.name,
@@ -88,6 +128,7 @@ class RoleService:
             })
 
         return result, total
+
 
     @staticmethod
     def get_role_by_id(role_id: str, db: Session) -> Optional[Dict]:
@@ -167,50 +208,52 @@ class RoleService:
         return result
 
     @staticmethod
-    def create_role(role_data: Dict, db: Session, current_user) -> Dict:
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        
-        organisation_id_val = None
-        created_by_val = None
+    def create_role(role_data, db, current_user):
+        name = role_data["name"].strip().upper()
 
+        # resolve org
         if isinstance(current_user, Organisation):
-            created_by_val = None
-            organisation_id_val = str(current_user.id)
-        elif isinstance(current_user, User):
-            if not current_user.is_superuser:
-                created_by_val = str(current_user.id)
-                if current_user.organisation_id:
-                    organisation_id_val = str(current_user.organisation_id)
-            else:
-                created_by_val = None
+            org_id = str(current_user.id)
+            creator_id = None
+        else:
+            org_id = str(current_user.organisation_id)
+            creator_id = str(current_user.id)
+
+        if not org_id:
+            raise ValueError("Organisation not found")
+
+        # duplicate check inside this org
+        exists = db.query(Role).filter(
+            func.upper(Role.name) == name,
+            Role.organisation_id == org_id
+        ).first()
+
+        if exists:
+            raise ValueError("Role already exists for this organisation")
 
         new_role = Role(
             id=str(uuid.uuid4()),
-            name=role_data['name'].upper(),
-            description=role_data.get('description'),
-            status_id=active_status.id if active_status else None,
-            created_by=created_by_val,
-            organisation_id=organisation_id_val
+            name=name,
+            description=role_data.get("description"),
+            organisation_id=org_id,
+            created_by=creator_id
         )
-        
+
         db.add(new_role)
         db.commit()
         db.refresh(new_role)
-        
-        if role_data.get('modules'):
-            RoleService._assign_modules(new_role.id, role_data['modules'], db)
-        
-        status_code = new_role.status_relation.code if new_role.status_relation else (active_status.code if active_status else None)
-        
+
         return {
             "id": new_role.id,
             "name": new_role.name,
             "description": new_role.description,
             "status_id": new_role.status_id,
-            "statusCode": status_code,
+            "statusCode": new_role.status_relation.code if new_role.status_relation else None,
             "can_edit": new_role.can_edit,
             "users_count": 0
         }
+
+
     @staticmethod
     def update_role(role_id: str, role_data: Dict, db: Session) -> Optional[Dict]:
         role = db.query(Role).filter(Role.id == role_id).first()
@@ -221,16 +264,18 @@ class RoleService:
             role.name = role_data['name'].upper()
         if 'description' in role_data:
             role.description = role_data['description']
-        if 'status_id' in role_data:
-            # If status_id is string Code, resolve to ID
-            status_code = role_data['status_id']
-            # Find status by code, try both exact and upper/lower to be safe? No, just match code standard
-            # But the user might send lowercase? I should probably .upper() existing input just in case
-            # But let's stick to using code==status_code check.
-            status = db.query(Status).filter(Status.code == status_code).first()
-            if status:
-                role.status_id = status.id
-        
+        if 'status_id' in role_data and role_data['status_id'] is not None:
+            value = role_data['status_id']
+
+            # if string like "ACTIVE"
+            if isinstance(value, str) and not value.isdigit():
+                status = db.query(Status).filter(Status.code == value.upper()).first()
+                if status:
+                    role.status_id = status.id
+            else:
+                # numeric id
+                role.status_id = value
+
         if 'modules' in role_data and role_data['modules'] is not None:
             role_module_ids = [rm.id for rm in db.query(RoleModule).filter(RoleModule.role_id == role_id).all()]
             if role_module_ids:
@@ -271,30 +316,57 @@ class RoleService:
         return role_name, None
     
     @staticmethod
-    def get_role_stats(db: Session) -> Dict:
-        base = RoleService._base_roles_query(db)
+    def get_role_stats(db, current_user):
 
-        total_roles = base.count()
+        if isinstance(current_user, Organisation):
+            org_id = str(current_user.id)
+        elif isinstance(current_user, User):
+            if current_user.is_superuser:
+                org_id = None
+            else:
+                org_id = str(current_user.organisation_id)
+        else:
+            org_id = None
 
-        active_roles = (
-            base.join(Role.status_relation)
-            .filter(Status.code == 'ACTIVE')
+        query = db.query(Role)
+
+        if org_id:
+            query = query.filter(Role.organisation_id == org_id)
+
+        total = query.count()
+
+        active = (
+            query.join(Role.status_relation)
+            .filter(Status.code == "ACTIVE")
             .count()
         )
 
         return {
-            "total_roles": total_roles,
-            "active_roles": active_roles,
-            "inactive_roles": total_roles - active_roles
+            "total_roles": total,
+            "active_roles": active,
+            "inactive_roles": total - active
         }
 
 
     @staticmethod
-    def check_role_name_exists(name: str, exclude_id: Optional[str], db: Session) -> bool:
-        query = db.query(Role).filter(func.upper(Role.name) == name.upper())
+    def check_role_name_exists(name, exclude_id, db, current_user):
+        name = name.upper()
+
+        if isinstance(current_user, Organisation):
+            org_id = str(current_user.id)
+        else:
+            org_id = str(current_user.organisation_id)
+
+        query = db.query(Role).filter(
+            func.upper(Role.name) == name,
+            Role.organisation_id == org_id
+        )
+
         if exclude_id:
             query = query.filter(Role.id != exclude_id)
-        return query.first() is not None
+
+        return db.query(query.exists()).scalar()
+
 
     @staticmethod
     def _assign_modules(role_id: str, modules: List[Dict], db: Session):

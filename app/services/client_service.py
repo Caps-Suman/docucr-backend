@@ -541,10 +541,7 @@ class ClientService:
             # PROVIDER MAPPING (REPLACE)
             # -------------------------------------------------
             if providers is not None:
-                db.query(ProviderClientMap).filter(
-                    ProviderClientMap.client_id == client.id
-                ).delete()
-
+               
                 for p in providers:
                     temp_id = p.get("location_temp_id")
 
@@ -574,14 +571,7 @@ class ClientService:
                         db.add(provider)
                         db.flush()
 
-                    db.add(
-                        ProviderClientMap(
-                            provider_id=provider.id,
-                            client_id=client.id,
-                            location_id=location_id
-                        )
-                    )
-
+                    
             db.commit()
             db.refresh(client)
             return ClientService._format_client(client, db)

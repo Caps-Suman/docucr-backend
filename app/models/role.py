@@ -1,14 +1,18 @@
-from sqlalchemy import Column, String, Boolean, Text, DateTime, ForeignKey, Integer
+from sqlalchemy import Column, String, Boolean, Text, DateTime, ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .module import Base
 
 class Role(Base):
     __tablename__ = "role"
-    __table_args__ = {'schema': 'docucr'}
+    __table_args__ = (
+    UniqueConstraint("name", "organisation_id", name="ux_role_name_org"),
+    {"schema": "docucr"},
+    )
+   
     
     id = Column(String, primary_key=True, index=True)
-    name = Column(String(50), unique=True, nullable=False, index=True)
+    name = Column(String(50), nullable=False, index=True)
     description = Column(Text, nullable=True)
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
     can_edit = Column(Boolean, default=True)
