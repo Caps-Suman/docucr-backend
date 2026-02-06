@@ -21,7 +21,7 @@ class OrganisationCreate(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=50)
     middle_name: Optional[str] = Field(None, max_length=50)
     last_name: str = Field(..., min_length=1, max_length=50)
-    # password: str = Field(..., min_length=6) # Removing password from Create for now as UI might auto-generate or not ask
+    password: str = Field(..., min_length=6) # Removing password from Create for now as UI might auto-generate or not ask
     phone_country_code: Optional[str] = None
     phone_number: Optional[str] = None
     
