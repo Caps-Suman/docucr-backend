@@ -49,7 +49,12 @@ class OrganisationService:
         
         # Hash password if provided (though UI might not send it yet based on description)
         # Assuming a default password if not provided for now or handling it if provided
-        hashed_pw = get_password_hash(org_data.get('password')) if org_data.get('password') else get_password_hash("Default@123") 
+        print('password: ',org_data.get('password'))
+        password_input = org_data.get('password')
+        print('password_input: ',password_input)
+        if not password_input:
+            password_input = "Default@123"
+        hashed_pw = get_password_hash(password_input)
 
         new_org = Organisation(
             id=str(uuid.uuid4()),
