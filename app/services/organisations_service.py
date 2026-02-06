@@ -177,3 +177,12 @@ class OrganisationService:
             "created_at": org.created_at.isoformat() if org.created_at else None,
             "updated_at": org.updated_at.isoformat() if org.updated_at else None
         }
+    @staticmethod
+    def change_password(org_id: str, new_password: str, db: Session) -> bool:
+        org = db.query(Organisation).filter(Organisation.id == org_id).first()
+        if not org:
+            return False
+        
+        org.hashed_password = get_password_hash(new_password)
+        db.commit()
+        return True

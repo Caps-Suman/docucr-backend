@@ -867,6 +867,18 @@ class ClientService:
             status = db.query(Status).filter(Status.id == client.status_id).first()
             status_code = status.code if status else None
 
+         # Get assigned users (excluding SUPER_ADMIN)
+        assigned_users = []
+        if db:
+            user_assignments = db.query(User).join(UserClient, User.id == UserClient.user_id).filter(
+                UserClient.client_id == client.id,
+                ~db.query(UserRole).join(Role).filter(
+                    UserRole.user_id == User.id,
+                    Role.name == 'SUPER_ADMIN'
+                ).exists()
+            ).all()
+            assigned_users = [f"{user.first_name} {user.last_name}" for user in user_assignments]
+
         providers: List[Dict] = []
         locations: List[Dict] = []
 
@@ -954,7 +966,8 @@ class ClientService:
             "locations": locations,
 
             # --- USER COUNTS (Already existed) ---
-            "user_count": client.user_count if hasattr(client, 'user_count') else 0,
+            # "user_count": client.user_count if hasattr(client, 'user_count') else 0,
+             "user_count": len(assigned_users),
             "assigned_users": client.assigned_users if hasattr(client, 'assigned_users') else [],
             "has_owner": has_owner,
             "has_any_user": has_owner or has_any_user,

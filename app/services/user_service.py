@@ -529,8 +529,9 @@ class UserService:
 
         # Fetch Created By Name
         created_by_name = None
-        if user.created_by:
-            creator = db.query(User).filter(User.id == user.created_by).first()
+        created_by_id = getattr(user, 'created_by', None)
+        if created_by_id:
+            creator = db.query(User).filter(User.id == created_by_id).first()
             if creator:
                created_by_name = f"{creator.first_name or ''} {creator.last_name or ''}".strip()
                if not created_by_name:
@@ -538,8 +539,9 @@ class UserService:
 
         # Fetch Organisation Name
         organisation_name = None
-        if user.organisation_id:
-             org = db.query(Organisation).filter(Organisation.id == user.organisation_id).first()
+        org_id = getattr(user, 'organisation_id', None)
+        if org_id:
+             org = db.query(Organisation).filter(Organisation.id == org_id).first()
              if org:
                  # Organisation doesn't have business_name, using first/last or username
                  organisation_name = f"{org.first_name or ''} {org.last_name or ''}".strip()
