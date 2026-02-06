@@ -207,3 +207,33 @@ def deactivate_organisation(
     )
     
     return OrganisationResponse(**deactivated_org)
+
+class ChangePasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=6, description="New password for the organisation")
+
+@router.put("/{org_id}/change-password")
+async def change_organisation_password(
+    org_id: str,
+    password_request: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("users", "UPDATE")),
+    background_tasks: BackgroundTasks = None,
+    request: Request = None,
+    current_user: User = Depends(get_current_user)
+):
+    success = OrganisationService.change_password(org_id, password_request.new_password, db)
+    if not success:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+        
+    # Log activity
+    ActivityService.log(
+        db=db,
+        action="CHANGE_PASSWORD",
+        entity_type="organisation",
+        entity_id=org_id,
+        user_id=current_user.id,
+        request=request,
+        background_tasks=background_tasks
+    )
+        
+    return {"message": "Password changed successfully"}
