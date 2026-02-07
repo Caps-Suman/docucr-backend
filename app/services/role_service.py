@@ -209,6 +209,10 @@ class RoleService:
                     organisation_id_val = str(current_user.organisation_id)
             else:
                 created_by_val = None
+        
+        # Check for duplicate role name within scope
+        if RoleService._check_duplicate_role(role_data['name'], db, current_user):
+            raise ValueError(f"Role with name '{role_data['name']}' already exists")
 
         new_role = Role(
             id=str(uuid.uuid4()),
@@ -238,14 +242,52 @@ class RoleService:
             "can_edit": new_role.can_edit,
             "users_count": 0
         }
+
     @staticmethod
-    def update_role(role_id: str, role_data: Dict, db: Session) -> Optional[Dict]:
+    def update_role(role_id: str, role_data: Dict, db: Session, current_user) -> Optional[Dict]:
         role = db.query(Role).filter(Role.id == role_id).first()
         if not role:
             return None
-        
+
+        # 1. Scope Permission Check
+        if isinstance(current_user, Organisation):
+            if str(role.organisation_id) != str(current_user.id):
+                 # Assuming returning None or raising specific error? Service usually returns None or raises.
+                 # Given request context, let's treat as 'Not Found' or invalid.
+                 return None 
+        elif isinstance(current_user, User) and not current_user.is_superuser:
+            if getattr(current_user, 'is_client', False):
+                 if str(role.created_by) != str(current_user.id):
+                      return None
+            elif current_user.organisation_id:
+                 if str(role.organisation_id) != str(current_user.organisation_id):
+                      return None
+            else:
+                 # Independent user updating their own role?
+                 if str(role.created_by) != str(current_user.id):
+                      return None
+
         if 'name' in role_data and role_data['name'] is not None:
-            role.name = role_data['name'].upper()
+            new_name = role_data['name'].upper()
+            if new_name != role.name:
+                # 2. Check for duplicates in the same scope
+                query = db.query(Role).filter(func.upper(Role.name) == new_name)
+                query = query.filter(Role.id != role_id)
+                
+                if role.organisation_id:
+                     query = query.filter(Role.organisation_id == str(role.organisation_id))
+                elif role.created_by:
+                     query = query.filter(Role.created_by == str(role.created_by))
+                     query = query.filter(Role.organisation_id.is_(None))
+                else:
+                     # Super Admin Scope (Global)
+                     query = query.filter(Role.created_by.is_(None), Role.organisation_id.is_(None))
+                
+                if query.first():
+                    raise ValueError(f"Role with name '{role_data['name']}' already exists")
+
+            role.name = new_name
+
         if 'description' in role_data:
             role.description = role_data['description']
         if 'status_id' in role_data and role_data['status_id'] is not None:
@@ -343,6 +385,36 @@ class RoleService:
         query = db.query(Role).filter(func.upper(Role.name) == name.upper())
         if exclude_id:
             query = query.filter(Role.id != exclude_id)
+        return query.first() is not None
+
+    @staticmethod
+    def _check_duplicate_role(name: str, db: Session, current_user, exclude_role_id: Optional[str] = None) -> bool:
+        query = db.query(Role).filter(func.upper(Role.name) == name.upper())
+
+        if exclude_role_id:
+            query = query.filter(Role.id != exclude_role_id)
+
+        if isinstance(current_user, Organisation):
+            # Organisation Scope
+            query = query.filter(Role.organisation_id == str(current_user.id))
+        
+        elif isinstance(current_user, User):
+            if current_user.is_superuser:
+                # Super Admin Scope: created_by IS NULL AND organisation_id IS NULL
+                query = query.filter(Role.created_by.is_(None), Role.organisation_id.is_(None))
+            
+            elif getattr(current_user, 'is_client', False):
+                # Client Scope: created_by == current_user.id
+                query = query.filter(Role.created_by == str(current_user.id))
+
+            elif current_user.organisation_id:
+                 # Organisation User Scope: Check within organisation
+                 query = query.filter(Role.organisation_id == str(current_user.organisation_id))
+            
+            else:
+                 # Independent user?
+                 query = query.filter(Role.created_by == str(current_user.id))
+
         return query.first() is not None
 
     @staticmethod
