@@ -154,6 +154,7 @@ class ClientUpdate(BaseModel):
         return v
 class ProviderResponse(BaseModel):
     id: UUID
+    name: Optional[str] = None
     first_name: str
     middle_name: Optional[str]
     last_name: str
@@ -257,6 +258,7 @@ class ClientSOPResponse(BaseModel):
     name: Optional[str]
     npi: Optional[str]
     type: Optional[str]
+    provider_count: int = 0
 
 class AssignClientsRequest(BaseModel):
     client_ids: List[str]

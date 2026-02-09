@@ -1077,6 +1077,7 @@ class ClientService:
         formatted_providers = [
             {
                 "id": str(p.id),
+                "name": f"{p.first_name} {p.middle_name or ''} {p.last_name}".strip().replace("  ", " "),
                 "first_name": p.first_name,
                 "middle_name": p.middle_name,
                 "last_name": p.last_name,
@@ -1100,7 +1101,15 @@ class ClientService:
         active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
         status_id = active_status.id if active_status else None
 
-        query = db.query(Client).filter(Client.deleted_at.is_(None))
+        # Subquery for provider count
+        provider_count_subquery = (
+            db.query(func.count(ProviderClientMapping.id))
+            .filter(ProviderClientMapping.client_id == Client.id)
+            .correlate(Client)
+            .as_scalar()
+        )
+
+        query = db.query(Client, provider_count_subquery.label("provider_count")).filter(Client.deleted_at.is_(None))
         
         if status_id:
             query = query.filter(Client.status_id == status_id)
@@ -1124,7 +1133,7 @@ class ClientService:
         else:
             query = query.filter(Client.created_by == str(current_user.id))
 
-        clients = query.order_by(Client.business_name).all()
+        results = query.order_by(Client.business_name).all()
         
         # Map to simple response
         return [
@@ -1132,7 +1141,8 @@ class ClientService:
                 "id": str(c.id),
                 "name": c.business_name or f"{c.first_name} {c.last_name}",
                 "npi": c.npi,
-                "type": c.type
+                "type": c.type,
+                "provider_count": count
             }
-            for c in clients
+            for c, count in results
         ]
