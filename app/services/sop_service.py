@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Tuple
 from app.models.sop import SOP
 from app.models.client import Client
 from app.models.status import Status
+from app.models.sop_provider_mapping import SopProviderMapping
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -115,6 +116,9 @@ class SOPService:
 
     @staticmethod
     def create_sop(sop_data: Dict, db: Session) -> SOP:
+        # Extract provider_ids
+        provider_ids = sop_data.pop("provider_ids", [])
+
         # Generate ID if not present (though model handles default, dict conversion might need it?)
         # Model default is usually enough.
         
@@ -139,6 +143,21 @@ class SOPService:
         db.add(db_sop)
         db.commit()
         db.refresh(db_sop)
+
+        # Create mappings
+        if provider_ids:
+             for pid in provider_ids:
+                 try:
+                     # Check if mapping already exists? No, fresh SOP
+                     db.add(SopProviderMapping(
+                         sop_id=db_sop.id, 
+                         provider_id=pid
+                     ))
+                 except Exception:
+                     # Ignore duplicates or errors for robustness
+                     pass
+             db.commit()
+
         return db_sop
 
     @staticmethod

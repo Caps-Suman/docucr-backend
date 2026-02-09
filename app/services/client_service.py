@@ -1088,3 +1088,51 @@ class ClientService:
         ]
         
         return formatted_providers, total
+
+    @staticmethod
+    def get_clients_for_sop(db: Session, current_user: User) -> List[Dict]:
+        """
+        Fetch clients based on role for SOP creation.
+        - SUPER_ADMIN: All active clients
+        - ORGANISATION_ROLE: Clients in the user's organisation
+        - Other: Clients created by the user
+        """
+        active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+        status_id = active_status.id if active_status else None
+
+        query = db.query(Client).filter(Client.deleted_at.is_(None))
+        
+        if status_id:
+            query = query.filter(Client.status_id == status_id)
+
+        # Get role names
+        role_names = [r.name for r in current_user.roles]
+
+        # 1. SUPER_ADMIN
+        if current_user.is_superuser or "SUPER_ADMIN" in role_names:
+            # Fetch all active clients
+            pass
+        
+        # 2. ORG_ADMIN
+        elif "ORGANISATION_ROLE" in role_names:
+            if current_user.id:
+                query = query.filter(Client.organisation_id == str(current_user.id))
+            else:
+                return []
+        
+        # 3. Other Roles
+        else:
+            query = query.filter(Client.created_by == str(current_user.id))
+
+        clients = query.order_by(Client.business_name).all()
+        
+        # Map to simple response
+        return [
+            {
+                "id": str(c.id),
+                "name": c.business_name or f"{c.first_name} {c.last_name}",
+                "npi": c.npi,
+                "type": c.type
+            }
+            for c in clients
+        ]

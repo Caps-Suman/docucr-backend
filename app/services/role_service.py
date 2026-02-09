@@ -79,7 +79,7 @@ class RoleService:
     def _base_roles_query(db: Session):
         return (
             db.query(Role)
-            .filter(func.upper(Role.name) != 'SUPER_ADMIN')
+            .filter(func.upper(Role.name) != 'SUPER_ADMINs')
         )
 
     @staticmethod

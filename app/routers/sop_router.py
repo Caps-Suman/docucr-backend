@@ -54,7 +54,7 @@ class SOPBase(BaseModel):
     status_id: Optional[int] = None
 
 class SOPCreate(SOPBase):
-    pass
+    provider_ids: Optional[List[UUID]] = []
 
 class SOPUpdate(SOPBase):
     pass

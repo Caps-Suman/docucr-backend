@@ -252,6 +252,12 @@ class ClientListResponse(BaseModel):
     page: int
     page_size: int
 
+class ClientSOPResponse(BaseModel):
+    id: UUID
+    name: Optional[str]
+    npi: Optional[str]
+    type: Optional[str]
+
 class AssignClientsRequest(BaseModel):
     client_ids: List[str]
     assigned_by: str
@@ -283,6 +289,13 @@ def get_client_stats(
     current_user: User = Depends(get_current_user)
 ):
     return ClientService.get_client_stats(db, current_user)
+
+@router.get("/for-sop", response_model=List[ClientSOPResponse])
+def get_clients_for_sop(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    return ClientService.get_clients_for_sop(db, current_user)
 
 @router.get("/visible", response_model=List[ClientResponse])
 def get_visible_clients(

@@ -30,11 +30,13 @@ from .user_role import UserRole
 from .user_role_module import UserRoleModule
 from .organisation import Organisation
 from .organisation_role import OrganisationRole
+from .sop_provider_mapping import SopProviderMapping
 
 __all__ = [
     'Base', 'Module', 'Client', 'Privilege', 'Role', 'RoleModule', 'Submodule', 'RoleSubmodule', 'User', 'UserRole', 
     'UserRoleModule', 'UserSupervisor', 'DocumentType', 'Template', 'Document',
     'DocumentFormData', 'ExtractedDocument', 'UnverifiedDocument', 'Form', 'FormField', 'Status',
     'DocumentListConfig', 'Printer', 'ActivityLog', 'SOP', 'OTP', 'Webhook',
-    'DocumentShare', 'ExternalShare', 'UserClient', 'UserRole', 'UserRoleModule', 'Organisation', 'OrganisationRole'
+    'DocumentShare', 'ExternalShare', 'UserClient', 'UserRole', 'UserRoleModule', 'Organisation', 'OrganisationRole',
+    'SopProviderMapping'
 ]
