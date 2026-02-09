@@ -223,8 +223,14 @@ class UserService:
         if user.client_id and user.client_id != client.id:
             raise ValueError("User already linked to another client")
 
-        if client.created_by and client.created_by != user.id:
-            raise ValueError("Client already has an owner")
+        user.is_client = True
+
+        db.add(UserClient(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            client_id=client.id,
+            assigned_by=user.id
+        ))
 
         # ---- OWNERSHIP ONLY ----
         user.client_id = client.id
