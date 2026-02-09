@@ -14,6 +14,7 @@ class Role(Base):
     id = Column(String, primary_key=True, index=True)
     name = Column(String(50), nullable=False, index=True)
     description = Column(Text, nullable=True)
+    is_default=Column(Boolean, nullable=True, default=False)
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
     can_edit = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
