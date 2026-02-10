@@ -114,7 +114,6 @@ async def upload_documents(
     documents = await document_service.process_multiple_uploads(
         db=db,
         files=files,
-        user_id=current_user.id,
         user=current_user,
         enable_ai=enable_ai,
         document_type_id=document_type_id,
@@ -185,7 +184,9 @@ async def get_document_form_data(
     role_names = [role.name for role in user_roles]
     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
     
-    query = db.query(Document).filter(Document.id == document_id)
+    query = DocumentService._visible_documents_query(db, current_user)
+    document = query.filter(Document.id == document_id).first()
+
     
     if not is_admin:
         # assigned_client_ids = db.query(UserClient.client_id).filter(
@@ -204,7 +205,7 @@ async def get_document_form_data(
         
         query = query.filter(
             or_(
-                Document.user_id == current_user.id,
+                Document.created_by == current_user.id,
                 Document.id.in_(client_documents_query)
             )
         )
@@ -292,7 +293,9 @@ async def update_document_form_data(
     role_names = [role.name for role in user_roles]
     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
     
-    query = db.query(Document).filter(Document.id == document_id)
+    query = DocumentService._visible_documents_query(db, current_user)
+    document = query.filter(Document.id == document_id).first()
+
     
     if not is_admin:
         # assigned_client_ids = db.query(UserClient.client_id).filter(
@@ -312,7 +315,7 @@ async def update_document_form_data(
         
         query = query.filter(
             or_(
-                Document.user_id == current_user.id,
+                Document.created_by == current_user.id,
                 Document.id.in_(client_documents_query)
             )
         )
@@ -411,7 +414,11 @@ def get_document_stats(
     permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get aggregate document statistics for the cards"""
-    return document_service.get_document_stats(db=db,user_id=current_user.id,current_user=current_user)
+    return document_service.get_document_stats(
+        db=db,
+        user=current_user
+    )
+
 
 @router.get("", response_model=dict)
 def get_documents(
@@ -431,7 +438,7 @@ def get_documents(
     """Get user documents with filters"""
     documents, total_count = document_service.get_user_documents(
         db=db,
-        user_id=current_user.id,
+        current_user=current_user,
         skip=skip,
         limit=limit,
         status_id=status_id,
@@ -439,12 +446,10 @@ def get_documents(
         date_to=date_to,
         search_query=search_query,
         form_filters=form_filters,
-        current_user=current_user,   
         document_type_id=document_type_id,
         shared_only=shared_only
     )
 
-    
     # Get all form fields for this user's scope (simplified to all for now as it's small)
     fields = db.query(FormField).all()
     field_map = {str(f.id): f for f in fields}
@@ -526,7 +531,11 @@ async def get_document_detail(
     permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get document details including extracted data"""
-    document = document_service.get_document_detail(db, document_id, current_user.id)
+    document = document_service.get_document_detail(
+        db,
+        document_id,
+        current_user
+    )
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     derived_counts = document_service.build_derived_document_counts(document.extracted_documents,document.unverified_documents)
@@ -593,7 +602,9 @@ async def get_document_preview_url(
     role_names = [role.name for role in user_roles]
     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
     
-    query = db.query(Document).filter(Document.id == document_id)
+    query = DocumentService._visible_documents_query(db, current_user)
+    document = query.filter(Document.id == document_id).first()
+
     
     if not is_admin:
         # assigned_client_ids = db.query(UserClient.client_id).filter(
@@ -612,7 +623,7 @@ async def get_document_preview_url(
         
         query = query.filter(
             or_(
-                Document.user_id == current_user.id,
+                Document.created_by == current_user.id,
                 Document.id.in_(client_documents_query)
             )
         )
@@ -658,7 +669,9 @@ async def get_document_download_url(
     role_names = [role.name for role in user_roles]
     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
     
-    query = db.query(Document).filter(Document.id == document_id)
+    query = DocumentService._visible_documents_query(db, current_user)
+    document = query.filter(Document.id == document_id).first()
+
     
     if not is_admin:
         # assigned_client_ids = db.query(UserClient.client_id).filter(
@@ -677,7 +690,7 @@ async def get_document_download_url(
         
         query = query.filter(
             or_(
-                Document.user_id == current_user.id,
+                Document.created_by == current_user.id,
                 Document.id.in_(client_documents_query)
             )
         )
@@ -743,7 +756,9 @@ async def get_document_report_url(
     role_names = [role.name for role in user_roles]
     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
     
-    query = db.query(Document).filter(Document.id == document_id)
+    query = DocumentService._visible_documents_query(db, current_user)
+    document = query.filter(Document.id == document_id).first()
+
     
     if not is_admin:
         # assigned_client_ids = db.query(UserClient.client_id).filter(
@@ -762,7 +777,7 @@ async def get_document_report_url(
         
         query = query.filter(
             or_(
-                Document.user_id == current_user.id,
+                Document.created_by == current_user.id,
                 Document.id.in_(client_documents_query)
             )
         )
@@ -830,7 +845,9 @@ async def get_document_report_data(
     role_names = [role.name for role in user_roles]
     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
     
-    query = db.query(Document).filter(Document.id == document_id)
+    query = DocumentService._visible_documents_query(db, current_user)
+    document = query.filter(Document.id == document_id).first()
+
     
     if not is_admin:
         assigned_client_ids = db.query(UserClient.client_id).filter(
@@ -846,7 +863,7 @@ async def get_document_report_data(
         
         query = query.filter(
             or_(
-                Document.user_id == current_user.id,
+                Document.created_by == current_user.id,
                 Document.id.in_(client_documents_query)
             )
         )
@@ -933,7 +950,12 @@ async def cancel_document(
     request: Request = None
 ):
     """Cancel document analysis"""
-    success = await document_service.cancel_document_analysis(db, document_id, current_user.id)
+    success = await document_service.cancel_document_analysis(
+        db,
+        document_id,
+        current_user
+    )
+
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -962,7 +984,13 @@ async def reanalyze_document(
 ):
     """Re-analyze document"""
     try:
-        await document_service.reanalyze_document(db, document_id, current_user.id)
+        await document_service.reanalyze_document(
+            db,
+            document_id,
+            current_user
+        )
+
+
         
         # Activity Log
         ActivityService.log(
@@ -990,7 +1018,13 @@ async def archive_document(
     request: Request = None
 ):
     """Archive a document"""
-    success = await document_service.archive_document(db, document_id, current_user.id)
+    success = await document_service.archive_document(
+        db,
+        document_id,
+        current_user
+    )
+
+
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -1016,7 +1050,13 @@ async def unarchive_document(
     request: Request = None
 ):
     """Unarchive a document"""
-    success = await document_service.unarchive_document(db, document_id, current_user.id)
+    success = await document_service.unarchive_document(
+        db,
+        document_id,
+        current_user
+    )
+
+
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
         
@@ -1042,7 +1082,12 @@ async def delete_document(
     request: Request = None
 ):
     """Delete a document"""
-    filename = await document_service.delete_document(db, document_id, current_user.id)
+    filename = await document_service.delete_document(
+        db,
+        document_id,
+        current_user
+    )
+
     if not filename:
         raise HTTPException(status_code=404, detail="Document not found")
     

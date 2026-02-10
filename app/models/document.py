@@ -18,7 +18,7 @@ class Document(Base):
     status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=False)
     upload_progress = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
-    user_id = Column(String, ForeignKey("docucr.user.id"), nullable=False)
+    # user_id = Column(String, ForeignKey("docucr.user.id"), nullable=False)
     analysis_report_s3_key = Column(String(500), nullable=True)
     is_archived = Column(Boolean, default=False, nullable=False)
     total_pages = Column(Integer, default=0)
@@ -27,8 +27,8 @@ class Document(Base):
     server_default=func.now(),
     nullable=False
     )
-    organisation_id = Column(UUID, ForeignKey("docucr.organisation.id"), nullable=False)
-    created_by = Column(UUID, ForeignKey("docucr.user.id"), nullable=False)
+    organisation_id = Column(String, ForeignKey("docucr.organisation.id"), nullable=False)
+    created_by = Column(String, ForeignKey("docucr.user.id"), nullable=False)
 
     updated_at = Column(
         DateTime(timezone=True),
@@ -38,16 +38,17 @@ class Document(Base):
     )
 
     
-    user = relationship(
-        "User",
-        foreign_keys=[user_id],
-        back_populates="documents"
-    )
+    # user = relationship(
+    #     "User",
+    #     foreign_keys=[created_by],
+    #     back_populates="documents"
+    # )
 
     # 👇 creator (admin who created)
     creator = relationship(
         "User",
-        foreign_keys=[created_by]
+        foreign_keys=[created_by],
+        back_populates="documents_created"
     )
     status = relationship("Status")
     client = relationship("Client")
