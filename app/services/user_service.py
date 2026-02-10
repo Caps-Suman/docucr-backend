@@ -182,8 +182,8 @@ class UserService:
         elif isinstance(current_user, User):
             if not current_user.is_superuser:
                 created_by_val = str(current_user.id)
-                if current_user.organisation_id:
-                    organisation_id_val = str(current_user.organisation_id)
+                if current_user.id:
+                    organisation_id_val = str(current_user.id)
             else:
                 created_by_val = None
 
@@ -243,12 +243,12 @@ class UserService:
 
         user.is_client = True
 
-        db.add(UserClient(
-            id=str(uuid.uuid4()),
-            user_id=user.id,
-            client_id=client.id,
-            assigned_by=user.id
-        ))
+        # db.add(UserClient(
+        #     id=str(uuid.uuid4()),
+        #     user_id=user.id,
+        #     client_id=client.id,
+        #     assigned_by=user.id
+        # ))
 
         # ---- OWNERSHIP ONLY ----
         user.client_id = client.id
@@ -380,29 +380,24 @@ class UserService:
                 UserService._assign_supervisor(user_id, user_data['supervisor_id'], db)
 
         # Handle Client Mapping
-        if 'client_id' in user_data:
-            new_client_id = user_data['client_id']
-            # If explicit None provided, remove mapping
-            if new_client_id is None:
-                db.query(UserClient).filter(UserClient.user_id == user_id).delete()
-                # Also reset is_client flag if strictly mapped? 
-                # user.is_client = False # Optional, depending on if is_client flag depends only on this mapping
-            else:
-                # Check existing mapping
-                existing_mapping = db.query(UserClient).filter(UserClient.user_id == user_id).first()
-                if existing_mapping:
-                    if str(existing_mapping.client_id) != str(new_client_id):
-                        existing_mapping.client_id = new_client_id
-                        existing_mapping.assigned_by = current_user.id
-                else:
-                    # Create new mapping
-                    new_mapping = UserClient(
-                        id=str(uuid.uuid4()),
-                        user_id=user_id,
-                        client_id=new_client_id,
-                        assigned_by=current_user.id
-                    )
-                    db.add(new_mapping)
+        # if 'client_id' in user_data:
+        #     new_client_id = user_data['client_id']
+        #     if new_client_id is None:
+        #         db.query(UserClient).filter(UserClient.user_id == user_id).delete()
+        #     else:
+        #         existing_mapping = db.query(UserClient).filter(UserClient.user_id == user_id).first()
+        #         if existing_mapping:
+        #             if str(existing_mapping.client_id) != str(new_client_id):
+        #                 existing_mapping.client_id = new_client_id
+        #                 existing_mapping.assigned_by = current_user.id
+        #         else:
+        #             new_mapping = UserClient(
+        #                 id=str(uuid.uuid4()),
+        #                 user_id=user_id,
+        #                 client_id=new_client_id,
+        #                 assigned_by=current_user.id
+        #             )
+        #             db.add(new_mapping)
         
         db.commit()
         db.refresh(user)
@@ -449,8 +444,8 @@ class UserService:
             )
 
         # org user → same organisation
-        if current_user.organisation_id:
-            return str(target_user.organisation_id) == str(current_user.organisation_id)
+        if current_user.id:
+            return str(target_user.organisation_id) == str(current_user.id)
 
         return False
 
@@ -510,7 +505,7 @@ class UserService:
 
         # 🔥 ORG USER
         elif isinstance(current_user, User):
-            query = query.filter(User.organisation_id == str(current_user.organisation_id))
+            query = query.filter(User.id == str(current_user.id))
 
         total = query.count()
 
@@ -579,6 +574,7 @@ class UserService:
     def _format_user_response(user: User, db: Session) -> Dict:
         user_roles = db.query(UserRole, Role).join(Role, UserRole.role_id == Role.id).filter(UserRole.user_id == user.id).all()
         roles = [{"id": role.id, "name": role.name} for _, role in user_roles]
+        # roles = []
         
         supervisor = db.query(UserSupervisor).filter(UserSupervisor.user_id == user.id).first()
         supervisor_id = supervisor.supervisor_id if supervisor else None
@@ -601,8 +597,12 @@ class UserService:
                  status_code = status_obj.code
         client_count = (
             db.query(UserClient).filter(UserClient.user_id == user.id).count()
-            + db.query(Client).filter(Client.created_by == user.id).count()
         )
+
+        # client_count = (
+        #     db.query(UserClient).filter(UserClient.user_id == user.id).count()
+        #     + db.query(Client).filter(Client.created_by == user.id).count()
+        # )
 
 
         # Fetch Created By Name
@@ -627,13 +627,21 @@ class UserService:
                      organisation_name = org.username
 
         # Fetch Mapped Client Info
+        # client_id = None
+        # client_name = None
+        # user_client = db.query(UserClient, Client).join(Client, UserClient.client_id == Client.id).filter(UserClient.user_id == user.id).first()
+        # if user_client:
+        #     # user_client is a tuple (UserClient, Client)
+        #     client_id = str(user_client[1].id)
+        #     # client_name = user_client[1].name
+
         client_id = None
         client_name = None
-        user_client = db.query(UserClient, Client).join(Client, UserClient.client_id == Client.id).filter(UserClient.user_id == user.id).first()
-        if user_client:
-            # user_client is a tuple (UserClient, Client)
-            client_id = str(user_client[1].id)
-            # client_name = user_client[1].name
+        if user.is_client and getattr(user, 'client_id', None):
+             client = db.query(Client).filter(Client.id == user.client_id).first()
+             if client:
+                 client_id = str(client.id)
+                 # client_name = client.name
 
         return {
             "id": user.id,
@@ -708,7 +716,7 @@ class UserService:
         if isinstance(current_user, Organisation):
             return str(current_user.id)
         if isinstance(current_user, User):
-            return str(current_user.organisation_id) if current_user.organisation_id else None
+            return str(current_user.id) if current_user.id else None
         return None
 
 

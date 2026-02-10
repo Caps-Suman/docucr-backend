@@ -268,7 +268,7 @@ async def update_user(
         if 'status_id' in changes:
             changes['Status'] = changes.pop('status_id')
 
-    updated_user = UserService.update_user(user_id, user_data, db)
+    updated_user = UserService.update_user(user_id, user_data, db, current_user)
     if not updated_user:
         raise HTTPException(status_code=404, detail="User not found")
         
