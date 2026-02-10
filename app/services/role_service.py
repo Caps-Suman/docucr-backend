@@ -131,7 +131,7 @@ class RoleService:
         elif getattr(current_user, "organisation_id", None):
             query = query.filter(
                 or_(
-                    Role.organisation_id == str(current_user.organisation_id),
+                    Role.organisation_id == str(current_user.id),
                     Role.organisation_id.is_(None)
                 )
             )

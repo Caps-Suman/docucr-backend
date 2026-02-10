@@ -27,6 +27,8 @@ class Document(Base):
     server_default=func.now(),
     nullable=False
     )
+    organisation_id = Column(UUID, ForeignKey("docucr.organisation.id"), nullable=False)
+    created_by = Column(UUID, ForeignKey("docucr.user.id"), nullable=False)
 
     updated_at = Column(
         DateTime(timezone=True),
@@ -36,7 +38,17 @@ class Document(Base):
     )
 
     
-    user = relationship("User", back_populates="documents")
+    user = relationship(
+        "User",
+        foreign_keys=[user_id],
+        back_populates="documents"
+    )
+
+    # 👇 creator (admin who created)
+    creator = relationship(
+        "User",
+        foreign_keys=[created_by]
+    )
     status = relationship("Status")
     client = relationship("Client")
     

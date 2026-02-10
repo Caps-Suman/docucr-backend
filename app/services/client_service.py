@@ -133,7 +133,7 @@ class ClientService:
         # 🔥 ORG USER
         elif isinstance(current_user, User):
             base_query = base_query.filter(
-                Client.organisation_id == str(current_user.organisation_id)
+                Client.organisation_id == str(current_user.id)
             )
 
         total_clients = base_query.count()
