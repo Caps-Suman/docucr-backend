@@ -108,9 +108,15 @@ class UserService:
 
         if not current_user.is_superuser:
             if getattr(current_user, 'is_client', False):
-                query = query.filter(User.created_by == str(current_user.id))
+                query = query.filter(
+                    (User.created_by == str(current_user.id)) |
+                    (User.id == str(current_user.id))
+                )
             else:
-                 query = query.filter(User.organisation_id == str(current_user.id))
+                 query = query.filter(
+                        User.organisation_id == str(current_user.organisation_id)
+                    )
+
 
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
@@ -200,16 +206,28 @@ class UserService:
         db.add(user)
         db.commit()
         db.refresh(user)
-        
-        if user_data.get('role_ids'):
-            UserService._assign_roles(user.id, user_data['role_ids'], db)
-        
-        if user_data.get('supervisor_id'):
-            UserService._assign_supervisor(user.id, user_data['supervisor_id'], db)
 
-        if user_data.get('client_id'):
-            UserService.link_client_owner(db, user.id, user_data['client_id'])
+        # ---- AUTO CLIENT ADMIN ROLE ----
+        if user_data.get("client_id"):
+            client_admin_role = db.query(Role).filter(Role.name == "CLIENT_ADMIN").first()
+            if not client_admin_role:
+                raise ValueError("CLIENT_ADMIN role missing in DB")
+
+            UserService._assign_roles(user.id, [client_admin_role.id], db)
+
+        elif user_data.get("role_ids"):
+            UserService._assign_roles(user.id, user_data["role_ids"], db)
+
+        # ---- supervisor ----
+        if user_data.get("supervisor_id"):
+            UserService._assign_supervisor(user.id, user_data["supervisor_id"], db)
+
+        # ---- link client ----
+        if user_data.get("client_id"):
+            UserService.link_client_owner(db, user.id, user_data["client_id"])
+
         return user
+
         # return UserService._format_user_response(user, db)
     @staticmethod
     def link_client_owner(db: Session, user_id: str, client_id: str):
@@ -223,8 +241,14 @@ class UserService:
         if user.client_id and user.client_id != client.id:
             raise ValueError("User already linked to another client")
 
-        if client.created_by and client.created_by != user.id:
-            raise ValueError("Client already has an owner")
+        user.is_client = True
+
+        db.add(UserClient(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            client_id=client.id,
+            assigned_by=user.id
+        ))
 
         # ---- OWNERSHIP ONLY ----
         user.client_id = client.id
@@ -320,11 +344,13 @@ class UserService:
         db.commit()
 
     @staticmethod
-    def update_user(user_id: str, user_data: Dict, db: Session) -> Optional[Dict]:
+    def update_user(user_id: str, user_data: Dict, db: Session, current_user:User) -> Optional[Dict]:
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return None
-        
+        if not UserService.can_manage_user(current_user, user):
+            raise ValueError("Not allowed")
+
         for key, value in user_data.items():
             if key not in ['role_ids', 'supervisor_id', 'password'] and value is not None:
                 if key == 'status_id':
@@ -358,44 +384,77 @@ class UserService:
         return UserService._format_user_response(user, db)
     
     @staticmethod
-    def activate_user(user_id: str, db: Session) -> Optional[Dict]:
+    def activate_user(user_id: str, db: Session, current_user: User):
+
         user = db.query(User).filter(User.id == user_id).first()
         if not user or user.is_superuser:
             return None
-        
+
+        if not UserService.can_manage_user(current_user, user):
+            raise ValueError("Not allowed")
+
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
+
         if active_status:
             user.status_id = active_status.id
 
             if user.is_client:
-                # Fetch client linked to this user
                 client = db.query(Client).filter(Client.created_by == user.id).first()
                 if client:
                     client.status_id = active_status.id
-                    
+
             db.commit()
             db.refresh(user)
+
         return UserService._format_user_response(user, db)
 
+
     @staticmethod
-    def deactivate_user(user_id: str, db: Session) -> Optional[Dict]:
+    def can_manage_user(current_user: User, target_user: User) -> bool:
+
+        # super admin → always
+        if current_user.is_superuser:
+            return True
+
+        # client → can manage users they created + self
+        if getattr(current_user, "is_client", False):
+            return (
+                str(target_user.created_by) == str(current_user.id)
+                or str(target_user.id) == str(current_user.id)
+            )
+
+        # org user → same organisation
+        if current_user.organisation_id:
+            return str(target_user.organisation_id) == str(current_user.organisation_id)
+
+        return False
+
+    @staticmethod
+    def deactivate_user(user_id: str, db: Session, current_user: User):
+
         user = db.query(User).filter(User.id == user_id).first()
         if not user or user.is_superuser:
             return None
-        
+
+        # 🔥 permission check
+        if not UserService.can_manage_user(current_user, user):
+            raise ValueError("Not allowed to deactivate this user")
+
         inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
+
         if inactive_status:
             user.status_id = inactive_status.id
-            
+
             if user.is_client:
-                # Fetch client linked to this user
                 client = db.query(Client).filter(Client.created_by == user.id).first()
                 if client:
                     client.status_id = inactive_status.id
-            
+
             db.commit()
             db.refresh(user)
+
         return UserService._format_user_response(user, db)
+
     # @staticmethod
     # def get_user_stats(db: Session, current_user: User) -> Dict:
     #     role_names = [role.name for role in current_user.roles]
@@ -466,7 +525,10 @@ class UserService:
 
         # 🔥 CLIENT USER
         elif isinstance(current_user, User) and current_user.is_client:
-            query = query.filter(User.created_by == str(current_user.id))
+            query = query.filter(
+                (User.created_by == str(current_user.id)) |
+                (User.id == str(current_user.id))
+            )
 
         # 🔥 ORG LOGIN
         elif isinstance(current_user, Organisation):

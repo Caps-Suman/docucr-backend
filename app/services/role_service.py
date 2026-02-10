@@ -22,19 +22,47 @@ class RoleService:
     def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session, current_user):
         skip = (page - 1) * page_size
 
+        print("all roles:", db.query(Role).count())
+        print("non default:", db.query(Role).filter(Role.is_default == False).count())
+
         query = RoleService._base_roles_query(db)
 
-        if not current_user.is_superuser:
-            if getattr(current_user, 'is_client', False):
-                query = query.filter(Role.created_by == str(current_user.id))
-            else:
-                 query = query.filter(Role.organisation_id == str(current_user.id))
+        # 🔥 ALWAYS hide default roles
+        query = query.filter(Role.is_default == False)
+
+        # SUPER ADMIN → sees everything
+        if current_user.is_superuser:
+            pass
+
+        # CLIENT USER → roles they created
+        elif getattr(current_user, "is_client", False):
+            query = query.filter(Role.created_by == str(current_user.id))
+
+        # ORG USER → if org exists filter, else DON'T
+        elif getattr(current_user, "organisation_id", None):
+            query = query.filter(
+                or_(
+                    Role.organisation_id == str(current_user.id),
+                    Role.organisation_id.is_(None)
+                )
+            )
+
+        # USER WITHOUT ORG → see roles they created + global roles
+        else:
+            query = query.filter(
+                or_(
+                    Role.created_by == str(current_user.id),
+                    Role.organisation_id.is_(None)
+                )
+            )
+
 
         if status_id:
             query = query.join(Role.status_relation).filter(Status.code == status_id)
 
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
+
 
         result = []
         for role in roles:
@@ -79,7 +107,7 @@ class RoleService:
     def _base_roles_query(db: Session):
         return (
             db.query(Role)
-            .filter(func.upper(Role.name) != 'SUPER_ADMINs')
+            .filter(func.upper(Role.name) != 'SUPER_ADMIN')
         )
 
     @staticmethod
@@ -87,15 +115,37 @@ class RoleService:
         skip = (page - 1) * page_size
 
         query = RoleService._base_roles_query(db)
-        
-        # if not current_user.is_superuser:
-        #     query = query.filter(Role.created_by == current_user.id)
 
-        if not current_user.is_superuser:
-            if getattr(current_user, 'is_client', False):
-                query = query.filter(Role.created_by == str(current_user.id))
-            else:
-                 query = query.filter(Role.organisation_id == str(current_user.id))
+        # 🔥 ALWAYS hide default roles
+        query = query.filter(Role.is_default == False)
+
+        # SUPER ADMIN → sees everything
+        if current_user.is_superuser:
+            pass
+
+        # CLIENT USER → roles they created
+        elif getattr(current_user, "is_client", False):
+            query = query.filter(Role.created_by == str(current_user.id))
+
+        # ORG USER → if org exists filter, else DON'T
+        elif getattr(current_user, "organisation_id", None):
+            query = query.filter(
+                or_(
+                    Role.organisation_id == str(current_user.organisation_id),
+                    Role.organisation_id.is_(None)
+                )
+            )
+
+        # USER WITHOUT ORG → see roles they created + global roles
+        else:
+            query = query.filter(
+                or_(
+                    Role.created_by == str(current_user.id),
+                    Role.organisation_id.is_(None)
+                )
+            )
+
+
 
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
@@ -348,22 +398,37 @@ class RoleService:
     def get_role_stats(db, current_user):
 
         query = db.query(Role).filter(func.upper(Role.name) != "SUPER_ADMIN")
+        query = RoleService._base_roles_query(db)
 
-        # 🔥 SUPERADMIN → see everything
-        if isinstance(current_user, User) and current_user.is_superuser:
+        # 🔥 ALWAYS hide default roles
+        query = query.filter(Role.is_default == False)
+
+        # SUPER ADMIN → sees everything
+        if current_user.is_superuser:
             pass
 
-        # 🔥 CLIENT USER
-        elif isinstance(current_user, User) and current_user.is_client:
+        # CLIENT USER → roles they created
+        elif getattr(current_user, "is_client", False):
             query = query.filter(Role.created_by == str(current_user.id))
 
-        # 🔥 ORG LOGIN
-        elif isinstance(current_user, Organisation):
-            query = query.filter(Role.organisation_id == str(current_user.id))
+        # ORG USER → if org exists filter, else DON'T
+        elif getattr(current_user, "organisation_id", None):
+            query = query.filter(
+                or_(
+                    Role.organisation_id == str(current_user.organisation_id),
+                    Role.organisation_id.is_(None)
+                )
+            )
 
-        # 🔥 ORG USER
-        elif isinstance(current_user, User):
-            query = query.filter(Role.organisation_id == str(current_user.organisation_id))
+        # USER WITHOUT ORG → see roles they created + global roles
+        else:
+            query = query.filter(
+                or_(
+                    Role.created_by == str(current_user.id),
+                    Role.organisation_id.is_(None)
+                )
+            )
+
 
         total = query.count()
 
