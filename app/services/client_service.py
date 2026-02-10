@@ -1091,7 +1091,7 @@ class ClientService:
         return formatted_providers, total
 
     @staticmethod
-    def get_clients_for_sop(db: Session, current_user: User) -> List[Dict]:
+    def get_all_clients(db: Session, current_user: User) -> List[Dict]:
         """
         Fetch clients based on role for SOP creation.
         - SUPER_ADMIN: All active clients

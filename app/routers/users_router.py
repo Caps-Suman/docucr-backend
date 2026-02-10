@@ -63,7 +63,8 @@ class UserUpdate(BaseModel):
     status_id: Optional[str] = None
     role_ids: Optional[List[str]] = None
     supervisor_id: Optional[str] = None
-    
+    client_id: Optional[str] = None
+
     @field_validator('email')
     @classmethod
     def validate_email(cls, v: Optional[str]) -> Optional[str]:
@@ -92,6 +93,8 @@ class UserResponse(BaseModel):
     client_count: int = 0
     created_by_name: Optional[str] = None
     organisation_name: Optional[str] = None
+    client_id: Optional[str] = None
+    client_name: Optional[str] = None
     
     class Config:
         from_attributes = True

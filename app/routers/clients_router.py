@@ -292,12 +292,12 @@ def get_client_stats(
 ):
     return ClientService.get_client_stats(db, current_user)
 
-@router.get("/for-sop", response_model=List[ClientSOPResponse])
+@router.get("/all", response_model=List[ClientSOPResponse])
 def get_clients_for_sop(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    return ClientService.get_clients_for_sop(db, current_user)
+    return ClientService.get_all_clients(db, current_user)
 
 @router.get("/visible", response_model=List[ClientResponse])
 def get_visible_clients(
