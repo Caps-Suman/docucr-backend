@@ -5,6 +5,7 @@ from typing import List, Optional
 from uuid import UUID
 import json
 
+from app.models.organisation import Organisation
 from app.models.user_client import UserClient
 from ..core.database import get_db
 from ..core.security import get_current_user
@@ -34,7 +35,7 @@ async def upload_documents(
     template_id: Optional[UUID] = Form(None),
     form_id: Optional[UUID] = Form(None),
     form_data: Optional[str] = Form(None),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     _: bool = Depends(Permission("documents", "CREATE")),
     background_tasks: BackgroundTasks = None,
@@ -159,109 +160,58 @@ async def upload_documents(
 @router.get("/{document_id}/form-data")
 async def get_document_form_data(
     document_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "READ"))
 ):
-    """Get form data for a document with role-based access control"""
-    from ..models.user_role import UserRole
-    from ..models.role import Role
-    from ..models.status import Status
-    from ..models.user_client import UserClient
-    from ..models.client import Client
-    from ..models.document_form_data import DocumentFormData
-    from sqlalchemy import cast, String, or_
-    from sqlalchemy import select
+    document = (
+        DocumentService
+        ._document_access_query(db, current_user)
+        .filter(Document.id == document_id)
+        .first()
+    )
 
-    # Get user's roles to determine access level
-    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-        User.id == current_user.id,
-        Role.status_id.in_(
-            db.query(Status.id).filter(Status.code == 'ACTIVE')
-        )
-    ).all()
-    
-    role_names = [role.name for role in user_roles]
-    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-    query = DocumentService._visible_documents_query(db, current_user)
-    document = query.filter(Document.id == document_id).first()
-
-    
-    if not is_admin:
-        # assigned_client_ids = db.query(UserClient.client_id).filter(
-        #     UserClient.user_id == current_user.id
-        # ).subquery()
-        assigned_client_ids = select(UserClient.client_id).where(
-            UserClient.user_id == current_user.id
-        )
-        client_documents_query = db.query(Document.id).join(
-            DocumentFormData, Document.id == DocumentFormData.document_id
-        ).join(
-            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-        ).filter(
-            Client.id.in_(assigned_client_ids)
-        )
-        
-        query = query.filter(
-            or_(
-                Document.created_by == current_user.id,
-                Document.id.in_(client_documents_query)
-            )
-        )
-    
-    document = query.first()
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-        
+
     if not document.form_data_relation:
-         return {"data": {}, "form_id": None}
-    
-    # Resolve field IDs to field names
+        return {"data": {}, "form_id": None}
+
+    # ---- resolve fields ----
     resolved_data = {}
+
     if document.form_data_relation.data:
         from ..models.form import FormField
         from ..models.client import Client
         from ..models.document_type import DocumentType
-        
+
         for field_id, value in document.form_data_relation.data.items():
             field = db.query(FormField).filter(FormField.id == field_id).first()
-            if field:
-                # Resolve dropdown values if needed
-                display_value = value
-                if field.field_type == 'dropdown' and field.options:
-                    # Find the option label for the value
-                    for option in field.options:
-                        if option.get('value') == value:
-                            display_value = option.get('label', value)
-                            break
-                elif field.field_type == 'client_dropdown':
-                    # Resolve client ID to client name
-                    try:
-                        client = db.query(Client).filter(Client.id == value).first()
-                        if client:
-                            display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
-                    except:
-                        pass
-                elif field.field_type == 'document_type_dropdown':
-                    # Resolve document type ID to document type name
-                    try:
-                        doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
-                        if doc_type:
-                            display_value = doc_type.name
-                    except:
-                        pass
-                        
-                resolved_data[field.label] = display_value
-            else:
-                # Field not found, keep original
+
+            if not field:
                 resolved_data[field_id] = value
-         
+                continue
+
+            display_value = value
+
+            if field.field_type == "client_dropdown":
+                client = db.query(Client).filter(Client.id == value).first()
+                if client:
+                    display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
+
+            elif field.field_type == "document_type_dropdown":
+                doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
+                if doc_type:
+                    display_value = doc_type.name
+
+            resolved_data[field.label] = display_value
+
     return {
         "data": resolved_data,
         "form_id": document.form_data_relation.form_id,
         "updated_at": document.form_data_relation.updated_at
     }
+
 
 @router.patch("/{document_id}/form-data")
 async def update_document_form_data(
@@ -293,7 +243,7 @@ async def update_document_form_data(
     role_names = [role.name for role in user_roles]
     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
     
-    query = DocumentService._visible_documents_query(db, current_user)
+    query = DocumentService._document_access_query(db, current_user)
     document = query.filter(Document.id == document_id).first()
 
     
@@ -456,18 +406,30 @@ def get_documents(
     
     # Get all clients
     # Determine role
-    role_names = [r.name for r in current_user.roles]
-    is_admin = any(r in ["ADMIN", "SUPER_ADMIN"] for r in role_names)
+    if isinstance(current_user, Organisation):
+    # ORG LOGIN → show all org clients
+        clients = db.query(Client).filter(
+            Client.organisation_id == current_user.id
+        ).all()
 
-    if is_admin:
-        clients = db.query(Client).all()
+    elif isinstance(current_user, User):
+
+        role_names = [r.name for r in current_user.roles]
+        is_admin = any(r in ["ADMIN", "SUPER_ADMIN"] for r in role_names)
+
+        if is_admin:
+            clients = db.query(Client).all()
+        else:
+            clients = (
+                db.query(Client)
+                .join(UserClient, UserClient.client_id == Client.id)
+                .filter(UserClient.user_id == current_user.id)
+                .all()
+            )
+
     else:
-        clients = (
-            db.query(Client)
-            .join(UserClient, UserClient.client_id == Client.id)
-            .filter(UserClient.user_id == current_user.id)
-            .all()
-        )
+        clients = []
+
     client_map = {str(c.id): c for c in clients}
     
     # Get all document types
@@ -574,371 +536,272 @@ async def get_document_detail(
             } for ud in document.unverified_documents
         ]
     }
-
 @router.get("/{document_id}/preview-url")
 async def get_document_preview_url(
     document_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "READ"))
 ):
-    """Get secure, temporary pre-signed URL for preview with role-based access control"""
-    from ..models.user_role import UserRole
-    from ..models.role import Role
-    from ..models.status import Status
-    from ..models.user_client import UserClient
-    from ..models.client import Client
-    from ..models.document_form_data import DocumentFormData
-    from sqlalchemy import cast, String, or_
-    
-    # Get user's roles to determine access level
-    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-        User.id == current_user.id,
-        Role.status_id.in_(
-            db.query(Status.id).filter(Status.code == 'ACTIVE')
-        )
-    ).all()
-    
-    role_names = [role.name for role in user_roles]
-    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-    query = DocumentService._visible_documents_query(db, current_user)
-    document = query.filter(Document.id == document_id).first()
+    document = (
+        DocumentService
+        ._document_access_query(db, current_user)
+        .filter(Document.id == document_id)
+        .first()
+    )
 
-    
-    if not is_admin:
-        # assigned_client_ids = db.query(UserClient.client_id).filter(
-        #     UserClient.user_id == current_user.id
-        # ).subquery()
-        assigned_client_ids = select(UserClient.client_id).where(
-            UserClient.user_id == current_user.id
-        )
-        client_documents_query = db.query(Document.id).join(
-            DocumentFormData, Document.id == DocumentFormData.document_id
-        ).join(
-            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-        ).filter(
-            Client.id.in_(assigned_client_ids)
-        )
-        
-        query = query.filter(
-            or_(
-                Document.created_by == current_user.id,
-                Document.id.in_(client_documents_query)
-            )
-        )
-    
-    document = query.first()
-    if not document or not document.s3_key:
+    if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-        
-    from ..services.s3_service import s3_service
+
+    if not document.s3_key:
+        raise HTTPException(status_code=404, detail="File not uploaded")
     
+    from ..services.s3_service import s3_service
     presigned_url = s3_service.generate_presigned_url(document.s3_key, expiration=3600)
+
     if not presigned_url:
         raise HTTPException(status_code=500, detail="Failed to generate preview URL")
-        
+
     return {"url": presigned_url}
 
+# @router.get("/{document_id}/preview-url")
+# async def get_document_preview_url(
+#     document_id: int,
+#     current_user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db),
+#     permission: bool = Depends(Permission("documents", "READ"))
+# ):
+#     """Get secure, temporary pre-signed URL for preview with role-based access control"""
+#     from ..models.user_role import UserRole
+#     from ..models.role import Role
+#     from ..models.status import Status
+#     from ..models.user_client import UserClient
+#     from ..models.client import Client
+#     from ..models.document_form_data import DocumentFormData
+#     from sqlalchemy import cast, String, or_
+    
+#     # Get user's roles to determine access level
+#     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+#         User.id == current_user.id,
+#         Role.status_id.in_(
+#             db.query(Status.id).filter(Status.code == 'ACTIVE')
+#         )
+#     ).all()
+    
+#     role_names = [role.name for role in user_roles]
+#     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+    
+#     query = DocumentService._document_access_query(db, current_user)
+#     document = query.filter(Document.id == document_id).first()
+
+    
+#     if not is_admin:
+#         # assigned_client_ids = db.query(UserClient.client_id).filter(
+#         #     UserClient.user_id == current_user.id
+#         # ).subquery()
+#         assigned_client_ids = select(UserClient.client_id).where(
+#             UserClient.user_id == current_user.id
+#         )
+#         client_documents_query = db.query(Document.id).join(
+#             DocumentFormData, Document.id == DocumentFormData.document_id
+#         ).join(
+#             Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+#         ).filter(
+#             Client.id.in_(assigned_client_ids)
+#         )
+        
+#         query = query.filter(
+#             or_(
+#                 Document.created_by == current_user.id,
+#                 Document.id.in_(client_documents_query)
+#             )
+#         )
+    
+#     document = query.first()
+#     if not document or not document.s3_key:
+#         raise HTTPException(status_code=404, detail="Document not found")
+        
+#     from ..services.s3_service import s3_service
+    
+#     presigned_url = s3_service.generate_presigned_url(document.s3_key, expiration=3600)
+#     if not presigned_url:
+#         raise HTTPException(status_code=500, detail="Failed to generate preview URL")
+        
+#     return {"url": presigned_url}
 @router.get("/{document_id}/download-url")
 async def get_document_download_url(
     document_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "EXPORT")),
     background_tasks: BackgroundTasks = None,
     request: Request = None
 ):
-    """Get secure download URL with role-based access control"""
-    from ..models.user_role import UserRole
-    from ..models.role import Role
-    from ..models.status import Status
-    from ..models.user_client import UserClient
-    from ..models.client import Client
-    from ..models.document_form_data import DocumentFormData
-    from sqlalchemy import cast, String, or_
-    
-    # Get user's roles to determine access level
-    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-        User.id == current_user.id,
-        Role.status_id.in_(
-            db.query(Status.id).filter(Status.code == 'ACTIVE')
-        )
-    ).all()
-    
-    role_names = [role.name for role in user_roles]
-    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-    query = DocumentService._visible_documents_query(db, current_user)
-    document = query.filter(Document.id == document_id).first()
+    """
+    Secure download URL.
+    Uses centralized access control only.
+    """
 
-    
-    if not is_admin:
-        # assigned_client_ids = db.query(UserClient.client_id).filter(
-        #     UserClient.user_id == current_user.id
-        # ).subquery()
-        assigned_client_ids = select(UserClient.client_id).where(
-            UserClient.user_id == current_user.id
-        )
-        client_documents_query = db.query(Document.id).join(
-            DocumentFormData, Document.id == DocumentFormData.document_id
-        ).join(
-            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-        ).filter(
-            Client.id.in_(assigned_client_ids)
-        )
-        
-        query = query.filter(
-            or_(
-                Document.created_by == current_user.id,
-                Document.id.in_(client_documents_query)
-            )
-        )
-    
-    document = query.first()
-    if not document or not document.s3_key:
+    document = (
+        DocumentService
+        ._document_access_query(db, current_user)
+        .filter(Document.id == document_id)
+        .first()
+    )
+
+    if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-        
+
+    if not document.s3_key:
+        raise HTTPException(status_code=404, detail="File not uploaded")
+
     from ..services.s3_service import s3_service
-    
-    # Force download with correct filename
+
     filename = document.original_filename or document.filename
     disposition = f'attachment; filename="{filename}"'
-    
+
     presigned_url = s3_service.generate_presigned_url(
-        document.s3_key, 
+        document.s3_key,
         expiration=3600,
         response_content_disposition=disposition
     )
-    
+
     if not presigned_url:
         raise HTTPException(status_code=500, detail="Failed to generate download URL")
-        
+
     ActivityService.log(
         db,
         action="DOWNLOAD",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        user_id=str(current_user.id),
         details={"filename": filename},
         request=request,
         background_tasks=background_tasks
     )
-        
+
     return {"url": presigned_url}
+
 
 @router.get("/{document_id}/report-url")
 async def get_document_report_url(
     document_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "EXPORT")),
     background_tasks: BackgroundTasks = None,
     request: Request = None
 ):
-    """Get secure download URL for the analysis report with role-based access control"""
-    from ..models.user_role import UserRole
-    from ..models.role import Role
-    from ..models.status import Status
-    from ..models.user_client import UserClient
-    from ..models.client import Client
-    from ..models.document_form_data import DocumentFormData
-    from sqlalchemy import cast, String, or_
-    
-    # Get user's roles to determine access level
-    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-        User.id == current_user.id,
-        Role.status_id.in_(
-            db.query(Status.id).filter(Status.code == 'ACTIVE')
-        )
-    ).all()
-    
-    role_names = [role.name for role in user_roles]
-    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-    query = DocumentService._visible_documents_query(db, current_user)
-    document = query.filter(Document.id == document_id).first()
+    """Download analysis report"""
 
-    
-    if not is_admin:
-        # assigned_client_ids = db.query(UserClient.client_id).filter(
-        #     UserClient.user_id == current_user.id
-        # ).subquery()
-        assigned_client_ids = select(UserClient.client_id).where(
-            UserClient.user_id == current_user.id
-        )
-        client_documents_query = db.query(Document.id).join(
-            DocumentFormData, Document.id == DocumentFormData.document_id
-        ).join(
-            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-        ).filter(
-            Client.id.in_(assigned_client_ids)
-        )
-        
-        query = query.filter(
-            or_(
-                Document.created_by == current_user.id,
-                Document.id.in_(client_documents_query)
-            )
-        )
-    
-    document = query.first()
-    if not document or not document.analysis_report_s3_key:
+    document = (
+        DocumentService
+        ._document_access_query(db, current_user)
+        .filter(Document.id == document_id)
+        .first()
+    )
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not document.analysis_report_s3_key:
         raise HTTPException(status_code=404, detail="Analysis report not found")
-        
+
     from ..services.s3_service import s3_service
-    
-    # Force download with generic name or derived from doc name
+
     filename = f"analysis_report_{document.filename}.xlsx"
     disposition = f'attachment; filename="{filename}"'
-    
+
     presigned_url = s3_service.generate_presigned_url(
-        document.analysis_report_s3_key, 
+        document.analysis_report_s3_key,
         expiration=3600,
         response_content_disposition=disposition
     )
-    
+
     if not presigned_url:
         raise HTTPException(status_code=500, detail="Failed to generate report URL")
-        
+
     ActivityService.log(
         db,
         action="DOWNLOAD_REPORT",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        user_id=str(current_user.id),
         details={"filename": filename},
         request=request,
         background_tasks=background_tasks
     )
-        
+
     return {"url": presigned_url}
+
 
 @router.get("/{document_id}/report-data")
 async def get_document_report_data(
     document_id: int,
     page: int = Query(None),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "READ"))
 ):
-    """Get parsed data from the analysis report XLSX with role-based access control"""
-    from ..models.user_role import UserRole
-    from ..models.role import Role
-    from ..models.status import Status
-    from ..models.user_client import UserClient
-    from ..models.client import Client
-    from ..models.document_form_data import DocumentFormData
-    from sqlalchemy import cast, String, or_
-    import pandas as pd
-    import io
-    import json
-    
-    # ... (access control logic remains same)
-    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-        User.id == current_user.id,
-        Role.status_id.in_(
-            db.query(Status.id).filter(Status.code == 'ACTIVE')
-        )
-    ).all()
-    
-    role_names = [role.name for role in user_roles]
-    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-    query = DocumentService._visible_documents_query(db, current_user)
-    document = query.filter(Document.id == document_id).first()
+    document = (
+        DocumentService
+        ._document_access_query(db, current_user)
+        .filter(Document.id == document_id)
+        .first()
+    )
 
-    
-    if not is_admin:
-        assigned_client_ids = db.query(UserClient.client_id).filter(
-            UserClient.user_id == current_user.id
-        )
-        client_documents_query = db.query(Document.id).join(
-            DocumentFormData, Document.id == DocumentFormData.document_id
-        ).filter(
-            cast(DocumentFormData.data['client_id'], String).in_(
-                db.query(cast(Client.id, String)).filter(Client.id.in_(assigned_client_ids))
-            )
-        )
-        
-        query = query.filter(
-            or_(
-                Document.created_by == current_user.id,
-                Document.id.in_(client_documents_query)
-            )
-        )
-    
-    document = query.first()
     if not document or not document.analysis_report_s3_key:
         raise HTTPException(status_code=404, detail="Analysis report not found")
-        
-    from ..services.s3_service import s3_service
-    
-    try:
-        # Download XLSX from S3
-        file_bytes = await s3_service.download_file(document.analysis_report_s3_key)
-        
-        # Read XLSX using pandas
-        df = pd.read_excel(io.BytesIO(file_bytes))
-        
-        def is_page_in_range(target_page, page_range_str):
-            if not page_range_str or pd.isna(page_range_str):
-                return False
-            try:
-                # Handle comma separated ranges: "1-2, 4, 6-8"
-                parts = str(page_range_str).split(',')
-                for part in parts:
-                    part = part.strip()
-                    if '-' in part:
-                        start, end = map(int, part.split('-'))
-                        if start <= target_page <= end:
-                            return True
-                    else:
-                        if int(part) == target_page:
-                            return True
-                return False
-            except:
-                return False
 
-        # Parse data
-        findings = []
-        for _, row in df.iterrows():
-            page_range = row.get("Page Range", "")
-            
-            # Filter by page if requested
-            if page is not None and not is_page_in_range(page, page_range):
+    from ..services.s3_service import s3_service
+    import pandas as pd, io, json
+
+    file_bytes = await s3_service.download_file(document.analysis_report_s3_key)
+    df = pd.read_excel(io.BytesIO(file_bytes))
+
+    findings = []
+
+    for _, row in df.iterrows():
+        page_range = row.get("Page Range", "")
+
+        if page is not None:
+            if not page_range:
                 continue
 
-            extracted_data_raw = row.get("Extracted Data", "{}")
-            if pd.isna(extracted_data_raw) or not extracted_data_raw:
-                extracted_data_raw = "{}"
-            
-            extracted_data = {}
-            try:
-                if isinstance(extracted_data_raw, dict):
-                    extracted_data = extracted_data_raw
-                elif isinstance(extracted_data_raw, str):
-                    import ast
-                    try:
-                        extracted_data = ast.literal_eval(extracted_data_raw)
-                    except (ValueError, SyntaxError):
-                        extracted_data = json.loads(extracted_data_raw.replace("'", '"'))
+            match = False
+            for part in str(page_range).split(","):
+                part = part.strip()
+                if "-" in part:
+                    start, end = map(int, part.split("-"))
+                    if start <= page <= end:
+                        match = True
                 else:
-                    extracted_data = {"raw_data": str(extracted_data_raw)}
-            except Exception:
-                extracted_data = {"raw_data": str(extracted_data_raw)}
-                
-            findings.append({
-                "document_type": row.get("Document Type", "Unknown"),
-                "page_range": str(page_range),
-                "extracted_data": extracted_data
-            })
-            
-        return {"findings": findings, "total_pages": document.total_pages}
-        
-    except Exception as e:
-        print(f"Error parsing report data: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to parse report data: {str(e)}")
+                    if int(part) == page:
+                        match = True
+
+            if not match:
+                continue
+
+        raw = row.get("Extracted Data", "{}")
+
+        try:
+            if isinstance(raw, dict):
+                extracted = raw
+            else:
+                extracted = json.loads(str(raw).replace("'", '"'))
+        except:
+            extracted = {"raw": str(raw)}
+
+        findings.append({
+            "document_type": row.get("Document Type", "Unknown"),
+            "page_range": str(page_range),
+            "extracted_data": extracted
+        })
+
+    return {
+        "findings": findings,
+        "total_pages": document.total_pages
+    }
 
 @router.post("/{document_id}/cancel")
 async def cancel_document(

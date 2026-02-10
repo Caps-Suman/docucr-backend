@@ -45,11 +45,18 @@ class DocumentShare(Base):
         nullable=False
     )
 
-    shared_by = Column(
+    shared_by_user_id = Column(
+    String,
+    ForeignKey("docucr.user.id", ondelete="SET NULL"),
+    nullable=True
+    )
+
+    shared_by_org_id = Column(
         String,
-        ForeignKey("docucr.user.id", ondelete="SET NULL"),
+        ForeignKey("docucr.organisation.id", ondelete="SET NULL"),
         nullable=True
     )
+
 
     created_at = Column(
         DateTime(timezone=True),
@@ -71,5 +78,5 @@ class DocumentShare(Base):
 
     shared_by_user = relationship(
         "User",
-        foreign_keys=[shared_by]
+        foreign_keys=[shared_by_user_id]
     )
