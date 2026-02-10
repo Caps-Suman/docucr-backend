@@ -114,7 +114,7 @@ class UserService:
                 )
             else:
                  query = query.filter(
-                        User.organisation_id == str(current_user.organisation_id)
+                        User.organisation_id == str(current_user.id)
                     )
 
 
@@ -352,7 +352,7 @@ class UserService:
             raise ValueError("Not allowed")
 
         for key, value in user_data.items():
-            if key not in ['role_ids', 'supervisor_id', 'password'] and value is not None:
+            if key not in ['role_ids', 'supervisor_id', 'password', 'client_id'] and value is not None:
                 if key == 'status_id':
                      # Handle status update safely
                      if isinstance(value, str) and not value.isdigit():
@@ -378,6 +378,31 @@ class UserService:
             db.query(UserSupervisor).filter(UserSupervisor.user_id == user_id).delete()
             if user_data['supervisor_id']:
                 UserService._assign_supervisor(user_id, user_data['supervisor_id'], db)
+
+        # Handle Client Mapping
+        if 'client_id' in user_data:
+            new_client_id = user_data['client_id']
+            # If explicit None provided, remove mapping
+            if new_client_id is None:
+                db.query(UserClient).filter(UserClient.user_id == user_id).delete()
+                # Also reset is_client flag if strictly mapped? 
+                # user.is_client = False # Optional, depending on if is_client flag depends only on this mapping
+            else:
+                # Check existing mapping
+                existing_mapping = db.query(UserClient).filter(UserClient.user_id == user_id).first()
+                if existing_mapping:
+                    if str(existing_mapping.client_id) != str(new_client_id):
+                        existing_mapping.client_id = new_client_id
+                        existing_mapping.assigned_by = current_user.id
+                else:
+                    # Create new mapping
+                    new_mapping = UserClient(
+                        id=str(uuid.uuid4()),
+                        user_id=user_id,
+                        client_id=new_client_id,
+                        assigned_by=current_user.id
+                    )
+                    db.add(new_mapping)
         
         db.commit()
         db.refresh(user)
@@ -455,57 +480,6 @@ class UserService:
 
         return UserService._format_user_response(user, db)
 
-    # @staticmethod
-    # def get_user_stats(db: Session, current_user: User) -> Dict:
-    #     role_names = [role.name for role in current_user.roles]
-
-    #     base_query = db.query(User).filter(
-    #         ~db.query(UserRole)
-    #         .join(Role)
-    #         .filter(
-    #             UserRole.user_id == User.id,
-    #             Role.name == "SUPER_ADMIN"
-    #         )
-    #         .exists()
-    #     )
-
-    #     # ---- VISIBILITY ----
-    #     if current_user.is_superuser or "ADMIN" in role_names or "SUPER_ADMIN" in role_names:
-    #         pass
-    #     elif current_user.is_supervisor:
-    #         subordinate_ids = (
-    #             db.query(UserSupervisor.user_id)
-    #             .filter(UserSupervisor.supervisor_id == current_user.id)
-    #         )
-    #         base_query = base_query.filter(
-    #             (User.id == current_user.id) |
-    #             (User.id.in_(subordinate_ids))
-    #         )
-    #     else:
-    #         base_query = base_query.filter(User.id == current_user.id)
-
-    #     total_users = base_query.count()
-
-    #     active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
-    #     inactive_status = db.query(Status).filter(Status.code == "INACTIVE").first()
-
-    #     active_users = (
-    #         base_query.filter(User.status_id == active_status.id).count()
-    #         if active_status else 0
-    #     )
-
-    #     inactive_users = (
-    #         base_query.filter(User.status_id == inactive_status.id).count()
-    #         if inactive_status else 0
-    #     )
-
-    #     return {
-    #         "total_users": total_users,
-    #         "active_users": active_users,
-    #         "inactive_users": inactive_users,
-    #         "admin_users": base_query.filter(User.is_superuser == True).count()
-    #     }
-
     @staticmethod
     def get_user_stats(db: Session, current_user) -> Dict:
 
@@ -562,7 +536,7 @@ class UserService:
     #             Role.name == 'SUPER_ADMIN'
     #         ).exists()
     #     ).scalar()
-        
+    #     
     #     active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
     #     active_users = db.query(func.count(User.id)).filter(
     #         User.status_id == active_status.id,
@@ -571,7 +545,7 @@ class UserService:
     #             Role.name == 'SUPER_ADMIN'
     #         ).exists()
     #     ).scalar() if active_status else 0
-        
+    #     
     #     admin_users = db.query(func.count(User.id)).filter(
     #         User.is_superuser == True,
     #         ~db.query(UserRole).join(Role).filter(
@@ -579,7 +553,7 @@ class UserService:
     #             Role.name == 'SUPER_ADMIN'
     #         ).exists()
     #     ).scalar()
-        
+    #     
     #     return {
     #         "total_users": total_users,
     #         "active_users": active_users,
@@ -652,6 +626,15 @@ class UserService:
                  if not organisation_name:
                      organisation_name = org.username
 
+        # Fetch Mapped Client Info
+        client_id = None
+        client_name = None
+        user_client = db.query(UserClient, Client).join(Client, UserClient.client_id == Client.id).filter(UserClient.user_id == user.id).first()
+        if user_client:
+            # user_client is a tuple (UserClient, Client)
+            client_id = str(user_client[1].id)
+            # client_name = user_client[1].name
+
         return {
             "id": user.id,
             "email": user.email,
@@ -669,7 +652,8 @@ class UserService:
             "assigned_client_count": client_count,
             "client_count": client_count,
             "created_by_name": created_by_name,
-            "organisation_name": organisation_name
+            "organisation_name": organisation_name,
+            "client_id": client_id
         }
 
     @staticmethod
