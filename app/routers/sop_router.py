@@ -57,7 +57,7 @@ class SOPCreate(SOPBase):
     provider_ids: Optional[List[UUID]] = []
 
 class SOPUpdate(SOPBase):
-    pass
+    provider_ids: Optional[List[UUID]] = None
 
 class SOPStatusUpdate(BaseModel):
     status_id: int
@@ -92,6 +92,7 @@ class SOPResponse(SOPBase):
     status: Optional[StatusInfo] = None
     created_at: Any
     updated_at: Any
+    providers: Optional[List[Dict[str, Any]]] = None
 
     class Config:
         from_attributes = True

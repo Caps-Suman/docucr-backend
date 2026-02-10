@@ -112,6 +112,36 @@ class SOPService:
                     sop.billing_guidelines
                 )
 
+        # Fetch linked providers
+        # Assuming SopProviderMapping is available and we can join or query separately.
+        # Since SOP model might not have direct relationship set up for 'providers' via secondary table,
+        # we can manual query.
+        
+        # NOTE: If SOP model has `providers` relationship, we can use that.
+        # Let's check imports. `Provider` model needed.
+        from app.models.provider import Provider
+        from app.models.sop_provider_mapping import SopProviderMapping
+
+        linked_providers = (
+            db.query(Provider)
+            .join(SopProviderMapping, SopProviderMapping.provider_id == Provider.id)
+            .filter(SopProviderMapping.sop_id == sop.id)
+            .all()
+        )
+        
+        # Attach to sop object (Pydantic will pick it up from attribute)
+        sop.providers = [
+            {
+                "id": str(p.id),
+                "name": f"{p.first_name} {p.middle_name or ''} {p.last_name}".strip().replace("  ", " "),
+                "first_name": p.first_name,
+                "last_name": p.last_name,
+                "npi": p.npi,
+                "type": "Individual" # Default
+            }
+            for p in linked_providers
+        ]
+
         return sop
 
     @staticmethod
@@ -166,6 +196,42 @@ class SOPService:
         if not db_sop:
             return None
         
+        # --- Provider Update Logic ---
+        if 'provider_ids' in sop_data:
+            # Get list or empty if None
+            provider_ids_raw = sop_data.pop('provider_ids')
+            new_provider_ids = set(str(pid) for pid in (provider_ids_raw or []))
+
+            # Fetch existing mappings
+            existing_mappings = (
+                db.query(SopProviderMapping)
+                .filter(SopProviderMapping.sop_id == sop_id)
+                .all()
+            )
+            existing_ids = {str(m.provider_id) for m in existing_mappings}
+
+            to_add = new_provider_ids - existing_ids
+            to_remove = existing_ids - new_provider_ids
+
+            # Remove
+            if to_remove:
+                db.query(SopProviderMapping).filter(
+                    SopProviderMapping.sop_id == sop_id,
+                    SopProviderMapping.provider_id.in_([uuid.UUID(pid) for pid in to_remove])
+                ).delete(synchronize_session=False)
+
+            # Add
+            if to_add:
+                new_objs = [
+                    SopProviderMapping(
+                        sop_id=uuid.UUID(sop_id),
+                        provider_id=uuid.UUID(pid)
+                    )
+                    for pid in to_add
+                ]
+                db.add_all(new_objs)
+
+        # Update other fields
         for key, value in sop_data.items():
             if key == 'client_id' and not value:
                  setattr(db_sop, key, None)
@@ -173,8 +239,9 @@ class SOPService:
                 setattr(db_sop, key, value)
         
         db.commit()
-        db.refresh(db_sop)
-        return db_sop
+        
+        # Re-fetch full object to include updated providers
+        return SOPService.get_sop_by_id(sop_id, db)
 
     @staticmethod
     def delete_sop(sop_id: str, db: Session) -> bool:
