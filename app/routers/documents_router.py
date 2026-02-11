@@ -5,6 +5,7 @@ from typing import List, Optional
 from uuid import UUID
 import json
 
+from app.models.document_form_data import DocumentFormData
 from app.models.organisation import Organisation
 from app.models.user_client import UserClient
 from ..core.database import get_db
@@ -379,110 +380,20 @@ def get_documents(
     date_to: Optional[str] = None,
     search_query: Optional[str] = None,
     form_filters: Optional[str] = None,
-    document_type_id: Optional[UUID] = None,  # ADD
+    document_type_id: Optional[UUID] = None,
     shared_only: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ"))
+    permission: bool = Depends(Permission("documents", "READ")),
 ):
-    """Get user documents with filters"""
-    documents, total_count = document_service.get_user_documents(
-        db=db,
-        current_user=current_user,
-        skip=skip,
-        limit=limit,
-        status_id=status_id,
-        date_from=date_from,
-        date_to=date_to,
-        search_query=search_query,
-        form_filters=form_filters,
-        document_type_id=document_type_id,
-        shared_only=shared_only
-    )
 
-    # Get all form fields for this user's scope (simplified to all for now as it's small)
-    fields = db.query(FormField).all()
-    field_map = {str(f.id): f for f in fields}
-    
-    # Get all clients
-    # Determine role
-    if isinstance(current_user, Organisation):
-    # ORG LOGIN → show all org clients
-        clients = db.query(Client).filter(
-            Client.organisation_id == current_user.id
-        ).all()
-
-    elif isinstance(current_user, User):
-
-        role_names = [r.name for r in current_user.roles]
-        is_admin = any(r in ["ADMIN", "SUPER_ADMIN"] for r in role_names)
-
-        if is_admin:
-            clients = db.query(Client).all()
-        else:
-            clients = (
-                db.query(Client)
-                .join(UserClient, UserClient.client_id == Client.id)
-                .filter(UserClient.user_id == current_user.id)
-                .all()
-            )
-
-    else:
-        clients = []
-
-    client_map = {str(c.id): c for c in clients}
-    
-    # Get all document types
-    doc_types = db.query(DocumentType).all()
-    doc_type_map = {str(dt.id): dt for dt in doc_types}
-
-    # Helper function to resolve form data using pre-fetched maps
-    def resolve_form_data(form_data_dict):
-        if not form_data_dict:
-            return {}
-        
-        resolved_data = {}
-        for field_id, value in form_data_dict.items():
-            field = field_map.get(str(field_id))
-            if field:
-                display_value = value
-                if field.field_type == 'client_dropdown':
-                    client = client_map.get(str(value))
-                    if client:
-                        display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
-                elif field.field_type == 'document_type_dropdown':
-                    doc_type = doc_type_map.get(str(value))
-                    if doc_type:
-                        display_value = doc_type.name
-                resolved_data[field.label] = display_value
-            else:
-                resolved_data[field_id] = value
-        return resolved_data
-    
-    result = [
-        {
-            "id": doc.id,
-            "filename": doc.filename,
-            "original_filename": doc.original_filename,
-            "status_id": doc.status_id,
-            "statusCode": doc.status.code if doc.status else None,
-            "file_size": doc.file_size,
-            "upload_progress": doc.upload_progress,
-            "error_message": doc.error_message,
-            "total_pages": doc.total_pages,
-            "created_at": doc.created_at.isoformat() if doc.created_at else None,
-            "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
-            "is_archived": doc.is_archived,
-            "custom_form_data": resolve_form_data(doc.form_data_relation.data if doc.form_data_relation else {})
-        }
-        for doc in documents
-    ]
+    docs, total = document_service.get_user_documents(db, current_user, skip, limit)
 
     return {
-        "documents": result,
-        "total": total_count,
-        "page": (skip // limit) + 1 if limit > 0 else 1,
-        "page_size": limit
+        "documents": docs,
+        "total": total,
+        "page": (skip // limit) + 1,
+        "page_size": limit,
     }
 
 @router.get("/{document_id}")

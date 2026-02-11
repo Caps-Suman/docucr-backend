@@ -14,6 +14,8 @@ from sqlalchemy import UUID, and_, or_, cast, String, select, text, func
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.document_share import DocumentShare
+from app.models.document_type import DocumentType
+from app.models.form import FormField
 from app.models.organisation import Organisation
 
 from ..models.document import Document
@@ -306,19 +308,14 @@ class DocumentService:
             # --------------------------------------------------
 
             if isinstance(user, Organisation):
-                created_by = user.id              # organisation id
+                created_by = None
                 org_id = user.id
                 client_id_value = parsed_form_data.get("client_id")
 
-
             elif isinstance(user, User):
                 created_by = user.id
-                if "SUPER_ADMIN" in [r.name for r in user.roles]:
-                    org_id = None
-                else:
-                    org_id = user.organisation_id
+                org_id = user.organisation_id
                 client_id_value = parsed_form_data.get("client_id") or user.client_id
-
 
             else:
                 raise Exception("Unknown actor")
@@ -911,31 +908,37 @@ class DocumentService:
         document_type_id=None,
         shared_only=False,
     ):
-        query = db.query(Document)
 
-        # ---------------------------------------------------
-        # ACTOR = USER
-        # ---------------------------------------------------
+        # =========================================================
+        # BASE QUERY
+        # =========================================================
+        query = (
+            db.query(Document)
+            .options(joinedload(Document.status))
+            .options(joinedload(Document.form_data_relation))
+        )
+
+        # =========================================================
+        # ACCESS CONTROL
+        # =========================================================
+        is_super_admin = False
+
         if isinstance(current_user, User):
-
             role_names = [r.name for r in current_user.roles]
+            is_super_admin = "SUPER_ADMIN" in role_names
 
-            # SUPERADMIN → everything
-            if "SUPER_ADMIN" in role_names:
+            if is_super_admin:
                 pass
 
-            # CLIENT USER
             elif current_user.is_client:
                 query = query.filter(
                     or_(
                         Document.client_id == current_user.client_id,
-                        Document.created_by == current_user.id
+                        Document.created_by == current_user.id,
                     )
                 )
 
-            # STAFF USER (belongs to org)
             elif current_user.organisation_id:
-
                 assigned_clients = db.query(UserClient.client_id).filter(
                     UserClient.user_id == current_user.id
                 )
@@ -944,39 +947,21 @@ class DocumentService:
                     or_(
                         Document.created_by == current_user.id,
                         Document.organisation_id == current_user.organisation_id,
-                        Document.client_id.in_(assigned_clients)
+                        Document.client_id.in_(assigned_clients),
                     )
                 )
-
-            # USER with no org
             else:
                 query = query.filter(Document.created_by == current_user.id)
 
-        # ---------------------------------------------------
-        # ACTOR = ORGANISATION LOGIN
-        # ---------------------------------------------------
         elif isinstance(current_user, Organisation):
-
-            assigned_clients = (
-                db.query(UserClient.client_id)
-                .join(User, UserClient.user_id == User.id)
-                .filter(User.organisation_id == current_user.id)
-            )
-
-
-            query = query.filter(
-                or_(
-                    Document.organisation_id == current_user.id,
-                    Document.client_id.in_(assigned_clients)
-                )
-            )
+            query = query.filter(Document.organisation_id == current_user.id)
 
         else:
-            raise Exception("Unknown actor type")
+            raise Exception("Unknown actor")
 
-        # ---------------------------------------------------
+        # =========================================================
         # FILTERS
-        # ---------------------------------------------------
+        # =========================================================
         if status_id:
             query = query.filter(Document.status_id == status_id)
 
@@ -984,9 +969,7 @@ class DocumentService:
             query = query.filter(Document.document_type_id == document_type_id)
 
         if search_query:
-            query = query.filter(
-                Document.original_filename.ilike(f"%{search_query}%")
-            )
+            query = query.filter(Document.original_filename.ilike(f"%{search_query}%"))
 
         total = query.count()
 
@@ -997,7 +980,111 @@ class DocumentService:
             .all()
         )
 
-        return documents, total
+        if not documents:
+            return [], total
+
+        # =========================================================
+        # BULK FETCH (NO N+1)
+        # =========================================================
+        doc_ids = [d.id for d in documents]
+        user_ids = {d.created_by for d in documents if d.created_by}
+        org_ids = {d.organisation_id for d in documents if d.organisation_id}
+
+        users_map = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()}
+
+        org_map = {}
+        if is_super_admin and org_ids:
+            org_map = {o.id: o for o in db.query(Organisation).filter(Organisation.id.in_(org_ids)).all()}
+
+        form_rows = db.query(DocumentFormData.document_id, DocumentFormData.data)\
+            .filter(DocumentFormData.document_id.in_(doc_ids)).all()
+        form_map = {d_id: data for d_id, data in form_rows}
+
+        fields = db.query(FormField).all()
+        field_map = {str(f.id): f for f in fields}
+
+        clients = db.query(Client).all()
+        client_map = {str(c.id): c for c in clients}
+
+        doc_types = db.query(DocumentType).all()
+        doc_type_map = {str(d.id): d for d in doc_types}
+
+        # =========================================================
+        # BUILD RESPONSE
+        # =========================================================
+        result = []
+
+        for doc in documents:
+
+            raw = form_map.get(doc.id, {}) or {}
+
+            client_name = None
+            doc_type_name = None
+            medical_records = None
+
+            for field_id, value in raw.items():
+                field = field_map.get(str(field_id))
+                if not field or not value:
+                    continue
+
+                label = field.label.lower()
+
+                if label == "client":
+                    c = client_map.get(str(value))
+                    if c:
+                        client_name = c.business_name or f"{c.first_name} {c.last_name}"
+
+                elif label == "document type":
+                    dt = doc_type_map.get(str(value))
+                    if dt:
+                        doc_type_name = dt.name
+
+                elif label == "medical records":
+                    medical_records = value
+
+            uploaded_by = None
+
+            # case 1: uploaded by user
+            if doc.created_by and doc.created_by in users_map:
+                u = users_map[doc.created_by]
+                uploaded_by = f"{u.first_name} {u.last_name}"
+
+            # case 2: uploaded by organisation login
+            elif doc.organisation_id:
+                uploaded_by = "Organisation"
+
+
+            organisation_name = None
+            if is_super_admin and doc.organisation_id in org_map:
+                organisation_name = org_map[doc.organisation_id].name
+
+            row = {
+                "id": doc.id,
+                "filename": doc.filename,
+                "original_filename": doc.original_filename,
+                "statusCode": doc.status.code if doc.status else None,
+                "file_size": doc.file_size,
+                "upload_progress": doc.upload_progress,
+                "error_message": doc.error_message,
+                "total_pages": doc.total_pages,
+                "created_at": doc.created_at.isoformat() if doc.created_at else None,
+                "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+                "is_archived": doc.is_archived,
+                "uploaded_by": uploaded_by,
+
+                # UI columns
+                "client": client_name,
+                "document_type": doc_type_name,
+                "medical_records": medical_records,
+            }
+
+            if is_super_admin:
+                row["organisation_name"] = organisation_name
+
+            result.append(row)
+
+        return result, total
+
 
     # @staticmethod
     # def get_document_detail(db: Session, document_id: int, created_by: str, current_user:User) -> Document:
