@@ -16,7 +16,7 @@ router = APIRouter()
 
 class AssignClientsRequest(BaseModel):
     client_ids: List[str]
-    assigned_by: str
+    assigned_by: Optional[str] = None
 
 class OrganisationResponse(BaseModel):
     id: str
@@ -472,7 +472,11 @@ async def map_clients_to_user(
     permission: bool = Depends(Permission("user_module", "UPDATE")) # Mapping clients is an update action
 ):
     """Map clients to a user"""
-    UserService.map_clients_to_user(user_id, request.client_ids, request.assigned_by, db)
+    assigned_by_id = None
+    if isinstance(current_user, User):
+        assigned_by_id = str(current_user.id)
+    
+    UserService.map_clients_to_user(user_id, request.client_ids, assigned_by_id, db)
     
     # Log activity
     ActivityService.log(

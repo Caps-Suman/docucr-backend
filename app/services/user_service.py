@@ -293,7 +293,7 @@ class UserService:
         return results
 
     @staticmethod
-    def map_clients_to_user(user_id: str, client_ids: List[str], assigned_by: str, db: Session):
+    def map_clients_to_user(user_id: str, client_ids: List[str], assigned_by: Optional[str], db: Session):
         """Map multiple clients to a user"""
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
