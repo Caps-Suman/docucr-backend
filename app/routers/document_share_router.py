@@ -19,33 +19,21 @@ class ShareDocumentsRequest(BaseModel):
 @router.post("/share")
 async def share_documents(
     request: ShareDocumentsRequest,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     background_tasks: BackgroundTasks = None,
     permission: bool = Depends(Permission("documents", "SHARE")),
 ):
     service = DocumentShareService(db)
+
     created, users = service.share_documents(
-        request.document_ids,
-        request.user_ids,
-        current_user.id
+        document_ids=request.document_ids,
+        user_ids=request.user_ids,
+        actor=current_user   # 🔥 PASS OBJECT
     )
 
-    if created > 0:
-        for user in users:
-            background_tasks.add_task(
-                DocumentShareService.send_internal_share_email,
-                user.email,
-                f"{current_user.first_name} {current_user.last_name}",
-                len(request.document_ids)
-            )
-
     return {
-        "message": (
-            "Documents shared successfully"
-            if created > 0
-            else "Documents were already shared with the selected users"
-        ),
+        "message": "Documents shared successfully" if created else "Already shared",
         "new_shares": created
     }
 

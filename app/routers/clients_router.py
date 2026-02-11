@@ -1,6 +1,7 @@
 import re
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from app.models.client import Client
+from app.models.organisation import Organisation
 from app.models.provider import Provider
 from app.services.activity_service import ActivityService
 from app.core.permissions import Permission
@@ -304,7 +305,59 @@ def get_visible_clients(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    return ClientService.get_visible_clients(db, current_user)
+
+    # --------------------------------------------
+    # LOGIN AS ORGANISATION
+    # --------------------------------------------
+    if isinstance(current_user, Organisation):
+        clients = db.query(Client).filter(
+            Client.organisation_id == current_user.id
+        ).all()
+
+        return [
+            ClientResponse(**ClientService._format_client(c, db))
+            for c in clients
+        ]
+
+    # --------------------------------------------
+    # LOGIN AS USER
+    # --------------------------------------------
+    if isinstance(current_user, User):
+        roles = [r.name for r in current_user.roles]
+
+        # SUPERADMIN → all clients
+        if "SUPER_ADMIN" in roles:
+            clients = db.query(Client).all()
+
+        # CLIENT USER → only their client
+        elif current_user.is_client:
+            clients = db.query(Client).filter(
+                Client.id == current_user.client_id
+            ).all()
+
+        # STAFF WITH ORG
+        elif current_user.organisation_id:
+            clients = db.query(Client).filter(
+                Client.organisation_id == current_user.organisation_id
+            ).all()
+
+        # STAFF WITHOUT ORG → assigned
+        else:
+            assigned = db.query(UserClient.client_id).filter(
+                UserClient.user_id == current_user.id
+            )
+
+            clients = db.query(Client).filter(
+                Client.id.in_(assigned)
+            ).all()
+
+        return [
+            ClientResponse(**ClientService._format_client(c, db))
+            for c in clients
+        ]
+
+    return []
+
 
 @router.get("/me", response_model=ClientResponse)
 async def get_my_client(

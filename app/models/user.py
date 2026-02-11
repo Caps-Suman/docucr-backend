@@ -30,7 +30,11 @@ class User(Base):
     creator = relationship("User", remote_side=[id], backref="created_users")
 
     
-    documents = relationship("Document", back_populates="user")
+    documents_created  = relationship(
+        "Document",
+        foreign_keys="Document.created_by",
+        back_populates="creator"
+    )
     status_relation = relationship("Status")
     shared_documents = relationship(
     "DocumentShare",

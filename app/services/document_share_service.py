@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from typing import List, Dict
 from app.models.document_share import DocumentShare
 from app.models.document import Document
+from app.models.organisation import Organisation
 from app.models.user import User
 from fastapi import HTTPException, status
 
@@ -72,10 +73,22 @@ class DocumentShareService:
         self,
         document_ids: List[int],
         user_ids: List[str],
-        shared_by: str
+        actor:str
     ) -> int:
         # Validate users
         users = self.db.query(User).filter(User.id.in_(user_ids)).all()
+        if isinstance(actor, User):
+            shared_by_user_id = actor.id
+            shared_by_org_id = None
+            sharer_name = f"{actor.first_name} {actor.last_name}".strip()
+
+        elif isinstance(actor, Organisation):
+            shared_by_user_id = None
+            shared_by_org_id = actor.id
+            sharer_name = actor.name
+
+        else:
+            raise Exception("Unknown actor type")
         if len(users) != len(set(user_ids)):
             raise HTTPException(
                 status_code=400,
@@ -96,7 +109,7 @@ class DocumentShareService:
 
         for doc in documents:
             for user in users:
-                if user.id == shared_by:
+                if user.id == shared_by_user_id:
                     continue
 
                 exists = self.db.query(DocumentShare).filter(
@@ -111,7 +124,8 @@ class DocumentShareService:
                     DocumentShare(
                         document_id=doc.id,
                         user_id=user.id,
-                        shared_by=shared_by
+                        shared_by_user_id=shared_by_user_id,
+                        shared_by_org_id=shared_by_org_id
                     )
                 )
                 created += 1
@@ -119,7 +133,7 @@ class DocumentShareService:
         self.db.commit()
 
         # 🔔 SEND EMAILS (AFTER COMMIT)
-        sharer = self.db.query(User).filter(User.id == shared_by).first()
+        sharer = self.db.query(User).filter(User.id == shared_by_user_id).first()
         sharer_name = (
             f"{sharer.first_name} {sharer.last_name}".strip()
             if sharer else "A colleague"
