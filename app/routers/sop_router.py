@@ -80,7 +80,12 @@ class SOPShortResponse(BaseModel):
     status_id: Optional[int] = None
     status: Optional[StatusInfo] = None
     created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
     organisation_id: Optional[str] = None
+    organisation_name: Optional[str] = None
+    client_id: Optional[UUID] = None
+    client_name: Optional[str] = None
+    client_npi: Optional[str] = None
     updated_at: Any
 
     class Config:
@@ -94,6 +99,10 @@ class SOPStatsResponse(BaseModel):
 class SOPResponse(SOPBase):
     id: UUID
     status: Optional[StatusInfo] = None
+    created_by_name: Optional[str] = None
+    organisation_name: Optional[str] = None
+    client_name: Optional[str] = None
+    client_npi: Optional[str] = None
     created_at: Any
     updated_at: Any
     providers: Optional[List[Dict[str, Any]]] = None
@@ -130,9 +139,14 @@ def get_sops(
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
-    status_code: Optional[str] = None,   # FIX
+    status_code: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    organisation_id: Optional[str] = None,
+    created_by: Optional[str] = None,
+    client_id: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(Permission("SOPS", "READ"))
+    current_user = Depends(get_current_user)
 ):
     sops, total = SOPService.get_sops(
         db,
@@ -140,7 +154,12 @@ def get_sops(
         skip=skip,
         limit=limit,
         search=search,
-        status_code=status_code
+        status_code=status_code,
+        from_date=from_date,
+        to_date=to_date,
+        organisation_id=organisation_id,
+        created_by=created_by,
+        client_id=client_id
     )
     return {"sops": sops, "total": total}
 
@@ -252,8 +271,9 @@ def download_sop_pdf(
         raise HTTPException(status_code=404, detail="SOP not found")
     
     pdf_buffer = SOPService.generate_sop_pdf(sop)
+    filename = sop.get('title', 'SOP').replace(' ', '_')
     return StreamingResponse(
         io.BytesIO(pdf_buffer),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={sop.title.replace(' ', '_')}.pdf"}
+        headers={"Content-Disposition": f"attachment; filename={filename}.pdf"}
     )
