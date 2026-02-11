@@ -60,7 +60,7 @@ class FormService:
         if not form:
             return None
         
-        fields = db.query(FormField).filter(FormField.form_id == form_id).order_by(FormField.order).all()
+        fields = db.query(FormField).filter(FormField.form_id == str(form_id)).order_by(FormField.order).all()
         status_code = form.status_relation.code if form.status_relation else None
 
         return {
@@ -173,7 +173,7 @@ class FormService:
                  form.status_id = new_status_id
 
         if 'fields' in data:
-            db.query(FormField).filter(FormField.form_id == form_id).delete()
+            db.query(FormField).filter(FormField.form_id == str(form_id)).delete()
             
             for idx, field_data in enumerate(data['fields']):
                 field = FormField(

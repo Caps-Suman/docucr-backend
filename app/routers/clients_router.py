@@ -571,7 +571,7 @@ async def update_client(
         action="UPDATE",
         entity_type="client",
         entity_id=client_id,
-        user_id=current_user.id,
+        current_user=current_user.id,
         details={
             "name": updated_client['business_name'],
             "changes": changes
