@@ -553,15 +553,14 @@ class SOPService:
         story.append(Spacer(1, 0.3*inch))
         
         # --- Client Information ---
-        story.append(Paragraph('Client Information', section_header))
+        story.append(Paragraph('Practice Information', section_header))
         client_data = [
             [
-                mk_field('Client Name', sop.get('client_name')),
-                mk_field('Client NPI', sop.get('client_npi')),
-                Paragraph('', bs) # Empty for alignment
+                mk_field('Name', sop.get('client_name')),
+                mk_field('NPI', sop.get('client_npi'))
             ]
         ]
-        t_client = Table(client_data, colWidths=[2.333*inch]*3)
+        t_client = Table(client_data, colWidths=[3.5*inch]*2)
         t_client.setStyle(TableStyle([
             ('VALIGN', (0,0), (-1,-1), 'TOP'),
             ('PADDING', (0,0), (-1,-1), 8),
@@ -574,20 +573,18 @@ class SOPService:
         # --- Associated Providers ---
         providers = sop.get('providers', [])
         if providers:
-            story.append(Paragraph('Associated Providers', section_header))
+            story.append(Paragraph('Provider', section_header))
             prov_list_data = [[
-                Paragraph('<b>Provider Name</b>', pdf_styles['th']),
-                Paragraph('<b>NPI</b>', pdf_styles['th']),
-                Paragraph('<b>Type</b>', pdf_styles['th'])
+                Paragraph('<b>Name</b>', pdf_styles['th']),
+                Paragraph('<b>NPI</b>', pdf_styles['th'])
             ]]
             for p in providers:
                 prov_list_data.append([
                     Paragraph(p.get('name', '-'), pdf_styles['td']),
-                    Paragraph(p.get('npi', '-'), pdf_styles['td']),
-                    Paragraph(p.get('type', 'Individual'), pdf_styles['td'])
+                    Paragraph(p.get('npi', '-'), pdf_styles['td'])
                 ])
             
-            t_prov_list = Table(prov_list_data, colWidths=[3.0*inch, 2.0*inch, 2.0*inch])
+            t_prov_list = Table(prov_list_data, colWidths=[4.5*inch, 2.5*inch])
             t_prov_list.setStyle(table_styles)
             story.append(t_prov_list)
             story.append(Spacer(1, 0.2*inch))
