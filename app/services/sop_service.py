@@ -2,11 +2,13 @@ from importlib.resources import path
 import uuid
 from sqlalchemy.orm import Session, defer
 from sqlalchemy import desc, func
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 from app.models.sop import SOP
 from app.models.client import Client
 from app.models.status import Status
 from app.models.sop_provider_mapping import SopProviderMapping
+from app.models.user import User
+from app.models.organisation import Organisation
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -37,6 +39,7 @@ class SOPService:
     @staticmethod
     def get_sops(
         db: Session,
+        current_user: Any,
         skip: int = 0,
         limit: int = 100,
         search: Optional[str] = None,
@@ -50,6 +53,22 @@ class SOPService:
             defer(SOP.coding_rules_cpt),
             defer(SOP.coding_rules_icd),
         )
+
+        # Apply visibility filtering
+        if not current_user.is_superuser:
+            if isinstance(current_user, Organisation):
+                query = query.filter(SOP.organisation_id == str(current_user.id))
+            elif getattr(current_user, 'is_client', False):
+                # Client users see SOPs they created
+                query = query.filter(SOP.created_by == str(current_user.id))
+            else:
+                # Organisation employees see their organisation's SOPs
+                org_id = getattr(current_user, 'organisation_id', None)
+                if org_id:
+                    query = query.filter(SOP.organisation_id == str(org_id))
+                else:
+                    # Fallback for users without an organisation
+                    query = query.filter(SOP.created_by == str(current_user.id))
 
         if status_code:
             status = db.query(Status).filter(
@@ -71,7 +90,7 @@ class SOPService:
         sops = query.order_by(desc(SOP.created_at)).offset(skip).limit(limit).all()
         return sops, total
     @staticmethod
-    def get_sop_stats(db: Session) -> Dict[str, int]:
+    def get_sop_stats(db: Session, current_user: Any) -> Dict[str, int]:
         """
         Visibility stats ONLY.
         workflow_status_id is intentionally ignored.
@@ -90,6 +109,22 @@ class SOPService:
             .join(Status, Status.id == SOP.status_id)
             .filter(Status.type == "GENERAL")
         )
+
+        # Apply visibility filtering
+        if not current_user.is_superuser:
+            if isinstance(current_user, Organisation):
+                q = q.filter(SOP.organisation_id == str(current_user.id))
+            elif getattr(current_user, 'is_client', False):
+                # Client users see SOPs they created
+                q = q.filter(SOP.created_by == str(current_user.id))
+            else:
+                # Organisation employees see their organisation's SOPs
+                org_id = getattr(current_user, 'organisation_id', None)
+                if org_id:
+                    q = q.filter(SOP.organisation_id == str(org_id))
+                else:
+                    # Fallback for users without an organisation
+                    q = q.filter(SOP.created_by == str(current_user.id))
 
         row = q.one()
 
@@ -145,7 +180,7 @@ class SOPService:
         return sop
 
     @staticmethod
-    def create_sop(sop_data: Dict, db: Session) -> SOP:
+    def create_sop(sop_data: Dict, db: Session, current_user: Any) -> SOP:
         # Extract provider_ids
         provider_ids = sop_data.pop("provider_ids", [])
 
@@ -156,6 +191,24 @@ class SOPService:
         # If client_id is empty string, set to None
         if 'client_id' in sop_data and not sop_data['client_id']:
             sop_data['client_id'] = None
+
+        # --- Ownership Logic ---
+        organisation_id_val = None
+        created_by_val = None
+
+        if isinstance(current_user, Organisation):
+            created_by_val = None
+            organisation_id_val = str(current_user.id)
+        elif isinstance(current_user, User):
+            if not current_user.is_superuser:
+                created_by_val = str(current_user.id)
+                if current_user.id:
+                    organisation_id_val = str(current_user.organisation_id) if current_user.organisation_id else None
+            else:
+                created_by_val = None
+        
+        sop_data['created_by'] = created_by_val
+        sop_data['organisation_id'] = organisation_id_val
 
         # Set default status if missing
         if 'status_id' not in sop_data or sop_data['status_id'] is None:

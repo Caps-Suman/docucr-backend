@@ -32,11 +32,16 @@ class SOP(Base):
     # 🔁 Workflow / processing status
     workflow_status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)
 
+    created_by = Column(String, ForeignKey("docucr.user.id"), nullable=True)
+    organisation_id = Column(String, ForeignKey("docucr.organisation.id"), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # ---------- Relationships ----------
     client = relationship("Client", backref="sops")
+    creator = relationship("User", foreign_keys=[created_by], backref="created_sops")
+    organisation = relationship("Organisation", foreign_keys=[organisation_id], backref="sops")
 
     lifecycle_status = relationship(
         "Status",

@@ -52,6 +52,8 @@ class SOPBase(BaseModel):
     coding_rules_cpt: Optional[List[Dict[str, Any]]] = None
     coding_rules_icd: Optional[List[Dict[str, Any]]] = None
     status_id: Optional[int] = None
+    created_by: Optional[str] = None
+    organisation_id: Optional[str] = None
 
 class SOPCreate(SOPBase):
     provider_ids: Optional[List[UUID]] = []
@@ -77,6 +79,8 @@ class SOPShortResponse(BaseModel):
     provider_info: Optional[Dict[str, Any]] = None
     status_id: Optional[int] = None
     status: Optional[StatusInfo] = None
+    created_by: Optional[str] = None
+    organisation_id: Optional[str] = None
     updated_at: Any
 
     class Config:
@@ -110,15 +114,16 @@ class AISOPExtractResponse(BaseModel):
 def create_sop(
     sop: SOPCreate, 
     db: Session = Depends(get_db),
-    current_user: User = Depends(Permission("SOPS", "CREATE"))
+    current_user: Any = Depends(Permission("SOPS", "CREATE"))
 ):
-    return SOPService.create_sop(sop.model_dump(), db)
+    sop_data = sop.model_dump()
+    return SOPService.create_sop(sop_data, db, current_user)
 @router.get("/stats", response_model=SOPStatsResponse)
 def get_sop_stats(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    return SOPService.get_sop_stats(db)
+    return SOPService.get_sop_stats(db, current_user)
 
 @router.get("", response_model=SOPListResponse)
 def get_sops(
@@ -131,6 +136,7 @@ def get_sops(
 ):
     sops, total = SOPService.get_sops(
         db,
+        current_user=current_user,
         skip=skip,
         limit=limit,
         search=search,
