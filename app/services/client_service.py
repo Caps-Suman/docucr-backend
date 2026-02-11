@@ -1131,7 +1131,15 @@ class ClientService:
         
         # 3. Other Roles
         else:
-            query = query.filter(Client.created_by == str(current_user.id))
+            query = query.filter(
+                or_(
+                    Client.created_by == str(current_user.id),
+                    Client.id.in_(
+                        # Subquery for assigned clients
+                        db.query(UserClient.client_id).filter(UserClient.user_id == str(current_user.id))
+                    )
+                )
+            )
 
         results = query.order_by(Client.business_name).all()
         
