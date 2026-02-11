@@ -962,8 +962,15 @@ class DocumentService:
         # =========================================================
         # FILTERS
         # =========================================================
-        if status_id:
-            query = query.filter(Document.status_id == status_id)
+        if status_id and status_id != "archived":
+            status = db.query(Status).filter(Status.code == status_id.upper()).first()
+            if status:
+                query = query.filter(Document.status_id == status.id)
+        if status_id == "archived":
+            query = query.filter(Document.is_archived == True)
+        elif not status_id:
+            # default view = exclude archived
+            query = query.filter(or_(Document.is_archived == False, Document.is_archived.is_(None)))
 
         if document_type_id:
             query = query.filter(Document.document_type_id == document_type_id)
