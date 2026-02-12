@@ -65,11 +65,11 @@ async def get_activity_logs(
     entity_type: Optional[str] = Query(None, description="Entity Type (e.g. 'document')"),
     action: Optional[str] = None,
     user_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
     user_name: Optional[str] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
 ):
     """
     Get activity logs with pagination and filtering.
@@ -83,6 +83,7 @@ async def get_activity_logs(
         action=action,
         user_name=user_name,
         start_date=start_date,
+        current_user=current_user,
         limit=limit,
         offset=(page - 1) * limit
     )
