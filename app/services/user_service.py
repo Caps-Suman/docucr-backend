@@ -111,20 +111,32 @@ class UserService:
             ).exists()
         )
 
-        if not current_user.is_superuser:
-            if getattr(current_user, 'is_client', False):
-                query = query.filter(
-                    (User.created_by == str(current_user.id)) |
-                    (User.id == str(current_user.id))
-                )
-            else:
-                 query = query.filter(
-                        User.organisation_id == str(current_user.id)
-                    )
+        # ---------------------------------------------------------
+        # Handle ORGANISATION/CLIENT Login (Instance Checks)
+        # ---------------------------------------------------------
+        if isinstance(current_user, Organisation):
+            query = query.filter(User.organisation_id == str(current_user.id))
+        
+        elif isinstance(current_user, Client):
+            query = query.filter(User.client_id == str(current_user.id))
+
+        elif isinstance(current_user, User):
+            if not current_user.is_superuser:
+                if getattr(current_user, 'is_client', False):
+                    # Client Admin: See created users ONLY (exclude self)
+                    query = query.filter(User.created_by == str(current_user.id))
+                elif current_user.organisation_id:
+                     query = query.filter(User.organisation_id == str(current_user.organisation_id))
+                else:
+                     query = query.filter(User.id == str(current_user.id))
 
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
-        
+
+        # ... (rest of get_users) ...
+
+    # ... (skipping to get_user_stats) ...
+
         if role_id:
             # Handle list or single string (though type hint says List, runtime might vary if not careful, but Router ensures list)
             if isinstance(role_id, list):
@@ -192,10 +204,25 @@ class UserService:
         # Let's show everyone who matches the filter contexts.
 
         # Context Filters
-        if not current_user.is_superuser and current_user.organisation_id:
+        # Context Filters
+        if isinstance(current_user, Organisation):
             # Enforce Organisation Isolation for Org Admins
-            query = query.filter(User.organisation_id == str(current_user.organisation_id))
-        elif organisation_id:
+            query = query.filter(User.organisation_id == str(current_user.id))
+        
+        elif isinstance(current_user, Client):
+            # Enforce Client Isolation
+            query = query.filter(User.client_id == str(current_user.id))
+
+        elif isinstance(current_user, User):
+            if not current_user.is_superuser and current_user.organisation_id:
+                # Enforce Organisation Isolation for Org Admins (User)
+                query = query.filter(User.organisation_id == str(current_user.organisation_id))
+            elif getattr(current_user, 'is_client', False):
+                # Client User
+                query = query.filter(User.client_id == str(current_user.client_id))
+        
+        # Additional Filters
+        if organisation_id:
             if isinstance(organisation_id, list):
                 query = query.filter(User.organisation_id.in_(organisation_id))
             else:
@@ -592,20 +619,43 @@ class UserService:
         if isinstance(current_user, User) and current_user.is_superuser:
             pass
 
-        # 🔥 CLIENT USER
-        elif isinstance(current_user, User) and current_user.is_client:
-            query = query.filter(
-                (User.created_by == str(current_user.id)) |
-                (User.id == str(current_user.id))
-            )
+        # 🔥 CLIENT LOGIN (Client Instance)
+        elif isinstance(current_user, Client):
+             query = query.filter(User.client_id == str(current_user.id))
+        
+        # 🔥 CLIENT USER (User with is_client=True)
+        elif isinstance(current_user, User) and getattr(current_user, 'is_client', False):
+            # Client Admin: See created users ONLY (exclude self)
+            query = query.filter(User.created_by == str(current_user.id))
 
         # 🔥 ORG LOGIN
         elif isinstance(current_user, Organisation):
             query = query.filter(User.organisation_id == str(current_user.id))
 
-        # 🔥 ORG USER
+        # 🔥 ORG USER (Check Roles)
         elif isinstance(current_user, User):
-            query = query.filter(User.id == str(current_user.id))
+            role_names = [r.name for r in current_user.roles]
+            
+            if "ORGANISATION_ROLE" in role_names:
+                if current_user.organisation_id:
+                    query = query.filter(User.organisation_id == str(current_user.organisation_id))
+                else:
+                    query = query.filter(User.id == str(current_user.id))
+            
+            elif "CLIENT_ADMIN" in role_names:
+                # Should be handled by is_client check, but fallback here
+                 query = query.filter(User.created_by == str(current_user.id))
+            
+            elif "SUPER_ADMIN" in role_names:
+                pass
+
+            else:
+                # Standard User -> See NOTHING
+                return {
+                    "total_users": 0,
+                    "active_users": 0,
+                    "inactive_users": 0
+                }
 
         total = query.count()
 
