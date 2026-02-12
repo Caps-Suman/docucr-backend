@@ -263,6 +263,23 @@ class ClientService:
             client_payload.pop("organisation_id", None)
             client_payload.pop("user_id", None)
 
+            # ---------------- NORMALIZE CLIENT TYPE ----------------
+            raw_type = client_payload.get("type")
+
+            if raw_type:
+                normalized = raw_type.lower().replace("-", "").replace(" ", "")
+
+                individual_keywords = {
+                    "individual",
+                    "npi1",
+                    "npi-1",
+                    "individual npi1",
+                    "individual npi-1"
+                }
+
+                if any(keyword in normalized for keyword in individual_keywords):
+                    client_payload["type"] = "Individual"
+
             # ---------------- CREATE CLIENT ----------------
             client = Client(
                 status_id=active_status.id if active_status else None,
