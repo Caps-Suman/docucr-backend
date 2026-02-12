@@ -37,7 +37,7 @@ class Template(Base):
         ForeignKey("docucr.user.id"),
         nullable=False
     )
-
+    organisation_id=Column(String,ForeignKey('docucr.organisation.id'), nullable=True)
     updated_by = Column(
         String,
         ForeignKey("docucr.user.id"),

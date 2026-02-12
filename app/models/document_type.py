@@ -14,7 +14,7 @@ class DocumentType(Base):
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
+    organisation_id=Column(String,ForeignKey('docucr.organisation.id'), nullable=True)
     # Relationships
     templates = relationship("Template", back_populates="document_type", cascade="all, delete-orphan")
     status = relationship("Status")
