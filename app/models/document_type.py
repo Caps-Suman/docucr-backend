@@ -16,6 +16,7 @@ class DocumentType(Base):
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=False)
+    organisation_id = Column(Integer, ForeignKey('docucr.organisation.id'), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     # Relationships
