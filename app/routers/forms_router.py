@@ -41,6 +41,14 @@ class FormResponse(BaseModel):
     created_at: Any
     fields_count: Optional[int] = 0
 
+    # ADD THESE ↓↓↓
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
+    organisation_id: Optional[str] = None
+    organisation_name: Optional[str] = None
+    creator_type: Optional[str] = None
+
+
 class FormDetailResponse(BaseModel):
     id: str
     name: str

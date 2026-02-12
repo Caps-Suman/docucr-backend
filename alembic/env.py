@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 load_dotenv()
 
 config = context.config
-if "DATABASE_URL" in os.environ:
+if "PROD_DB" in os.environ:
     db_url = os.environ["DATABASE_URL"].replace("%", "%%")
     config.set_main_option('sqlalchemy.url', db_url)
 
