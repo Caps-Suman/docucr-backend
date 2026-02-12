@@ -1,65 +1,210 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 from app.models.form import Form, FormField
+from app.models.organisation import Organisation
 from app.models.status import Status
 import uuid
 from typing import List, Dict, Any, Optional, Tuple
 
+from app.models.user import User
+
 class FormService:
     @staticmethod
-    def get_forms(page: int, page_size: int, db: Session) -> Tuple[List[Dict], int]:
-        offset = (page - 1) * page_size
+    def _resolve_org_id(current_user):
+        if not current_user:
+            return None
+
+        # superadmin handled separately
+        if getattr(current_user, "is_superuser", False):
+            return None
+
+        if isinstance(current_user, Organisation):
+            return str(current_user.id)
+
+        if isinstance(current_user, User):
+            return str(current_user.organisation_id) if current_user.organisation_id else None
+
+        return None
+
+    @staticmethod
+    def _apply_access_filter(query, current_user):
+
+        # SUPERADMIN → unrestricted
+        if getattr(current_user, "is_superuser", False):
+            return query
+
+        org_id = FormService._resolve_org_id(current_user)
+
+        # no org → no access (client / random user)
+        if not org_id:
+            return query.filter(False)
+
+        return query.filter(Form.organisation_id == org_id)
+
+
+    # @staticmethod
+    # def get_forms(page: int, page_size: int, db: Session, current_user:str) -> Tuple[List[Dict], int]:
+    #     offset = (page - 1) * page_size
         
-        # We need to join Status to filter or select code.
-        # Original query selected Form.status_id, which is now Integer.
-        # We want to return the code.
-        # So join Status and select Status.code
+    #     # We need to join Status to filter or select code.
+    #     # Original query selected Form.status_id, which is now Integer.
+    #     # We want to return the code.
+    #     # So join Status and select Status.code
+    #     query = db.query(
+    #         Form.id,
+    #         Form.name,
+    #         Form.description,
+    #         Form.status_id,
+    #         Status.code.label('status_code'),
+    #         Form.created_at,
+    #         func.count(FormField.id).label('fields_count')
+    #     ).outerjoin(FormField, Form.id == FormField.form_id)\
+    #     .outerjoin(Status, Form.status_id == Status.id)\
+    #     .group_by(Form.id, Form.name, Form.description, Form.status_id, Status.code, Form.created_at)\
+    #     .order_by(Form.created_at.desc())
+
+    #     query = FormService._apply_access_filter(query, current_user)
+
+        
+    #     total = query.count()
+    #     forms = query.offset(offset).limit(page_size).all()
+        
+    #     result = []
+    #     for row in forms:
+    #         r = dict(row._mapping)
+    #         # rename status_code to statusCode for frontend
+    #         r['statusCode'] = r.pop('status_code', None)
+    #         result.append(r)
+
+    #     return result, total
+    @staticmethod
+    def get_form_stats(db: Session, current_user) -> Dict[str, int]:
+
+        # CLIENT → no access
+        if getattr(current_user, "is_client", False):
+            return {
+                "total_forms": 0,
+                "active_forms": 0,
+                "inactive_forms": 0
+            }
+
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
+
+        # base query
+        total_query = db.query(func.count(Form.id))
+        active_query = db.query(func.count(Form.id))
+
+        # apply hierarchy filter
+        total_query = FormService._apply_access_filter(total_query, current_user)
+
+        if active_status:
+            active_query = active_query.filter(Form.status_id == active_status.id)
+        else:
+            active_query = active_query.filter(False)
+
+        active_query = FormService._apply_access_filter(active_query, current_user)
+
+        total_forms = total_query.scalar() or 0
+        active_forms = active_query.scalar() or 0
+
+        return {
+            "total_forms": total_forms,
+            "active_forms": active_forms,
+            "inactive_forms": total_forms - active_forms
+        }
+
+    # @staticmethod
+    # def get_forms(
+    #     page: int,
+    #     page_size: int,
+    #     db: Session,
+    #     current_user,
+    #     status: Optional[str] = None
+    # ) -> Tuple[List[Dict], int]:
+
+    #     offset = (page - 1) * page_size
+
+    #     query = db.query(
+    #         Form.id,
+    #         Form.name,
+    #         Form.description,
+    #         Form.status_id,
+    #         Status.code.label("status_code"),
+    #         Form.created_at,
+    #         func.count(FormField.id).label("fields_count")
+    #     ).outerjoin(FormField, Form.id == FormField.form_id)\
+    #     .outerjoin(Status, Form.status_id == Status.id)\
+    #     .group_by(Form.id, Status.code)\
+    #     .order_by(Form.created_at.desc())
+
+    #     query = FormService._apply_access_filter(query, current_user)
+
+    #     # status filter
+    #     if status:
+    #         status_obj = db.query(Status).filter(Status.code == status).first()
+    #         if status_obj:
+    #             query = query.filter(Form.status_id == status_obj.id)
+
+    #     total = query.count()
+    #     rows = query.offset(offset).limit(page_size).all()
+
+    #     result = []
+    #     for row in rows:
+    #         r = dict(row._mapping)
+    #         r["statusCode"] = r.pop("status_code", None)
+    #         result.append(r)
+
+    #     return result, total
+
+    @staticmethod
+    def get_forms(page, page_size, db, current_user, status=None):
+
+        offset = (page - 1) * page_size
+
         query = db.query(
             Form.id,
             Form.name,
             Form.description,
             Form.status_id,
-            Status.code.label('status_code'),
+            Status.code.label("status_code"),
             Form.created_at,
-            func.count(FormField.id).label('fields_count')
+            func.count(FormField.id).label("fields_count")
         ).outerjoin(FormField, Form.id == FormField.form_id)\
-         .outerjoin(Status, Form.status_id == Status.id)\
-         .group_by(Form.id, Form.name, Form.description, Form.status_id, Status.code, Form.created_at)\
-         .order_by(Form.created_at.desc())
-        
+        .outerjoin(Status, Form.status_id == Status.id)\
+        .group_by(Form.id, Status.code)\
+        .order_by(Form.created_at.desc())
+
+        query = FormService._apply_access_filter(query, current_user)
+
+        # APPLY FILTER FROM STATS CLICK
+        if status:
+            status_obj = db.query(Status).filter(Status.code == status).first()
+            if status_obj:
+                query = query.filter(Form.status_id == status_obj.id)
+
         total = query.count()
-        forms = query.offset(offset).limit(page_size).all()
-        
+        rows = query.offset(offset).limit(page_size).all()
+
         result = []
-        for row in forms:
+        for row in rows:
             r = dict(row._mapping)
-            # rename status_code to statusCode for frontend
-            r['statusCode'] = r.pop('status_code', None)
+            r["statusCode"] = r.pop("status_code", None)
             result.append(r)
 
         return result, total
+
     
     @staticmethod
-    def get_form_stats(db: Session) -> Dict[str, int]:
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        
-        total_forms = db.query(func.count(Form.id)).scalar()
-        active_forms = db.query(func.count(Form.id)).filter(
-            Form.status_id == active_status.id if active_status else None
-        ).scalar()
-        
-        return {
-            "total_forms": total_forms or 0,
-            "active_forms": active_forms or 0,
-            "inactive_forms": (total_forms or 0) - (active_forms or 0)
-        }
-    
-    @staticmethod
-    def get_form_by_id(form_id: str, db: Session) -> Optional[Dict]:
-        form = db.query(Form).filter(Form.id == form_id).first()
+    def get_form_by_id(form_id: str, db: Session, current_user:str) -> Optional[Dict]:
+        # form = db.query(Form).filter(Form.id == form_id).first()
+        # if not form:
+        #     return None
+        query = db.query(Form).filter(Form.id == form_id)
+        query = FormService._apply_access_filter(query, current_user)
+
+        form = query.first()
         if not form:
             return None
-        
         fields = db.query(FormField).filter(FormField.form_id == str(form_id)).order_by(FormField.order).all()
         status_code = form.status_relation.code if form.status_relation else None
 
@@ -97,24 +242,68 @@ class FormService:
         return FormService.get_form_by_id(form.id, db)
     
     @staticmethod
-    def create_form(data: Dict[str, Any], user_id: str, db: Session) -> Dict:
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        
-        # Check if there's already an active form and deactivate it
-        if active_status:
-            existing_active = db.query(Form).filter(Form.status_id == active_status.id).first()
+    def create_form(data: Dict[str, Any], user_id: str, db: Session, current_user:str) -> Dict:
+        # active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+        # inactive_status = db.query(Status).filter(Status.code == "INACTIVE").first()
+
+        # org_id = FormService._resolve_org_id(current_user)
+
+        # if active_status and inactive_status and org_id:
+        #     existing_active = db.query(Form).filter(
+        #         Form.status_id == active_status.id,
+        #         Form.organisation_id == org_id
+        #     ).first()
+
+        #     if existing_active:
+        #         existing_active.status_id = inactive_status.id
+
+        # if getattr(current_user, "is_superuser", False):
+        #     org_id = data.get("organisation_id")
+        # else:
+        #     org_id = FormService._resolve_org_id(current_user)
+
+        # if not org_id:
+        #     raise PermissionError("No access")
+
+        # creator_id = None
+
+        # if isinstance(current_user, User):
+        #     creator_id = current_user.id
+        active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+        inactive_status = db.query(Status).filter(Status.code == "INACTIVE").first()
+
+        org_id = FormService._resolve_org_id(current_user)
+        if not org_id:
+            raise PermissionError("No access")
+
+        # deactivate existing active form for THIS org
+        if active_status and inactive_status:
+            existing_active = db.query(Form).filter(
+                Form.organisation_id == org_id,
+                Form.status_id == active_status.id
+            ).first()
+
             if existing_active:
-                inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
-                if inactive_status:
-                    existing_active.status_id = inactive_status.id
-        
+                existing_active.status_id = inactive_status.id
+
+        # creator handling
+        creator_id = current_user.id if isinstance(current_user, User) else None
         form = Form(
             id=str(uuid.uuid4()),
             name=data['name'],
             description=data.get('description'),
+            organisation_id=org_id,
             status_id=active_status.id if active_status else None,
-            created_by=user_id
+            created_by=creator_id
         )
+
+        # form = Form(
+        #     id=str(uuid.uuid4()),
+        #     name=data['name'],
+        #     description=data.get('description'),
+        #     status_id=active_status.id if active_status else None,
+        #     created_by=user_id
+        # )
         db.add(form)
         
         fields = data.get('fields', [])
@@ -137,14 +326,17 @@ class FormService:
         db.commit()
         db.refresh(form)
         
-        return FormService.get_form_by_id(form.id, db)
+        return FormService.get_form_by_id(form.id,db,current_user)
     
     @staticmethod
-    def update_form(form_id: str, data: Dict[str, Any], db: Session) -> Optional[Dict]:
-        form = db.query(Form).filter(Form.id == form_id).first()
+    def update_form(form_id: str, data: Dict[str, Any], db: Session, current_user:str) -> Optional[Dict]:
+        form_query = db.query(Form).filter(Form.id == form_id)
+        form_query = FormService._apply_access_filter(form_query, current_user)
+
+        form = form_query.first()
         if not form:
             return None
-        
+
         if 'name' in data:
             form.name = data['name']
         if 'description' in data:
@@ -194,15 +386,19 @@ class FormService:
         db.commit()
         db.refresh(form)
         
-        return FormService.get_form_by_id(form.id, db)
+        return FormService.get_form_by_id(form.id, db, current_user)
 
 
     
     @staticmethod
-    def delete_form(form_id: str, db: Session) -> Optional[str]:
-        form = db.query(Form).filter(Form.id == form_id).first()
+    def delete_form(form_id: str, db: Session, current_user:str) -> Optional[str]:
+        form_query = db.query(Form).filter(Form.id == form_id)
+        form_query = FormService._apply_access_filter(form_query, current_user)
+
+        form = form_query.first()
         if not form:
             return None
+
         
         name = form.name
         db.delete(form)
