@@ -891,94 +891,26 @@ class DocumentService:
         search_query=None,
         form_filters=None,
         document_type_id=None,
-        client_id=None, 
-        uploaded_by=None,   # NEW     
-        organisation_id=None,       
+        client_id=None,
+        uploaded_by=None,
+        organisation_id=None,
         shared_only=False,
     ):
+        from datetime import datetime, timedelta
+        from sqlalchemy import and_, func
 
+        # =====================================================
+        # BASE QUERY — SINGLE SOURCE OF TRUTH
+        # =====================================================
+        query = DocumentService._document_access_query(db, current_user)
 
-        from datetime import datetime
+        query = query.options(joinedload(Document.status))
+        query = query.options(joinedload(Document.form_data_relation))
 
-        # =========================================================
-        # BASE QUERY
-        # =========================================================
-        query = (
-            db.query(Document)
-            .options(joinedload(Document.status))
-            .options(joinedload(Document.form_data_relation))
-        )
-        is_super_admin = isinstance(current_user, User) and getattr(current_user, "is_superuser", False)
-
-        # =========================================================
-        # ACCESS CONTROL (CLEAN HIERARCHY)
-        # =========================================================
-
-        # -------------------------
-        # SUPER ADMIN
-        # -------------------------
-        if isinstance(current_user, User) and getattr(current_user, "is_superuser", False):
-            pass
-
-        # -------------------------
-        # ORGANISATION LOGIN
-        # -------------------------
-        elif isinstance(current_user, Organisation):
-            query = query.filter(
-                Document.organisation_id == str(current_user.id)
-            )
-
-        # -------------------------
-        # USER LOGIN
-        # -------------------------
-        elif isinstance(current_user, User):
-
-            role_names = [r.name for r in getattr(current_user, "roles", [])]
-
-            # -------- CLIENT USERS --------
-            if current_user.is_client:
-
-                # client admin → all users of client
-                if getattr(current_user, "is_client_admin", False):
-                    client_user_ids = db.query(User.id).filter(
-                        User.client_id == current_user.client_id
-                    )
-
-                    query = query.filter(
-                        or_(
-                            Document.client_id == current_user.client_id,
-                            Document.created_by.in_(client_user_ids)
-                        )
-                    )
-
-                # normal client user
-                else:
-                    query = query.filter(
-                        Document.created_by == str(current_user.id)
-                    )
-
-            # -------- ORG USERS --------
-            else:
-                assigned_clients = db.query(UserClient.client_id).filter(
-                    UserClient.user_id == current_user.id
-                )
-
-                query = query.filter(
-                    or_(
-                        Document.created_by == str(current_user.id),
-                        Document.client_id.in_(assigned_clients),
-                        Document.organisation_id == str(current_user.organisation_id)
-                    )
-                )
-
-        else:
-            raise Exception("Unknown actor")
-
-
-        # =========================================================
+        # =====================================================
         # SHARED WITH ME
-        # =========================================================
-        if shared_only:
+        # =====================================================
+        if shared_only and isinstance(current_user, User):
             query = query.join(
                 DocumentShare,
                 DocumentShare.document_id == Document.id
@@ -986,37 +918,52 @@ class DocumentService:
                 DocumentShare.user_id == current_user.id
             )
 
+        # =====================================================
+        # OPTIONAL FILTERS
+        # =====================================================
         if organisation_id:
             query = query.filter(Document.organisation_id == organisation_id)
+
         if uploaded_by:
             query = query.filter(Document.created_by == uploaded_by)
 
+        if client_id:
+            query = query.filter(Document.client_id == client_id)
+
+        # -------------------------
+        # STATUS
+        # -------------------------
         if status_id:
-            status_code = str(status_id).upper()
+            code = str(status_id).upper()
 
-            if status_code == "ARCHIVED":
+            if code == "ARCHIVED":
                 query = query.filter(Document.is_archived.is_(True))
-
             else:
-                status = db.query(Status).filter(Status.code == status_code).first()
+                status = db.query(Status).filter(Status.code == code).first()
                 if status:
                     query = query.filter(Document.status_id == status.id)
 
-                # hide archived for normal tabs
                 query = query.filter(
                     or_(Document.is_archived == False, Document.is_archived.is_(None))
                 )
+
+        # -------------------------
+        # DOCUMENT TYPE
+        # -------------------------
         if document_type_id:
             query = query.filter(Document.document_type_id == document_type_id)
 
+        # -------------------------
+        # SEARCH
+        # -------------------------
         if search_query:
             query = query.filter(
                 Document.original_filename.ilike(f"%{search_query}%")
             )
 
-        # =========================================================
+        # -------------------------
         # DATE FILTERS
-        # =========================================================
+        # -------------------------
         if date_from:
             try:
                 dt = datetime.fromisoformat(date_from)
@@ -1031,17 +978,9 @@ class DocumentService:
             except:
                 pass
 
-        # =========================================================
-        # FORM FIELD FILTERS (CLIENT / DOC TYPE / CUSTOM)
-        # =========================================================
-        if isinstance(current_user, User) and current_user.is_client:
-            # force client id
-            query = query.filter(Document.client_id == current_user.client_id)
-
-        else:
-            if client_id:
-                query = query.filter(Document.client_id == client_id)
-
+        # =====================================================
+        # FORM FIELD FILTERS (SAFE CAST)
+        # =====================================================
         if form_filters:
             for field_id, value in form_filters.items():
                 if not value:
@@ -1052,63 +991,43 @@ class DocumentService:
                     DocumentFormData.document_id == Document.id
                 )
 
-                # detect ISO date
-                from datetime import datetime, timedelta, timezone
+                # ---- DATE FIELD ----
+                if "T" in str(value):
+                    try:
+                        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                        start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                        end = start + timedelta(days=1)
 
-                # if "T" in value or "-" in value:
-                #     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-                #     # convert to UTC midnight range correctly
-                #     start_utc = dt.astimezone(timezone.utc).replace(
-                #         hour=0, minute=0, second=0, microsecond=0
-                #     )
-                #     end_utc = start_utc + timedelta(days=1)
-
-                #     query = query.filter(
-                #         and_(
-                #             DocumentFormData.data[field_id].astext != "",
-                #             DocumentFormData.data[field_id].astext.isnot(None),
-                #             cast(DocumentFormData.data[field_id].astext, DateTime) >= start_utc,
-                #             cast(DocumentFormData.data[field_id].astext, DateTime) < end_utc,
-                #         )
-                #     )
-
-                if "T" in value:
-                    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-                    # DO NOT TOUCH TIMEZONE AGAIN
-                    start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
-                    end = start + timedelta(days=1)
-
-                    
-                    query = query.filter(
-                        and_(
-                            func.nullif(DocumentFormData.data[field_id].astext, "") != None,
-                            cast(
-                                func.nullif(DocumentFormData.data[field_id].astext, ""),
-                                DateTime
-                            ) >= start,
-                            cast(
-                                func.nullif(DocumentFormData.data[field_id].astext, ""),
-                                DateTime
-                            ) < end,
+                        query = query.filter(
+                            and_(
+                                func.nullif(DocumentFormData.data[field_id].astext, "") != None,
+                                cast(
+                                    func.nullif(DocumentFormData.data[field_id].astext, ""),
+                                    DateTime
+                                ) >= start,
+                                cast(
+                                    func.nullif(DocumentFormData.data[field_id].astext, ""),
+                                    DateTime
+                                ) < end,
+                            )
                         )
-                    )
+                    except:
+                        pass
 
+                # ---- NORMAL FIELD ----
                 else:
                     query = query.filter(
                         DocumentFormData.data[field_id].astext == str(value)
                     )
 
-
-        # =========================================================
-        # TOTAL COUNT AFTER ALL FILTERS
-        # =========================================================
+        # =====================================================
+        # TOTAL COUNT
+        # =====================================================
         total = query.count()
 
-        # =========================================================
+        # =====================================================
         # PAGINATION
-        # =========================================================
+        # =====================================================
         documents = (
             query.order_by(Document.created_at.desc())
             .offset(skip)
@@ -1119,9 +1038,9 @@ class DocumentService:
         if not documents:
             return [], total
 
-        # =========================================================
-        # BULK FETCH
-        # =========================================================
+        # =====================================================
+        # BULK FETCH LOOKUPS
+        # =====================================================
         doc_ids = [d.id for d in documents]
         user_ids = {d.created_by for d in documents if d.created_by}
         org_ids = {d.organisation_id for d in documents if d.organisation_id}
@@ -1130,14 +1049,9 @@ class DocumentService:
             u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()
         }
 
-        org_map = {}
-        if is_super_admin and org_ids:
-            org_map = {
-                o.id: o
-                for o in db.query(Organisation).filter(
-                    Organisation.id.in_(org_ids)
-                ).all()
-            }
+        org_map = {
+            o.id: o for o in db.query(Organisation).filter(Organisation.id.in_(org_ids)).all()
+        }
 
         form_rows = db.query(
             DocumentFormData.document_id,
@@ -1157,9 +1071,9 @@ class DocumentService:
         doc_types = db.query(DocumentType).all()
         doc_type_map = {str(d.id): d for d in doc_types}
 
-        # =========================================================
+        # =====================================================
         # BUILD RESPONSE
-        # =========================================================
+        # =====================================================
         result = []
 
         for doc in documents:
@@ -1167,7 +1081,6 @@ class DocumentService:
 
             client_name = None
             doc_type_name = None
-            medical_records = None
 
             for field_id, value in raw.items():
                 field = field_map.get(str(field_id))
@@ -1186,21 +1099,12 @@ class DocumentService:
                     if dt:
                         doc_type_name = dt.name
 
-                elif label == "medical records":
-                    medical_records = value
-
             uploaded_by = None
-
             if doc.created_by and doc.created_by in users_map:
                 u = users_map[doc.created_by]
                 uploaded_by = f"{u.first_name} {u.last_name}"
-
             elif doc.organisation_id:
                 uploaded_by = "Organisation"
-
-            organisation_name = None
-            if is_super_admin and doc.organisation_id in org_map:
-                organisation_name = org_map[doc.organisation_id].name
 
             row = {
                 "id": doc.id,
@@ -1217,11 +1121,10 @@ class DocumentService:
                 "uploaded_by": uploaded_by,
                 "client": client_name,
                 "document_type": doc_type_name,
-                "medical_records": medical_records,
             }
 
-            if is_super_admin:
-                row["organisation_name"] = organisation_name
+            if doc.organisation_id in org_map:
+                row["organisation_name"] = org_map[doc.organisation_id].name
 
             result.append(row)
 
