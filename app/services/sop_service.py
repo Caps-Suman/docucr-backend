@@ -1,12 +1,15 @@
 from importlib.resources import path
 import uuid
-from sqlalchemy.orm import Session, defer
-from sqlalchemy import desc, func
-from typing import Optional, List, Dict, Tuple
+from sqlalchemy.orm import Session, defer, joinedload
+from sqlalchemy import desc, func, or_
+from typing import Optional, List, Dict, Tuple, Any
 from app.models.sop import SOP
 from app.models.client import Client
 from app.models.status import Status
 from app.models.sop_provider_mapping import SopProviderMapping
+from app.models.user import User
+from app.models.organisation import Organisation
+from app.models.user_client import UserClient
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -35,12 +38,38 @@ class SOPService:
         return db.query(SOP).filter(SOP.status_id.in_(allowed_ids))
 
     @staticmethod
+    def check_sop_exists(client_id: str, db: Session) -> bool:
+        """
+        Check if an active SOP already exists for the given client_id.
+        """
+        active_status = db.query(Status).filter(
+            Status.code == "ACTIVE",
+            Status.type == "GENERAL"
+        ).first()
+
+        if not active_status:
+            return False
+
+        exists = db.query(SOP).filter(
+            SOP.client_id == client_id,
+            SOP.status_id == active_status.id
+        ).first()
+
+        return True if exists else False
+
+    @staticmethod
     def get_sops(
         db: Session,
+        current_user: Any,
         skip: int = 0,
         limit: int = 100,
         search: Optional[str] = None,
-        status_code: Optional[str] = None
+        status_code: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        organisation_id: Optional[str] = None,
+        created_by: Optional[str] = None,
+        client_id: Optional[str] = None
     ) -> Tuple[List[SOP], int]:
 
         query = SOPService._base_visible_sops_query(db).options(
@@ -51,6 +80,37 @@ class SOPService:
             defer(SOP.coding_rules_icd),
         )
 
+        # Apply visibility filtering
+        role_names = [r.name for r in current_user.roles] if not isinstance(current_user, Organisation) else []
+
+        # 1. SUPER_ADMIN
+        if current_user.is_superuser or "SUPER_ADMIN" in role_names:
+            # Full access, no client join needed for filtering unless searching
+            pass
+        
+        # 2. ORG_ADMIN / Organisation entity
+        elif isinstance(current_user, Organisation) or "ORGANISATION_ROLE" in role_names:
+            org_id = str(current_user.id) if isinstance(current_user, Organisation) else str(getattr(current_user, 'organisation_id', ''))
+            if org_id:
+                query = query.filter(SOP.organisation_id == org_id)
+            else:
+                return [], 0
+        
+        # 3. Other Roles (Client Admin, etc.)
+        else:
+            # Fetch assigned client_ids for logged-in user
+            assigned_client_ids = db.query(UserClient.client_id).filter(
+                UserClient.user_id == str(current_user.id)
+            )
+
+            query = query.filter(
+                or_(
+                    SOP.created_by == str(current_user.id),
+                    SOP.client_id.in_(assigned_client_ids)
+                )
+            )
+
+        # --- Additional Filters ---
         if status_code:
             status = db.query(Status).filter(
                 Status.code == status_code,
@@ -59,19 +119,49 @@ class SOPService:
             if status:
                 query = query.filter(SOP.status_id == status.id)
 
+        if from_date:
+            query = query.filter(SOP.created_at >= from_date)
+        if to_date:
+            query = query.filter(SOP.created_at <= to_date)
+        if organisation_id:
+            org_ids = organisation_id.split(',')
+            query = query.filter(SOP.organisation_id.in_(org_ids))
+        if created_by:
+            creator_ids = created_by.split(',')
+            query = query.filter(SOP.created_by.in_(creator_ids))
+        if client_id:
+            cl_ids = client_id.split(',')
+            query = query.filter(SOP.client_id.in_(cl_ids))
+
         if search:
             p = f"%{search}%"
+            # Outer join to ensure we don't drop SOPs without clients but still can search client data
+            query = query.outerjoin(Client, SOP.client_id == Client.id)
             query = query.filter(
-                SOP.title.ilike(p) |
-                SOP.category.ilike(p) |
-                SOP.provider_info["providerName"].astext.ilike(p)
+                or_(
+                    SOP.title.ilike(p),
+                    SOP.category.ilike(p),
+                    SOP.provider_info["providerName"].astext.ilike(p),
+                    Client.business_name.ilike(p),
+                    Client.npi.ilike(p),
+                    Client.first_name.ilike(p),
+                    Client.last_name.ilike(p)
+                )
             )
 
         total = query.count()
-        sops = query.order_by(desc(SOP.created_at)).offset(skip).limit(limit).all()
-        return sops, total
+        sops = query.order_by(desc(SOP.created_at)).offset(skip).limit(limit).options(
+            joinedload(SOP.creator),
+            joinedload(SOP.organisation),
+            joinedload(SOP.client),
+            joinedload(SOP.lifecycle_status)
+        ).all()
+        
+        formatted_sops = [SOPService._format_sop(sop) for sop in sops]
+        return formatted_sops, total
+        
     @staticmethod
-    def get_sop_stats(db: Session) -> Dict[str, int]:
+    def get_sop_stats(db: Session, current_user: Any) -> Dict[str, int]:
         """
         Visibility stats ONLY.
         workflow_status_id is intentionally ignored.
@@ -91,6 +181,30 @@ class SOPService:
             .filter(Status.type == "GENERAL")
         )
 
+        # Apply visibility filtering
+        role_names = [r.name for r in current_user.roles] if not isinstance(current_user, Organisation) else []
+
+        if current_user.is_superuser or "SUPER_ADMIN" in role_names:
+            pass
+        elif isinstance(current_user, Organisation) or "ORGANISATION_ROLE" in role_names:
+            org_id = str(current_user.id) if isinstance(current_user, Organisation) else str(getattr(current_user, 'organisation_id', ''))
+            if org_id:
+                q = q.filter(SOP.organisation_id == org_id)
+            else:
+                return {"total": 0, "active": 0, "inactive": 0}
+        else:
+            # Fetch assigned client_ids for logged-in user
+            assigned_client_ids = db.query(UserClient.client_id).filter(
+                UserClient.user_id == str(current_user.id)
+            )
+
+            q = q.filter(
+                or_(
+                    SOP.created_by == str(current_user.id),
+                    SOP.client_id.in_(assigned_client_ids)
+                )
+            )
+
         row = q.one()
 
         return {
@@ -98,9 +212,71 @@ class SOPService:
             "active_sops": row.active,
             "inactive_sops": row.inactive,
         }
+
     @staticmethod
-    def get_sop_by_id(sop_id: str, db: Session) -> Optional[SOP]:
-        sop = db.query(SOP).filter(SOP.id == sop_id).first()
+    def _format_sop(sop: SOP) -> Dict:
+        """Helper to format SOP data with descriptive names."""
+        from sqlalchemy.orm import attributes
+        
+        # Start with model attributes
+        data = {
+            "id": sop.id,
+            "title": sop.title,
+            "category": sop.category,
+            "provider_type": sop.provider_type,
+            "client_id": sop.client_id,
+            "created_by": sop.created_by,
+            "organisation_id": sop.organisation_id,
+            "status_id": sop.status_id,
+            "workflow_status_id": sop.workflow_status_id,
+            "created_at": sop.created_at,
+            "updated_at": sop.updated_at,
+            "provider_info": sop.provider_info,
+            "workflow_process": sop.workflow_process,
+            "billing_guidelines": sop.billing_guidelines,
+            "payer_guidelines": sop.payer_guidelines,
+            "coding_rules": sop.coding_rules,
+            "coding_rules_cpt": sop.coding_rules_cpt,
+            "coding_rules_icd": sop.coding_rules_icd,
+            "status": {
+                "id": sop.lifecycle_status.id,
+                "code": sop.lifecycle_status.code,
+                "description": sop.lifecycle_status.description
+            } if (sop.lifecycle_status and attributes.instance_state(sop).has_identity) else None
+        }
+
+        # Organisation Name
+        data["organisation_name"] = sop.organisation.name if sop.organisation else None
+
+        # Client Name
+        if sop.client:
+            data["client_npi"] = sop.client.npi
+            if sop.client.business_name:
+                data["client_name"] = sop.client.business_name
+            else:
+                names = [sop.client.first_name, sop.client.middle_name, sop.client.last_name]
+                data["client_name"] = " ".join([n for n in names if n]).strip()
+        else:
+            data["client_name"] = None
+            data["client_npi"] = None
+
+        # Created By Name
+        if sop.creator:
+            names = [sop.creator.first_name, sop.creator.middle_name, sop.creator.last_name]
+            data["created_by_name"] = " ".join([n for n in names if n]).strip()
+        else:
+            data["created_by_name"] = None
+
+        return data
+    @staticmethod
+    def get_sop_by_id(sop_id: str, db: Session) -> Optional[Dict]:
+        sop = db.query(SOP).filter(SOP.id == sop_id).options(
+            joinedload(SOP.creator),
+            joinedload(SOP.organisation),
+            joinedload(SOP.client),
+            joinedload(SOP.lifecycle_status)
+        ).first()
+        
         if not sop:
             return None
 
@@ -129,23 +305,38 @@ class SOPService:
             .all()
         )
         
-        # Attach to sop object (Pydantic will pick it up from attribute)
-        sop.providers = [
+        formatted_sop = SOPService._format_sop(sop)
+
+        # Attach providers
+        p_info = sop.provider_info or {}
+        client_name = formatted_sop.get("client_name")
+        client_npi = formatted_sop.get("client_npi")
+
+        formatted_sop["providers"] = [
             {
                 "id": str(p.id),
                 "name": f"{p.first_name} {p.middle_name or ''} {p.last_name}".strip().replace("  ", " "),
                 "first_name": p.first_name,
                 "last_name": p.last_name,
                 "npi": p.npi,
-                "type": "Individual" # Default
+                "type": "Individual",
+                "software": p_info.get("software", ""),
+                "practiceName": p_info.get("practiceName", ""),
+                "providerName": p_info.get("providerName", ""),
+                "clearinghouse": p_info.get("clearinghouse", ""),
+                "providerTaxID": p_info.get("providerTaxID", ""),
+                "billingAddress": p_info.get("billingAddress", ""),
+                "billingProviderNPI": p_info.get("billingProviderNPI", ""),
+                "billingProviderName": p_info.get("billingProviderName", ""),
+                "client_name": client_name,
+                "client_npi": client_npi
             }
             for p in linked_providers
         ]
-
-        return sop
+        return formatted_sop
 
     @staticmethod
-    def create_sop(sop_data: Dict, db: Session) -> SOP:
+    def create_sop(sop_data: Dict, db: Session, current_user: Any) -> SOP:
         # Extract provider_ids
         provider_ids = sop_data.pop("provider_ids", [])
 
@@ -156,6 +347,24 @@ class SOPService:
         # If client_id is empty string, set to None
         if 'client_id' in sop_data and not sop_data['client_id']:
             sop_data['client_id'] = None
+
+        # --- Ownership Logic ---
+        organisation_id_val = None
+        created_by_val = None
+
+        if isinstance(current_user, Organisation):
+            created_by_val = None
+            organisation_id_val = str(current_user.id)
+        elif isinstance(current_user, User):
+            if not current_user.is_superuser:
+                created_by_val = str(current_user.id)
+                if current_user.id:
+                    organisation_id_val = str(current_user.organisation_id) if current_user.organisation_id else None
+            else:
+                created_by_val = None
+        
+        sop_data['created_by'] = created_by_val
+        sop_data['organisation_id'] = organisation_id_val
 
         # Set default status if missing
         if 'status_id' not in sop_data or sop_data['status_id'] is None:
@@ -312,35 +521,32 @@ class SOPService:
         story.append(Spacer(1, 0.2 * inch))
 
     @staticmethod
-    def generate_sop_pdf(sop: SOP) -> bytes:
+    def generate_sop_pdf(sop: Any) -> bytes:
+        """Generates a professional PDF version of the SOP."""
+        # Ensure sop is a dictionary for consistent access
+        if not isinstance(sop, dict):
+            sop = SOPService._format_sop(sop)
+
         buffer = BytesIO()
-        # Increased margins to 0.75 inch for cleaner, more premium look
         doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch, leftMargin=0.75*inch, rightMargin=0.75*inch)
         styles = getSampleStyleSheet()
         story = []
 
-        # --- Custom Styles & Colors (DEFINE FIRST) ---
-        primary_color = colors.HexColor('#0c4a6e')
-        accent_color  = colors.HexColor('#0ea5e9')
-        header_bg     = colors.HexColor('#e0f2fe')
-        row_even = colors.white
-        row_odd  = colors.HexColor('#f8fafc')
-        text_color = colors.HexColor('#334155')
-        label_color = colors.HexColor('#64748b')
+        # --- Custom Styles & Colors ---
+        primary_color = colors.HexColor('#0c4a6e') # Sky 900
+        accent_color = colors.HexColor('#0ea5e9')  # Sky 500
+        header_bg = colors.HexColor('#e0f2fe')     # Sky 100
+        text_color = colors.HexColor('#334155')    # Slate 700
+        label_color = colors.HexColor('#64748b')   # Slate 500
         bs = styles['BodyText']
 
-        section_header = ParagraphStyle(
-            'SectionHeader',
-            parent=styles['Heading2'],
-            fontSize=14,
-            textColor=primary_color,
-            spaceBefore=12,
-            spaceAfter=6,
-        )
-
+        # Custom Paragraph Styles
+        cat_style = ParagraphStyle('Category', parent=bs, fontSize=11, textColor=accent_color, spaceAfter=6, alignment=1)
+        section_header = ParagraphStyle('SectionHeader', parent=styles['Heading2'], fontSize=14, textColor=primary_color, spaceBefore=12, spaceAfter=6, borderPadding=4)
+        
         pdf_styles = {
             "section_header": section_header,
-            "th": ParagraphStyle('TH', parent=bs, textColor=primary_color, alignment=1),
+            "th": ParagraphStyle('TH', parent=bs, textColor=primary_color, alignment=1, fontSize=10, fontName='Helvetica-Bold'),
             "td": ParagraphStyle('TD', parent=bs, textColor=text_color, fontSize=9),
         }
 
@@ -352,38 +558,61 @@ class SOPService:
             ('PADDING', (0,0), (-1,-1), 6),
         ])
 
-        # --- Custom Styles & Colors ---
-        primary_color = colors.HexColor('#0c4a6e') # Sky 900
-        accent_color = colors.HexColor('#0ea5e9')  # Sky 500
-        header_bg = colors.HexColor('#e0f2fe')     # Sky 100
-        row_even = colors.white
-        row_odd = colors.HexColor('#f8fafc')       # Slate 50
-        text_color = colors.HexColor('#334155')    # Slate 700
-        label_color = colors.HexColor('#64748b')   # Slate 500
-        bs = styles['BodyText']
+        # Helper to format field with label
+        def mk_field(label, value):
+            return Paragraph(f"<font color='{label_color.hexval()}'><b>{label}</b></font><br/><font color='{text_color.hexval()}'>{value or '-'}</font>", bs)
 
-        # Custom Paragraph Styles
-        cat_style = ParagraphStyle('Category', parent=bs, fontSize=11, textColor=accent_color, spaceAfter=6, alignment=1)
-        section_header = ParagraphStyle('SectionHeader', parent=styles['Heading2'], fontSize=14, textColor=primary_color, spaceBefore=12, spaceAfter=6, borderPadding=4)
-        
         # --- Title Section ---
         title_style = ParagraphStyle('MainTitle', parent=styles['Title'], fontSize=24, textColor=primary_color, spaceAfter=8, leading=28)
-        story.append(Paragraph(sop.title, title_style))
-        story.append(Paragraph(f"{sop.category}", cat_style))
+        story.append(Paragraph(sop.get('title', 'SOP'), title_style))
+        story.append(Paragraph(f"{sop.get('category', '-')}", cat_style))
         
-        # Divider Line - Width 7.0 inch (8.5 - 1.5 margins)
+        # Divider Line
         story.append(Spacer(1, 4))
         story.append(Table([['']], colWidths=[7.0*inch], style=[('LINEBELOW', (0,0), (-1,-1), 1, accent_color)]))
         story.append(Spacer(1, 0.3*inch))
         
-        # --- Provider Info ---
-        story.append(Paragraph('Provider Information', section_header))
-        p_info = sop.provider_info or {}
-        
-        # Formatted Provider Data with Label styling
-        def mk_field(label, value):
-            return Paragraph(f"<font color='{label_color.hexval()}'><b>{label}</b></font><br/><font color='{text_color.hexval()}'>{value or '-'}</font>", bs)
+        # --- Client Information ---
+        story.append(Paragraph('Practice Information', section_header))
+        client_data = [
+            [
+                mk_field('Name', sop.get('client_name')),
+                mk_field('NPI', sop.get('client_npi'))
+            ]
+        ]
+        t_client = Table(client_data, colWidths=[3.5*inch]*2)
+        t_client.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('PADDING', (0,0), (-1,-1), 8),
+            ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')),
+            ('BACKGROUND', (0,0), (-1,-1), colors.white),
+        ]))
+        story.append(t_client)
+        story.append(Spacer(1, 0.2*inch))
+
+        # --- Associated Providers ---
+        providers = sop.get('providers', [])
+        if providers:
+            story.append(Paragraph('Provider', section_header))
+            prov_list_data = [[
+                Paragraph('<b>Name</b>', pdf_styles['th']),
+                Paragraph('<b>NPI</b>', pdf_styles['th'])
+            ]]
+            for p in providers:
+                prov_list_data.append([
+                    Paragraph(p.get('name', '-'), pdf_styles['td']),
+                    Paragraph(p.get('npi', '-'), pdf_styles['td'])
+                ])
             
+            t_prov_list = Table(prov_list_data, colWidths=[4.5*inch, 2.5*inch])
+            t_prov_list.setStyle(table_styles)
+            story.append(t_prov_list)
+            story.append(Spacer(1, 0.2*inch))
+
+        # --- Billing Information ---
+        story.append(Paragraph('Billing Information', section_header))
+        p_info = sop.get('provider_info') or {}
+        
         prov_data = [
             [
                 mk_field('Provider Name', p_info.get('providerName')),
@@ -398,26 +627,25 @@ class SOPService:
             [
                 mk_field('Address', p_info.get('billingAddress')),
                 mk_field('Clearinghouse', p_info.get('clearinghouse')),
-                mk_field('Status', sop.lifecycle_status.code if sop.lifecycle_status else 'Active')
+                mk_field('Status', sop.get('status', {}).get('code', 'Active'))
             ]
         ]
         
-        # 3 columns, approx 2.33 inch each (Total 7.0)
         t_prov = Table(prov_data, colWidths=[2.333*inch]*3)
         t_prov.setStyle(TableStyle([
             ('VALIGN', (0,0), (-1,-1), 'TOP'),
             ('PADDING', (0,0), (-1,-1), 8),
-            ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')), # Very light grid
+            ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')),
             ('BACKGROUND', (0,0), (-1,-1), colors.white),
         ]))
         story.append(t_prov)
         story.append(Spacer(1, 0.2*inch))
         
         # --- Workflow Process ---
-        if sop.workflow_process:
+        if sop.get('workflow_process'):
             story.append(Paragraph('Workflow Process', section_header))
 
-            desc = sop.workflow_process.get('description', '-')
+            desc = sop.get('workflow_process', {}).get('description', '-')
             story.append(
                 Paragraph(
                     desc,
@@ -431,10 +659,10 @@ class SOPService:
                 )
             )
 
-            portals = sop.workflow_process.get('eligibility_verification_portals', [])
+            portals = sop.get('workflow_process', {}).get('eligibilityPortals', [])
             if portals:
                 story.append(Spacer(1, 8))
-                p_text = "<b>Eligibility Verification Portals:</b><br/>" + "<br/>".join(
+                p_text = "<b>Eligibility Portals:</b><br/>" + "<br/>".join(
                     f"• {p}" for p in portals
                 )
                 story.append(
@@ -454,10 +682,10 @@ class SOPService:
 
 
         # --- Billing Guidelines (GROUPED) ---
-        if sop.billing_guidelines:
+        if sop.get('billing_guidelines'):
             story.append(Paragraph('Billing Guidelines', section_header))
 
-            for group in sop.billing_guidelines:
+            for group in sop.get('billing_guidelines', []):
                 category = group.get("category", "Guidelines")
 
                 # ✅ Category header (ONCE)
@@ -498,10 +726,10 @@ class SOPService:
             story.append(Spacer(1, 0.15 * inch))
 
         # --- Payer Guidelines ---
-        if getattr(sop, "payer_guidelines", None):
+        if sop.get('payer_guidelines'):
             story.append(Paragraph('Payer Guidelines', section_header))
 
-            for pg in sop.payer_guidelines:
+            for pg in sop.get('payer_guidelines', []):
                 payer = pg.get('payer_name') or pg.get('payer') or 'Unknown Payer'
                 desc = pg.get('description', '-')
 
@@ -579,12 +807,12 @@ class SOPService:
                 
         #     rules_table.setStyle(ts)
         #     story.append(rules_table)
-        if sop.coding_rules_cpt:
+        if sop.get('coding_rules_cpt'):
             SOPService._build_coding_table(
                 story=story,
                 title="CPT Coding Guidelines",
                 headers=["CPT", "Description", "NDC", "Units", "Charge", "Modifier", "Replace"],
-                rows=sop.coding_rules_cpt,
+                rows=sop.get('coding_rules_cpt', []),
                 field_map=[
                     "cptCode",
                     "description",
@@ -597,12 +825,12 @@ class SOPService:
                 styles=pdf_styles,
                 colors_cfg=table_styles,
             )
-        if sop.coding_rules_icd:
+        if sop.get('coding_rules_icd'):
                 SOPService._build_coding_table(
                     story=story,
                     title="ICD Coding Guidelines",
                     headers=["ICD Code", "Description", "Notes"],
-                    rows=sop.coding_rules_icd,
+                    rows=sop.get('coding_rules_icd', []),
                     field_map=[
                         "icdCode",
                         "description",

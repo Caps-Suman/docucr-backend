@@ -388,10 +388,13 @@ def get_clients(
     page_size: int = 25,
     search: Optional[str] = None,
     status_id: Optional[str] = None,
+    organisation_ids: Optional[str] = None,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    clients, total = ClientService.get_clients(page, page_size, search, status_id, db, current_user)
+    clients, total = ClientService.get_clients(page, page_size, search, status_id, db, current_user, organisation_ids, from_date, to_date)
     return ClientListResponse(
         clients=[ClientResponse(**client) for client in clients],
         total=total,

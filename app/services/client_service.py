@@ -159,10 +159,20 @@ class ClientService:
 
 
     @staticmethod
-    def get_clients(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session, current_user: Optional[User] = None) -> Tuple[List[Dict], int]:
+    def get_clients(
+        page: int, 
+        page_size: int, 
+        search: Optional[str], 
+        status_id: Optional[str], 
+        db: Session, 
+        current_user: Optional[User] = None, 
+        organisation_ids: Optional[str] = None,
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None
+    ) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         
-        stmt = db.query(Client).filter(Client.deleted_at.is_(None))
+        from app.models.provider_client_mapping import ProviderClientMapping
         
         # Subquery for provider count
         provider_count = (
@@ -174,16 +184,23 @@ class ClientService:
         
         query = db.query(Client, provider_count).filter(Client.deleted_at.is_(None))
         
-        # if current_user and not current_user.is_superuser:
-        #     query = query.filter(Client.created_by == current_user.id)
-        if not current_user.is_superuser:
+        if organisation_ids:
+            org_list = organisation_ids.split(',')
+            query = query.filter(Client.organisation_id.in_(org_list))
+        elif current_user and not current_user.is_superuser:
             if getattr(current_user, 'is_client', False):
                 query = query.filter(Client.created_by == str(current_user.id))
             else:
                  query = query.filter(Client.organisation_id == str(current_user.id))
         
         if status_id:
-            query = query.join(Client.status_relation).filter(Status.code == status_id)
+            status_codes = status_id.split(',')
+            query = query.join(Client.status_relation).filter(Status.code.in_(status_codes))
+            
+        if from_date:
+            query = query.filter(Client.created_at >= from_date)
+        if to_date:
+            query = query.filter(Client.created_at <= to_date)
         
         if search:
             search_term = f"%{search}%"
