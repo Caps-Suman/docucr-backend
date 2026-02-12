@@ -60,18 +60,12 @@ class FormListResponse(BaseModel):
 def get_forms(
     page: int = 1,
     page_size: int = 10,
+    status: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
-    if current_user.is_client:
-        return FormListResponse(
-            forms=[],
-            total=0,
-            page=page,
-            page_size=page_size
-        )
+    forms, total = FormService.get_forms(page, page_size, db, current_user, status)
 
-    forms, total = FormService.get_forms(page, page_size, db)
     return FormListResponse(
         forms=forms,
         total=total,
@@ -79,19 +73,21 @@ def get_forms(
         page_size=page_size
     )
 
+
 @router.get("/stats")
 def get_form_stats(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    return FormService.get_form_stats(db)
+    return FormService.get_form_stats(db, current_user)
 
 @router.get("/active", response_model=FormDetailResponse)
 def get_active_form(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    form = FormService.get_active_form(db)
+    form = FormService.get_active_form(db, current_user)
+
 
     if not form:
         raise HTTPException(404, "No active form")
@@ -124,7 +120,8 @@ def get_form(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    form = FormService.get_form_by_id(form_id, db)
+    form = FormService.get_form_by_id(form_id, db, current_user)
+
     if not form:
         raise HTTPException(status_code=404, detail="Form not found")
     return form
@@ -137,15 +134,15 @@ def create_form(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
-    permission: bool = Depends(Permission("templates", "CREATE"))
+    # permission: bool = Depends(Permission("templates", "CREATE"))
 ):
     if FormService.check_form_name_exists(form.name, None, db):
         raise HTTPException(status_code=400, detail="Form with this name already exists")
     
     try:
         form_data = form.model_dump()
-        created_form = FormService.create_form(form_data, current_user.id, db)
-        
+        created_form = FormService.create_form(form_data, current_user.id, db, current_user)
+
         ActivityService.log(
             db=db,
             action="CREATE",
@@ -169,7 +166,6 @@ def update_form(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
-    permission: bool = Depends(Permission("templates", "UPDATE"))
 ):
     if form.name and FormService.check_form_name_exists(form.name, form_id, db):
         raise HTTPException(status_code=400, detail="Form with this name already exists")
@@ -179,7 +175,7 @@ def update_form(
         
         # Calculate changes BEFORE update
         changes = {}
-        existing_form_dict = FormService.get_form_by_id(form_id, db)
+        existing_form_dict = FormService.get_form_by_id(form_id, db, current_user)
         if existing_form_dict:
             # Normalize status_id to statusCode for readable logs
             if 'status_id' in form_data and existing_form_dict.get('statusCode'):
@@ -191,7 +187,8 @@ def update_form(
             if 'status_id' in changes:
                 changes['Status'] = changes.pop('status_id')
 
-        updated_form = FormService.update_form(form_id, form_data, db)
+        updated_form = FormService.update_form(form_id, form_data, db, current_user)
+
         if not updated_form:
             raise HTTPException(status_code=404, detail="Form not found")
             
@@ -217,10 +214,11 @@ def delete_form(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
-    permission: bool = Depends(Permission("templates", "DELETE"))
+    # permission: bool = Depends(Permission("templates", "DELETE"))
 ):
     """Delete a form"""
-    name = FormService.delete_form(form_id, db)
+    name = FormService.delete_form(form_id, db, current_user)
+
     if not name:
         raise HTTPException(status_code=404, detail="Form not found")
         

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks, Query
 from app.services.activity_service import ActivityService
 from app.models.user import User
 from sqlalchemy.orm import Session
@@ -111,17 +111,33 @@ async def get_assignable_roles(
         page_size=page_size
     )
 
+@router.get("/light")
+async def get_light_roles(
+    search: Optional[str] = None,
+    organisation_id: Optional[List[str]] = Query(None),
+    client_id: Optional[List[str]] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    permission: bool = Depends(Permission("role_module", "READ"))
+):
+    """
+    Get lightweight roles list for dropdowns/filters.
+    """
+    return RoleService.get_light_roles(search, db, current_user, organisation_id, client_id)
+
 @router.get("", response_model=RoleListResponse)
 @router.get("/", response_model=RoleListResponse)
 async def get_roles(
     page: int = 1,
     page_size: int = 10,
     status_id: Optional[str] = None,
+    search: Optional[str] = None,
+    organisation_id: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     permission: bool = Depends(Permission("role_module", "READ"))
 ):
-    roles, total = RoleService.get_roles(page, page_size, status_id, db, current_user)
+    roles, total = RoleService.get_roles(page, page_size, status_id, db, current_user, search, organisation_id)
     return RoleListResponse(
         roles=[RoleResponse(**role) for role in roles],
         total=total,

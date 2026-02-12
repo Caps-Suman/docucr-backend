@@ -4,6 +4,7 @@ from app.services.activity_service import ActivityService
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
+from fastapi import Query
 import re
 
 from app.core.database import get_db
@@ -112,15 +113,55 @@ async def get_users(
     page_size: int = 25,
     search: Optional[str] = None,
     status_id: Optional[str] = None,
+    role_id: Optional[List[str]] = Query(None),
+    organisation_id: Optional[List[str]] = Query(None),
+    client_id: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    users, total = UserService.get_users(page, page_size, search, status_id, db, current_user)
+    users, total = UserService.get_users(
+        page, 
+        page_size, 
+        search, 
+        status_id, 
+        db, 
+        current_user,
+        role_id=role_id,
+        organisation_id=organisation_id,
+        client_id=client_id
+    )
     return UserListResponse(
         users=[UserResponse(**user) for user in users],
         total=total,
         page=page,
         page_size=page_size
+    )
+
+class CreatorResponse(BaseModel):
+    id: str
+    first_name: str
+    last_name: str
+    username: str
+    organisation_name: Optional[str] = None
+
+@router.get("/creators", response_model=List[CreatorResponse])
+async def get_creators(
+    search: Optional[str] = None,
+    organisation_id: Optional[List[str]] = Query(None),
+    client_id: Optional[List[str]] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Lightweight endpoint to fetch potential creators for filters.
+    Returns only ID, Name, Username and Organisation Name.
+    """
+    return UserService.get_creators(
+        search, 
+        db, 
+        current_user,
+        organisation_id=organisation_id,
+        client_id=client_id
     )
 
 # @router.get("/me", response_model=UserResponse)

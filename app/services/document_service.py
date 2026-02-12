@@ -1162,21 +1162,43 @@ class DocumentService:
                 # detect ISO date
                 from datetime import datetime, timedelta, timezone
 
-                if "T" in value or "-" in value:
+                # if "T" in value or "-" in value:
+                #     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+                #     # convert to UTC midnight range correctly
+                #     start_utc = dt.astimezone(timezone.utc).replace(
+                #         hour=0, minute=0, second=0, microsecond=0
+                #     )
+                #     end_utc = start_utc + timedelta(days=1)
+
+                #     query = query.filter(
+                #         and_(
+                #             DocumentFormData.data[field_id].astext != "",
+                #             DocumentFormData.data[field_id].astext.isnot(None),
+                #             cast(DocumentFormData.data[field_id].astext, DateTime) >= start_utc,
+                #             cast(DocumentFormData.data[field_id].astext, DateTime) < end_utc,
+                #         )
+                #     )
+
+                if "T" in value:
                     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
 
-                    # convert to UTC midnight range correctly
-                    start_utc = dt.astimezone(timezone.utc).replace(
-                        hour=0, minute=0, second=0, microsecond=0
-                    )
-                    end_utc = start_utc + timedelta(days=1)
+                    # DO NOT TOUCH TIMEZONE AGAIN
+                    start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end = start + timedelta(days=1)
 
+                    
                     query = query.filter(
                         and_(
-                            DocumentFormData.data[field_id].astext != "",
-                            DocumentFormData.data[field_id].astext.isnot(None),
-                            cast(DocumentFormData.data[field_id].astext, DateTime) >= start_utc,
-                            cast(DocumentFormData.data[field_id].astext, DateTime) < end_utc,
+                            func.nullif(DocumentFormData.data[field_id].astext, "") != None,
+                            cast(
+                                func.nullif(DocumentFormData.data[field_id].astext, ""),
+                                DateTime
+                            ) >= start,
+                            cast(
+                                func.nullif(DocumentFormData.data[field_id].astext, ""),
+                                DateTime
+                            ) < end,
                         )
                     )
 
