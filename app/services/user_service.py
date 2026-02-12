@@ -89,9 +89,18 @@ class UserService:
 
 
     @staticmethod
-    def get_users(page: int, page_size: int, search: Optional[str], status_id: Optional[str], db: Session, current_user: User) -> Tuple[List[Dict], int]:
+    def get_users(
+        page: int, 
+        page_size: int, 
+        search: Optional[str], 
+        status_id: Optional[str], 
+        db: Session, 
+        current_user: User,
+        role_id: Optional[List[str]] = None,
+        organisation_id: Optional[List[str]] = None,
+        client_id: Optional[List[str]] = None
+    ) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
-        # query = db.query(User).outerjoin(UserRole).outerjoin(Role)
         query = db.query(User)
         
         # Exclude users with SUPER_ADMIN role
@@ -101,10 +110,6 @@ class UserService:
                 Role.name == 'SUPER_ADMIN'
             ).exists()
         )
-        # if current_user.is_superuser:
-        #     pass  
-        # else:
-        #     query = query.filter(User.created_by == current_user.id)
 
         if not current_user.is_superuser:
             if getattr(current_user, 'is_client', False):
@@ -117,32 +122,124 @@ class UserService:
                         User.organisation_id == str(current_user.id)
                     )
 
-
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
         
+        if role_id:
+            # Handle list or single string (though type hint says List, runtime might vary if not careful, but Router ensures list)
+            if isinstance(role_id, list):
+                 query = query.join(UserRole).filter(UserRole.role_id.in_(role_id))
+            else:
+                 query = query.join(UserRole).filter(UserRole.role_id == role_id)
+
+        if organisation_id:
+            if isinstance(organisation_id, list):
+                query = query.filter(User.organisation_id.in_(organisation_id))
+            else:
+                query = query.filter(User.organisation_id == organisation_id)
+
+        if client_id:
+            # Filter by specific client_id (implicit or explicit link)
+            if isinstance(client_id, list):
+                query = query.filter(User.client_id.in_(client_id))
+            else:
+                query = query.filter(User.client_id == client_id)
+
         if search:
             query = query.filter(
                 or_(
                     User.email.ilike(f"%{search}%"),
                     User.username.ilike(f"%{search}%"),
                     User.first_name.ilike(f"%{search}%"),
-                    User.last_name.ilike(f"%{search}%")
+                    User.last_name.ilike(f"%{search}%"),
+                    User.phone_number.ilike(f"%{search}%"),
+                    # Add full name search
+                    func.concat(User.first_name, ' ', User.last_name).ilike(f"%{search}%")
                 )
             )
         
         total = query.count()
-        users = query.offset(skip).limit(page_size).all()
+        # Fix for pagination visibility issue: Default sort by created_at DESC
+        query = query.order_by(User.created_at.desc())
         
-        # result = []
-        # for user in users:
-        #     user_data = UserService._format_user_response(user, db)
-        #     result.append(user_data)
+        users = query.offset(skip).limit(page_size).all()
         
         return [
             UserService._format_user_response(u, db)
             for u in users
         ], total
+
+    @staticmethod
+    def get_creators(
+        search: Optional[str], 
+        db: Session, 
+        current_user: User,
+        organisation_id: Optional[List[str]] = None,
+        client_id: Optional[List[str]] = None
+    ) -> List[Dict]:
+        """
+        Fetch lightweight list of users who are potential creators.
+        Filters by search, org, and client, but returns simplified objects.
+        """
+        query = db.query(User)
+        
+        # 1. Base Visibility Filtering (reuse existing logic if possible or reimplement for speed)
+        # Reusing get_users logic partially but optimized
+        
+        # Exclude SUPER_ADMIN role users from being *shown* as creators? 
+        # Usually creators are Admins, Org Admins, Client Admins. 
+        # But if a Super Admin created a user, we might want to see them.
+        # Let's show everyone who matches the filter contexts.
+
+        # Context Filters
+        if organisation_id:
+            if isinstance(organisation_id, list):
+                query = query.filter(User.organisation_id.in_(organisation_id))
+            else:
+                query = query.filter(User.organisation_id == organisation_id)
+
+        if client_id:
+            if isinstance(client_id, list):
+                query = query.filter(User.client_id.in_(client_id))
+            else:
+                query = query.filter(User.client_id == client_id)
+
+        # Search
+        if search:
+            query = query.filter(
+                or_(
+                    User.email.ilike(f"%{search}%"),
+                    User.username.ilike(f"%{search}%"),
+                    User.first_name.ilike(f"%{search}%"),
+                    User.last_name.ilike(f"%{search}%"),
+                    func.concat(User.first_name, ' ', User.last_name).ilike(f"%{search}%")
+                )
+            )
+
+        # Only fetch necessary columns to be "Light"
+        # We need ID, Name, Username, Org Name?
+        # Org Name might require join.
+        query = query.outerjoin(Organisation, User.organisation_id == Organisation.id)
+        
+        # Select specific fields
+        results = query.with_entities(
+            User.id, 
+            User.first_name, 
+            User.last_name, 
+            User.username,
+            Organisation.name.label("organisation_name")
+        ).limit(50).all() # Limit for dropdown performance
+        
+        return [
+            {
+                "id": r.id, 
+                "first_name": r.first_name, 
+                "last_name": r.last_name, 
+                "username": r.username,
+                "organisation_name": r.organisation_name
+            }
+            for r in results
+        ]
 
     @staticmethod
     def get_user_by_id(user_id: str, db: Session) -> Optional[Dict]:

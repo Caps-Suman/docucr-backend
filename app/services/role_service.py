@@ -165,7 +165,8 @@ class RoleService:
                 "status_id": role.status_id,
                 "statusCode": role.status_relation.code if role.status_relation else None,
                 "can_edit": role.can_edit,
-                "users_count": users_count
+                "users_count": users_count,
+                "organisation_id": str(role.organisation_id) if role.organisation_id else None
             })
 
         return result, total
