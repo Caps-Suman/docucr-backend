@@ -21,6 +21,7 @@ class DocumentType(Base):
     # Relationships
     templates = relationship("Template", back_populates="document_type", cascade="all, delete-orphan")
     status = relationship("Status")
+    organisation_id = Column(String, ForeignKey('docucr.organisation.id'), nullable=True)
     
     @property
     def statusCode(self) -> str | None:
