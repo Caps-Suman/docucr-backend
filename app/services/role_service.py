@@ -34,87 +34,11 @@ class RoleService:
         # ---------------------------------------------------------
         # Hide SYSTEM Roles (Requested Behavior)
         # ---------------------------------------------------------
-        # Always hide SUPER_ADMIN from list (even for Super Admin)
-        query = query.filter(Role.name != "SUPER_ADMIN")
-
-        if isinstance(current_user, User) and not current_user.is_superuser:
-            role_names = [r.name for r in current_user.roles]
-            
-            # Org Admin: Hide ORGANISATION_ROLE
-            if current_user.organisation_id or "ORGANISATION_ROLE" in role_names:
-                query = query.filter(Role.name != "ORGANISATION_ROLE")
-
-            # Client Admin: Hide CLIENT_ADMIN
-            if getattr(current_user, 'is_client', False) or "CLIENT_ADMIN" in role_names:
-                query = query.filter(Role.name != "CLIENT_ADMIN")
-
-        # SUPER ADMIN → sees everything (except SUPER_ADMIN role filtered above)
-        if current_user.is_superuser:
-            pass
-
-        # CLIENT USER → roles they created
-        # elif getattr(current_user, "is_client", False):
-        #     query = query.filter(Role.created_by == str(current_user.id))
-
-        # # ORG USER → if org exists filter, else DON'T
-        # elif getattr(current_user, "organisation_id", None):
-        #     query = query.filter(
-        #         or_(
-        #             Role.organisation_id == str(current_user.id),
-        #             Role.organisation_id.is_(None)
-        #         )
-        #     )
-
-        # VISIBILITY LOGIC
-        if hasattr(current_user, 'is_superuser') and current_user.is_superuser:
-            pass
-        
-        elif isinstance(current_user, Organisation):
-             # Organisation Login: See Own Org Roles + Global System Roles
-             query = query.filter(
-                    or_(
-                        Role.organisation_id == str(current_user.id),
-                        (Role.organisation_id.is_(None) & Role.created_by.is_(None))
-                    )
-                )
-             # Hide ORGANISATION_ROLE
-             query = query.filter(Role.name != "ORGANISATION_ROLE")
-
-        elif isinstance(current_user, Client):
-             # Client Login: See roles created by the client entity (if any) or Global
-             # Note: Role model does not have client_id, so we can't filter by client scoping easily without join.
-             # For now, restrict to created_by (if Client entity acts as creator) or Global.
-             query = query.filter(
-                    or_(
-                        Role.created_by == str(current_user.id),
-                        (Role.organisation_id.is_(None) & Role.created_by.is_(None))
-                    )
-                )
-             # Hide CLIENT_ADMIN
-             query = query.filter(Role.name != "CLIENT_ADMIN")
-
-        elif isinstance(current_user, User):
+        if not current_user.is_superuser:
             if getattr(current_user, 'is_client', False):
-                query = query.filter(
-                    (Role.created_by == str(current_user.id)) |
-                    (Role.organisation_id.is_(None) & Role.created_by.is_(None)) # Allow Generic Roles?
-                )
-            elif current_user.organisation_id:
-                 # Organisation Admin: See Own Org Roles + Global System Roles
-                 query = query.filter(
-                        or_(
-                            Role.organisation_id == str(current_user.organisation_id),
-                            (Role.organisation_id.is_(None) & Role.created_by.is_(None))
-                        )
-                    )
+                query = query.filter(Role.created_by == str(current_user.id))
             else:
-                # USER WITHOUT ORG → see roles they created + global roles
-                query = query.filter(
-                    or_(
-                        Role.created_by == str(current_user.id),
-                        Role.organisation_id.is_(None)
-                    )
-                )
+                    query = query.filter(Role.organisation_id == str(current_user.id))
 
 
         if status_id:
@@ -188,16 +112,21 @@ class RoleService:
         # 🔥 ALWAYS hide default roles
         query = query.filter(Role.is_default == False)
 
+        # if not current_user.is_superuser:
+        #     if getattr(current_user, 'is_client', False):
+        #         query = query.filter(
+        #             (User.created_by == str(current_user.id)) |
+        #             (User.id == str(current_user.id))
+        #         )
+        #     else:
+        #          query = query.filter(
+        #                 User.organisation_id == str(current_user.id)
+        #             )
         if not current_user.is_superuser:
             if getattr(current_user, 'is_client', False):
-                query = query.filter(
-                    (User.created_by == str(current_user.id)) |
-                    (User.id == str(current_user.id))
-                )
+                query = query.filter(Role.created_by == str(current_user.id))
             else:
-                 query = query.filter(
-                        User.organisation_id == str(current_user.id)
-                    )
+                 query = query.filter(Role.organisation_id == str(current_user.id))
 
         # USER WITHOUT ORG → see roles they created + global roles
         else:
@@ -550,60 +479,11 @@ class RoleService:
         # ---------------------------------------------------------
         # Hide SYSTEM Roles (Requested Behavior)
         # ---------------------------------------------------------
-        # Always hide SUPER_ADMIN from list (even for Super Admin)
-        query = query.filter(Role.name != "SUPER_ADMIN")
-
-        # VISIBILITY LOGIC
-        if hasattr(current_user, 'is_superuser') and current_user.is_superuser:
-            pass
-
-        elif isinstance(current_user, Organisation):
-             query = query.filter(
-                    or_(
-                        Role.organisation_id == str(current_user.id),
-                        (Role.organisation_id.is_(None) & Role.created_by.is_(None))
-                    )
-                )
-             query = query.filter(Role.name != "ORGANISATION_ROLE")
-
-        elif isinstance(current_user, Client):
-             query = query.filter(
-                    or_(
-                        Role.created_by == str(current_user.id),
-                        (Role.organisation_id.is_(None) & Role.created_by.is_(None))
-                    )
-                )
-             query = query.filter(Role.name != "CLIENT_ADMIN")
-
-        elif isinstance(current_user, User):
+        if not current_user.is_superuser:
             if getattr(current_user, 'is_client', False):
-               query = query.filter(Role.created_by == str(current_user.id))
-            
-            # Org Admin
-            elif current_user.organisation_id:
-                query = query.filter(
-                    or_(
-                        Role.organisation_id == str(current_user.organisation_id),
-                        (Role.organisation_id.is_(None) & Role.created_by.is_(None))
-                    )
-                )
-            
-            # Standard User
+                query = query.filter(Role.created_by == str(current_user.id))
             else:
-                query = query.filter(
-                    or_(
-                        Role.created_by == str(current_user.id),
-                        Role.organisation_id.is_(None)
-                    )
-                )
-
-            # Filter System Roles based on User Roles
-            role_names = [r.name for r in current_user.roles]
-            if current_user.organisation_id or "ORGANISATION_ROLE" in role_names:
-                query = query.filter(Role.name != "ORGANISATION_ROLE")
-            if getattr(current_user, 'is_client', False) or "CLIENT_ADMIN" in role_names:
-                query = query.filter(Role.name != "CLIENT_ADMIN")
-
+                 query = query.filter(Role.organisation_id == str(current_user.id))
 
         total = query.count()
 
