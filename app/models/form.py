@@ -11,10 +11,10 @@ class Form(Base):
     name = Column(String(100), nullable=False, index=True)
     description = Column(Text, nullable=True)
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
-    created_by = Column(String, ForeignKey('docucr.user.id'), nullable=False)
+    created_by = Column(String, ForeignKey('docucr.user.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+    organisation_id=Column(String,ForeignKey('docucr.organisation.id'), nullable=True)
     status_relation = relationship("Status")
 
 class FormField(Base):
