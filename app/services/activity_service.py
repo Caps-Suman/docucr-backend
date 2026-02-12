@@ -245,7 +245,6 @@ class ActivityService:
     }
 
     from sqlalchemy import String, or_, cast, desc
-
     @staticmethod
     def get_activity_logs(
         db: Session,
@@ -262,31 +261,39 @@ class ActivityService:
         if not current_user:
             return {"items": [], "total": 0}
 
-        query = db.query(ActivityLog)
+        # --------------------------------------------------
+        # BASE QUERY
+        # --------------------------------------------------
+        query = db.query(ActivityLog).join(
+            User,
+            ActivityLog.user_id == User.id,
+            isouter=True
+        ).join(
+            Organisation,
+            ActivityLog.organisation_id == Organisation.id,
+            isouter=True
+        )
 
-        # =====================================================
-        # ROLE DETECTION
-        # =====================================================
+        # ==================================================
+        # HIERARCHY
+        # ==================================================
 
-        # ---------- SUPER ADMIN ----------
-        if isinstance(current_user, User) and getattr(current_user, "is_superuser", False):
+        # -------- SUPER ADMIN → ALL --------
+        if isinstance(current_user, User) and current_user.is_superuser:
             pass
 
-        # ---------- ORGANISATION LOGIN ----------
+        # -------- ORG LOGIN --------
         elif isinstance(current_user, Organisation):
-
-            # everything under organisation
             query = query.filter(
                 ActivityLog.organisation_id == str(current_user.id)
             )
 
-        # ---------- USER LOGIN ----------
+        # -------- USER LOGIN --------
         elif isinstance(current_user, User):
 
-            # ---------- CLIENT ADMIN ----------
+            # CLIENT ADMIN
             if current_user.is_client and getattr(current_user, "is_client_admin", False):
 
-                # get client users
                 client_user_ids = db.query(User.id).filter(
                     User.client_id == current_user.client_id
                 )
@@ -298,21 +305,21 @@ class ActivityService:
                     )
                 )
 
-            # ---------- ORG USER ----------
+            # ORG USER
             elif not current_user.is_client:
                 query = query.filter(
                     ActivityLog.user_id == str(current_user.id)
                 )
 
-            # ---------- CLIENT USER ----------
+            # CLIENT USER
             else:
                 query = query.filter(
                     ActivityLog.user_id == str(current_user.id)
                 )
 
-        # =====================================================
-        # OPTIONAL FILTERS
-        # =====================================================
+        # ==================================================
+        # FILTERS
+        # ==================================================
 
         if entity_id:
             query = query.filter(ActivityLog.entity_id == str(entity_id))
@@ -326,12 +333,17 @@ class ActivityService:
         if start_date:
             query = query.filter(ActivityLog.created_at >= start_date)
 
+        # 🔎 SEARCH
         if user_name:
+            name = f"%{user_name}%"
+
             query = query.filter(
                 or_(
-                    User.first_name.ilike(f"%{user_name}%"),
-                    User.last_name.ilike(f"%{user_name}%"),
-                    User.email.ilike(f"%{user_name}%")
+                    User.first_name.ilike(name),
+                    User.last_name.ilike(name),
+                    User.email.ilike(name),
+                    (User.first_name + " " + User.last_name).ilike(name),
+                    Organisation.name.ilike(name)
                 )
             )
 
@@ -350,14 +362,17 @@ class ActivityService:
             user_display = "Organisation"
             email = None
 
-            if getattr(log, "user", None):
+            if log.user:
                 parts = [
                     log.user.first_name,
                     log.user.middle_name,
                     log.user.last_name
                 ]
-                user_display = " ".join([p for p in parts if p]) or log.user.username
+                user_display = " ".join([p for p in parts if p]) or log.user.email
                 email = log.user.email
+
+            elif log.organisation:
+                user_display = log.organisation.name
 
             results.append({
                 "id": str(log.id),
@@ -376,6 +391,158 @@ class ActivityService:
             "items": results,
             "total": total
         }
+
+    # @staticmethod
+    # def get_activity_logs(
+    #     db: Session,
+    #     limit: int = 50,
+    #     offset: int = 0,
+    #     entity_id: Optional[str] = None,
+    #     entity_type: Optional[str] = None,
+    #     current_user=None,
+    #     action: Optional[str] = None,
+    #     user_name: Optional[str] = None,
+    #     start_date: Optional[Any] = None
+    # ) -> dict:
+
+    #     if not current_user:
+    #         return {"items": [], "total": 0}
+
+    #     query = db.query(ActivityLog)
+
+    #     # =====================================================
+    #     # ROLE DETECTION
+    #     # =====================================================
+
+    #     # ---------- SUPER ADMIN ----------
+    #     if isinstance(current_user, User) and getattr(current_user, "is_superuser", False):
+    #         pass
+
+    #     # ---------- ORGANISATION LOGIN ----------
+    #     elif isinstance(current_user, Organisation):
+
+    #         # everything under organisation
+    #         query = query.filter(
+    #             ActivityLog.organisation_id == str(current_user.id)
+    #         )
+
+    #     # ---------- USER LOGIN ----------
+    #     elif isinstance(current_user, User):
+
+    #         # ---------- CLIENT ADMIN ----------
+    #         if current_user.is_client and getattr(current_user, "is_client_admin", False):
+
+    #             # get client users
+    #             client_user_ids = db.query(User.id).filter(
+    #                 User.client_id == current_user.client_id
+    #             )
+
+    #             query = query.filter(
+    #                 or_(
+    #                     ActivityLog.user_id == str(current_user.id),
+    #                     ActivityLog.user_id.in_(client_user_ids)
+    #                 )
+    #             )
+
+    #         # ---------- ORG USER ----------
+    #         elif not current_user.is_client:
+    #             query = query.filter(
+    #                 ActivityLog.user_id == str(current_user.id)
+    #             )
+
+    #         # ---------- CLIENT USER ----------
+    #         else:
+    #             query = query.filter(
+    #                 ActivityLog.user_id == str(current_user.id)
+    #             )
+
+    #     # =====================================================
+    #     # OPTIONAL FILTERS
+    #     # =====================================================
+    #     query = db.query(ActivityLog)
+
+    #     query = query.join(
+    #         User,
+    #         ActivityLog.user_id == User.id,
+    #         isouter=True
+    #     )
+
+    #     query = query.join(
+    #         Organisation,
+    #         ActivityLog.organisation_id == Organisation.id,
+    #         isouter=True
+    #     )
+    #     if entity_id:
+    #         query = query.filter(ActivityLog.entity_id == str(entity_id))
+
+    #     if entity_type:
+    #         query = query.filter(ActivityLog.entity_type == entity_type)
+
+    #     if action:
+    #         query = query.filter(ActivityLog.action == action)
+
+    #     if start_date:
+    #         query = query.filter(ActivityLog.created_at >= start_date)
+
+    #     if user_name:
+    #         name = f"%{user_name}%"
+
+    #         query = query.filter(
+    #             or_(
+    #                 User.first_name.ilike(name),
+    #                 User.last_name.ilike(name),
+    #                 User.email.ilike(name),
+
+    #                 # full name search
+    #                 (User.first_name + " " + User.last_name).ilike(name),
+
+    #                 # organisation search
+    #                 Organisation.name.ilike(name)
+    #             )
+    #         )
+
+
+    #     total = query.count()
+
+    #     logs = (
+    #         query.order_by(desc(ActivityLog.created_at))
+    #         .limit(limit)
+    #         .offset(offset)
+    #         .all()
+    #     )
+
+    #     results = []
+
+    #     for log in logs:
+    #         user_display = "Organisation"
+    #         email = None
+
+    #         if getattr(log, "user", None):
+    #             parts = [
+    #                 log.user.first_name,
+    #                 log.user.middle_name,
+    #                 log.user.last_name
+    #             ]
+    #             user_display = " ".join([p for p in parts if p]) or log.user.username
+    #             email = log.user.email
+
+    #         results.append({
+    #             "id": str(log.id),
+    #             "name": user_display,
+    #             "email": email,
+    #             "action": log.action,
+    #             "entity_type": log.entity_type,
+    #             "entity_id": log.entity_id,
+    #             "user_id": log.user_id,
+    #             "organisation_id": log.organisation_id,
+    #             "created_at": log.created_at.isoformat() if log.created_at else None,
+    #             "details": log.details
+    #         })
+
+    #     return {
+    #         "items": results,
+    #         "total": total
+    #     }
 
 
     @staticmethod

@@ -38,6 +38,26 @@ class SOPService:
         return db.query(SOP).filter(SOP.status_id.in_(allowed_ids))
 
     @staticmethod
+    def check_sop_exists(client_id: str, db: Session) -> bool:
+        """
+        Check if an active SOP already exists for the given client_id.
+        """
+        active_status = db.query(Status).filter(
+            Status.code == "ACTIVE",
+            Status.type == "GENERAL"
+        ).first()
+
+        if not active_status:
+            return False
+
+        exists = db.query(SOP).filter(
+            SOP.client_id == client_id,
+            SOP.status_id == active_status.id
+        ).first()
+
+        return True if exists else False
+
+    @staticmethod
     def get_sops(
         db: Session,
         current_user: Any,

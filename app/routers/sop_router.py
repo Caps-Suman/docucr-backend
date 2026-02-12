@@ -127,6 +127,16 @@ def create_sop(
 ):
     sop_data = sop.model_dump()
     return SOPService.create_sop(sop_data, db, current_user)
+
+@router.get("/check-client-sop/{client_id}")
+def check_client_sop(
+    client_id: str,
+    db: Session = Depends(get_db),
+    current_user: Any = Depends(get_current_user)
+):
+    exists = SOPService.check_sop_exists(client_id, db)
+    return {"exists": exists}
+
 @router.get("/stats", response_model=SOPStatsResponse)
 def get_sop_stats(
     db: Session = Depends(get_db),
