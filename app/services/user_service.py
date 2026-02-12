@@ -875,22 +875,12 @@ class UserService:
                  if not organisation_name:
                      organisation_name = org.username
 
-        # Fetch Mapped Client Info
-        # client_id = None
-        # client_name = None
-        # user_client = db.query(UserClient, Client).join(Client, UserClient.client_id == Client.id).filter(UserClient.user_id == user.id).first()
-        # if user_client:
-        #     # user_client is a tuple (UserClient, Client)
-        #     client_id = str(user_client[1].id)
-        #     # client_name = user_client[1].name
-
         client_id = None
         client_name = None
         if user.is_client and getattr(user, 'client_id', None):
              client = db.query(Client).filter(Client.id == user.client_id).first()
              if client:
                  client_id = str(client.id)
-                 # client_name = client.name
 
         return {
             "id": user.id,
@@ -912,6 +902,82 @@ class UserService:
             "organisation_name": organisation_name,
             "client_id": client_id
         }
+
+    @staticmethod
+    def _format_user_response_for_me(user: User, db: Session) -> Dict:
+        user_roles = db.query(UserRole, Role).join(Role, UserRole.role_id == Role.id).filter(UserRole.user_id == user.id).all()
+        roles = [{"id": role.id, "name": role.name} for _, role in user_roles]
+        # roles = []
+        
+        supervisor = db.query(UserSupervisor).filter(UserSupervisor.user_id == user.id).first()
+        supervisor_id = supervisor.supervisor_id if supervisor else None
+        
+        status_code = None
+        if user.status_id:
+             status_obj = db.query(Status).filter(Status.id == user.status_id).first()
+             if status_obj:
+                 status_code = status_obj.code
+        client_count = (
+            db.query(UserClient).filter(UserClient.user_id == user.id).count()
+        )
+
+        # Fetch Created By Name
+        created_by_name = None
+        created_by_id = getattr(user, 'created_by', None)
+        if created_by_id:
+            creator = db.query(User).filter(User.id == created_by_id).first()
+            if creator:
+               created_by_name = f"{creator.first_name or ''} {creator.last_name or ''}".strip()
+               if not created_by_name:
+                   created_by_name = creator.username
+
+        # Fetch Organisation Name
+        organisation_name = None
+        org_id = getattr(user, 'organisation_id', None)
+        if org_id:
+             org = db.query(Organisation).filter(Organisation.id == org_id).first()
+             if org:
+                 # Organisation doesn't have business_name, using first/last or username
+                 organisation_name = f"{org.name}".strip()
+                 if not organisation_name:
+                     organisation_name = org.username
+
+        role_names = [r.name for r in user.roles]
+        client_id = None
+        client_name = None
+
+        # 1. If 'Me' is CLIENT_ADMIN
+        if "CLIENT_ADMIN" in role_names:
+            if user.client_id:
+                client = db.query(Client).filter(Client.id == user.client_id).first()
+                if client:
+                    client_id = str(client.id)
+        
+        # 2. If 'Me' is NOT CLIENT_ADMIN (Sub-User)
+        else:
+             if user.created_by:
+                 client_id = str(user.created_by)
+
+        return {
+            "id": user.id,
+            "email": user.email,
+            "username": user.username,
+            "first_name": user.first_name,
+            "middle_name": user.middle_name,
+            "last_name": user.last_name,
+            "phone_country_code": user.phone_country_code,
+            "phone_number": user.phone_number,
+            "status_id": user.status_id, # Integer
+            "statusCode": status_code,   # String
+            "is_superuser": user.is_superuser,
+            "roles": roles,
+            "supervisor_id": supervisor_id,
+            "assigned_client_count": client_count,
+            "client_count": client_count,
+            "created_by_name": created_by_name,
+            "organisation_name": organisation_name,
+            "client_id": client_id
+        }    
 
     @staticmethod
     def _assign_roles(user_id: str, role_ids: List[str], db: Session):

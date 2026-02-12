@@ -197,7 +197,7 @@ async def get_current_user_profile(
             "organisation_name": current_user.username
         }
 
-    return UserService._format_user_response(current_user, db)
+    return UserService._format_user_response_for_me(current_user, db)
 
 @router.get("/stats")
 async def get_user_stats(

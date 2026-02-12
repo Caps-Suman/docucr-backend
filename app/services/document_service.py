@@ -127,7 +127,22 @@ class DocumentService:
 
             # client user
             if getattr(actor, "is_client", False):
-                return base.filter(Document.client_id == actor.client_id)
+                return (
+                    base
+                    .join(User, Document.created_by == User.id)
+                    .filter(
+                        or_(
+                            User.client_id == actor.client_id,
+                            User.created_by == actor.id
+
+                            # User.client_id == getattr(actor, "resolved_client_id", actor.client_id),
+                            # User.created_by == actor.id
+                        )
+                    )
+                )
+
+            # if getattr(actor, "is_client", False):
+            #     return base.filter(Document.client_id == actor.client_id)
 
             # staff
             assigned_clients = (
@@ -138,9 +153,13 @@ class DocumentService:
             return base.filter(
                 or_(
                     Document.created_by == actor.id,
-                    Document.organisation_id == actor.organisation_id,
                     Document.client_id.in_(assigned_clients),
                 )
+                # or_(
+                #     Document.created_by == actor.id,
+                #     Document.organisation_id == actor.organisation_id,
+                #     Document.client_id.in_(assigned_clients),
+                # )
             )
 
         # -----------------------------
@@ -411,7 +430,6 @@ class DocumentService:
 
             else:
                 raise Exception("Unknown actor")
-
 
             document = Document(
                 filename=file.filename,
@@ -906,6 +924,8 @@ class DocumentService:
 
         query = query.options(joinedload(Document.status))
         query = query.options(joinedload(Document.form_data_relation))
+
+        print('calling for get douc')
 
         # =====================================================
         # SHARED WITH ME

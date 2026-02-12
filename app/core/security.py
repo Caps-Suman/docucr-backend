@@ -40,27 +40,6 @@ def create_refresh_token(data: dict):
     to_encode.update({"exp": expire, "type": "refresh"})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-# def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
-#     token = credentials.credentials
-#     try:
-#         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-#         if payload.get("type") != "access":
-#             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
-#         email: str = payload.get("sub")
-#         if email is None:
-#             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-#     except JWTError:
-#         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    
-#     user = db.query(User).filter(User.email == email).first()
-#     if user is None:
-#         # Fallback to Organisation
-#         org = db.query(Organisation).filter(Organisation.email == email).first()
-#         if org is None:
-#             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-#         return org
-    
-#     return user
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
@@ -84,6 +63,27 @@ def get_current_user(
     user = db.query(User).filter(User.email == email).first()
     if user:
         user.is_org = False
+
+        # Contextual Client ID Logic
+        role_names = [r.name for r in user.roles]
+        if "CLIENT_ADMIN" in role_names:
+             if user.client_id:
+                 # Check if client exists/valid
+                 from app.models.client import Client
+                 client = db.query(Client).filter(Client.id == user.client_id).first()
+                 if client:
+                     user.client_id = str(client.id)
+        else:
+             # Override for sub-users: Fetch creator's client_id
+             if user.created_by:
+                 creator = db.query(User).filter(User.id == user.created_by).first()
+                 if creator and creator.client_id:
+                     user.client_id = str(creator.client_id)
+
+        # Fallback if not set
+        if not hasattr(user, 'client_id'):
+            user.client_id = user.client_id
+
         return user
 
     org = db.query(Organisation).filter(Organisation.email == email).first()
@@ -102,8 +102,54 @@ def get_current_user(
             self.is_superuser = org.is_superuser
             self.roles = org.roles
             self.is_org = True
+            self.client_id = None
 
     return OrgWrapper(org)
+
+    
+# def get_current_user(
+#     credentials: HTTPAuthorizationCredentials = Depends(security),
+#     db: Session = Depends(get_db)
+# ):
+#     token = credentials.credentials
+
+#     try:
+#         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+#         if payload.get("type") != "access":
+#             raise HTTPException(status_code=401, detail="Invalid token type")
+
+#         email = payload.get("sub")
+#         if not email:
+#             raise HTTPException(status_code=401, detail="Invalid token")
+
+#     except JWTError:
+#         raise HTTPException(status_code=401, detail="Invalid token")
+
+#     # ---- try USER first ----
+#     user = db.query(User).filter(User.email == email).first()
+#     if user:
+#         user.is_org = False
+#         return user
+
+#     org = db.query(Organisation).filter(Organisation.email == email).first()
+#     if org:
+#         org.is_org = True
+#         return org
+
+#     raise HTTPException(401, "Not found")
+
+#     # 🔴 IMPORTANT: convert organisation → pseudo user
+#     class OrgWrapper:
+#         def __init__(self, org):
+#             self.id = org.id
+#             self.organisation_id = org.id
+#             self.email = org.email
+#             self.is_superuser = org.is_superuser
+#             self.roles = org.roles
+#             self.is_org = True
+
+#     return OrgWrapper(org)
 
 def get_current_role_id(request: Request = None, credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[str]:
     # We can get token from credentials
