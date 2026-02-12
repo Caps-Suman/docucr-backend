@@ -41,39 +41,39 @@ class DocumentTypeResponse(BaseModel):
 
 @router.get("", response_model=List[DocumentTypeResponse])
 def get_document_types(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """Get all document types"""
-    service = DocumentTypeService(db)
+    service = DocumentTypeService(db, current_user)
     return service.get_all()
 
 @router.get("/dropdown", response_model=List[dict])
 def get_document_type_dropdown(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Lightweight API for dropdowns
     - ACTIVE only
     - id + name only
     """
-    active_status = db.query(Status).filter(Status.code == "Active").first()
-
-    query = db.query(DocumentType.id, DocumentType.name)
-
-    if active_status:
-        query = query.filter(DocumentType.status_id == active_status.id)
+    # Logic moved to service, reusing get_active but formatting response
+    service = DocumentTypeService(db, current_user)
+    active_types = service.get_active()
 
     return [
-        {"id": str(id), "name": name}
-        for id, name in query.order_by(DocumentType.name).all()
+        {"id": str(dt.id), "name": dt.name}
+        for dt in sorted(active_types, key=lambda x: x.name)
     ]
 
 @router.get("/active", response_model=List[DocumentTypeResponse])
 def get_active_document_types(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """Get all active document types"""
-    service = DocumentTypeService(db)
+    service = DocumentTypeService(db, current_user)
     return service.get_active()
 
 @router.post("", response_model=DocumentTypeResponse, status_code=status.HTTP_201_CREATED)
@@ -86,7 +86,7 @@ def create_document_type(
     current_user: User = Depends(get_current_user)
 ):
     """Create a new document type"""
-    service = DocumentTypeService(db)
+    service = DocumentTypeService(db, current_user)
     result = service.create(document_type_data.name, document_type_data.description, document_type_data.status_id)
     
     ActivityService.log(
@@ -123,11 +123,15 @@ def update_document_type(
     current_user: User = Depends(get_current_user)
 ):
     """Update a document type"""
-    service = DocumentTypeService(db)
+    service = DocumentTypeService(db, current_user)
     
     # Calculate changes BEFORE update
+    # Fetching through service to ensure access control if needed, or directly from DB if service fetch is restricted
+    # Using service.get_by_id is safer as it includes org checks
+    original_obj = service.get_by_id(document_type_id)
+
     changes = ActivityService.calculate_changes(
-        db.query(DocumentType).filter(DocumentType.id == document_type_id).first(), 
+        original_obj, 
         {"name": document_type_data.name, "description": document_type_data.description, "status_id": document_type_data.status_id}
     )
 
@@ -156,7 +160,7 @@ def activate_document_type(
     current_user: User = Depends(get_current_user)
 ):
     """Activate a document type"""
-    service = DocumentTypeService(db)
+    service = DocumentTypeService(db, current_user)
     result = service.activate(document_type_id)
     
     ActivityService.log(
@@ -181,7 +185,7 @@ def deactivate_document_type(
     current_user: User = Depends(get_current_user)
 ):
     """Deactivate a document type"""
-    service = DocumentTypeService(db)
+    service = DocumentTypeService(db, current_user)
     result = service.deactivate(document_type_id)
     
     ActivityService.log(
@@ -203,10 +207,10 @@ def delete_document_type(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("document_types", "DELETE")),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Delete a document type"""
-    service = DocumentTypeService(db)
+    service = DocumentTypeService(db, current_user)
     name = service.delete(document_type_id)
     
     ActivityService.log(
@@ -214,7 +218,7 @@ def delete_document_type(
         action="DELETE",
         entity_type="document_type",
         entity_id=document_type_id,
-        current_user=current_user,
+        user_id=current_user.id,
         details={"name": name},
         request=request,
         background_tasks=background_tasks

@@ -3,18 +3,53 @@ from typing import List, Optional, Dict, Any
 from app.models.template import Template
 from app.models.document_type import DocumentType
 from app.models.status import Status
+from app.models.user import User
 from fastapi import HTTPException, status
 
 class TemplateService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, current_user: Optional[User] = None):
         self.db = db
+        self.current_user = current_user
+
+    def _get_user_role_names(self) -> List[str]:
+        if not self.current_user:
+            return []
+        if not hasattr(self.current_user, 'roles'):
+            return []
+        return [r.name for r in self.current_user.roles]
+
+    def _get_organisation_id(self) -> Optional[str]:
+        if not self.current_user:
+            return None
+        if getattr(self.current_user, 'is_org', False):
+            return str(self.current_user.id)
+        return getattr(self.current_user, 'organisation_id', None)
 
     def get_all(self) -> List[Dict]:
-        """Get all templates with document type info"""
-        templates = self.db.query(Template).options(
+        """Get all templates with document type info based on role"""
+        query = self.db.query(Template).options(
             joinedload(Template.document_type),
             joinedload(Template.status)
-        ).all()
+        )
+
+        if self.current_user:
+            role_names = self._get_user_role_names()
+            
+            if 'SUPER_ADMIN' in role_names or getattr(self.current_user, 'is_superuser', False):
+                # Super Admin sees all
+                pass
+            elif any('ORGANISATION_ROLE' in r for r in role_names) or getattr(self.current_user, 'is_org', False):
+                # Organisation Role sees only their own
+                org_id = self._get_organisation_id()
+                if org_id:
+                    query = query.filter(Template.organisation_id == org_id)
+                else:
+                    return []
+            else:
+                 # Other roles see nothing
+                return []
+
+        templates = query.all()
         
         result = []
         for template in templates:
@@ -39,11 +74,27 @@ class TemplateService:
         return result
 
     def get_by_id(self, template_id: str) -> Template:
-        """Get template by ID"""
-        template = self.db.query(Template).options(
+        """Get template by ID with role check"""
+        query = self.db.query(Template).options(
             joinedload(Template.document_type),
             joinedload(Template.status)
-        ).filter(Template.id == template_id).first()
+        ).filter(Template.id == template_id)
+        
+        if self.current_user:
+            role_names = self._get_user_role_names()
+            is_super = 'SUPER_ADMIN' in role_names or getattr(self.current_user, 'is_superuser', False)
+            is_org = any('ORGANISATION_ROLE' in r for r in role_names) or getattr(self.current_user, 'is_org', False)
+            
+            if is_org and not is_super:
+                org_id = self._get_organisation_id()
+                if org_id:
+                    query = query.filter(Template.organisation_id == org_id)
+                else:
+                     raise HTTPException(status_code=403, detail="Access denied")
+            elif not is_super and not is_org:
+                 raise HTTPException(status_code=403, detail="Access denied")
+
+        template = query.first()
         if not template:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -52,13 +103,88 @@ class TemplateService:
         return template
 
     def get_by_document_type(self, document_type_id: str) -> List[Template]:
-        """Get all templates for a specific document type"""
-        return self.db.query(Template).filter(Template.document_type_id == document_type_id).all()
+        """Get all templates for a specific document type based on role"""
+        query = self.db.query(Template).filter(Template.document_type_id == document_type_id)
+        
+        if self.current_user:
+            role_names = self._get_user_role_names()
+            
+            if 'SUPER_ADMIN' in role_names or getattr(self.current_user, 'is_superuser', False):
+                pass
+            elif any('ORGANISATION_ROLE' in r for r in role_names) or getattr(self.current_user, 'is_org', False):
+                org_id = self._get_organisation_id()
+                if org_id:
+                    query = query.filter(Template.organisation_id == org_id)
+                else:
+                    return []
+            else:
+                return []
+                
+        return query.all()
 
     def create(self, template_name: str, document_type_id: str, description: Optional[str] = None, 
                extraction_fields: Optional[List[Dict[str, Any]]] = None, status_id: Optional[str] = None,
                user_id: Optional[str] = None) -> Template:
         """Create a new template"""
+        
+        # Role check
+        if not self.current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        existing_template = (
+            self.db.query(Template)
+            .filter(
+                Template.document_type_id == document_type_id,
+                Template.status_id == 8,
+            )
+            .first()
+        )
+
+        if existing_template:
+            raise HTTPException(
+                status_code=409,
+                detail="Template already exists for this document type"
+            )
+        
+        organisation_id = None
+        created_by_id = None
+
+        role_names = self._get_user_role_names()
+        is_super = 'SUPER_ADMIN' in role_names or getattr(self.current_user, 'is_superuser', False)
+        is_org = any('ORGANISATION_ROLE' in r for r in role_names) or getattr(self.current_user, 'is_org', False)
+        
+        if is_super:
+            # 1. SUPER_ADMIN: Both column should be set null
+            organisation_id = None
+            created_by_id = None
+        elif is_org:
+            # 2. ORGANISATION_ROLE: created_by should be null and organisation_id should be set
+            organisation_id = self._get_organisation_id()
+            created_by_id = None
+            if not organisation_id:
+                 raise HTTPException(status_code=400, detail="Organisation ID missing for organisation user")
+        else:
+            # 3. Any other role: Both column should be set
+            # First get organisation_id (Where belong this user)
+            organisation_id = self._get_organisation_id()
+            # Then set user_id into 'created_by' column
+            created_by_id = self.current_user.id
+            
+            # Access logic: If normal user, do we allow create?
+            # User request implied we should handle this case: "3. Any other role is logged in..."
+            # Assuming allowed if they belong to an org.
+            if not organisation_id:
+                 # If user has no organisation, they probably shouldn't be creating templates unless they are super admin (handled above)
+                 # But let's fail safe or deny? 
+                 # PROMPT: "3. Any other role is logged in: Then both column should be set here"
+                 # Implicitly allows it.
+                 pass
+            
+            # Explicitly checking if we previously denied them.
+            # "Any other role attempting to create a template must be denied" was the OLD rule.
+            # The NEW error report says "Lets discuss for all role... 3. Any other role... Both column should be set".
+            # This overrides the old rule.
+
         # Get inactive status if not provided (default)
         if status_id is None:
             inactive_status = self.db.query(Status).filter(Status.code == 'INACTIVE').first()
@@ -69,17 +195,11 @@ class TemplateService:
                 )
             status_id_val = inactive_status.id
         else:
-             # Look up ID from code if string provided? 
-             # Assuming input is status_id (integer) or code?
-             # If API passes string code, we must resolve it.
-             # If API passes integer ID (as string), we might just use it?
-             # Let's assume input 'status_id' might be code if coming from typical frontend flow we seen.
              if isinstance(status_id, str) and not status_id.isdigit():
                  st = self.db.query(Status).filter(Status.code == status_id).first()
                  if st:
                      status_id_val = st.id
                  else:
-                     # Maybe it is a UUID/Integer in string form?
                      status_id_val = status_id
              else:
                  status_id_val = status_id
@@ -96,10 +216,11 @@ class TemplateService:
             template_name=template_name,
             description=description,
             document_type_id=document_type_id,
-            status_id=status_id_val,
+            status_id=8,
             extraction_fields=extraction_fields or [],
-            created_by=user_id  # assuming column exists
-)
+            created_by=created_by_id,
+            organisation_id=organisation_id
+        )
         
         self.db.add(template)
         self.db.commit()
@@ -110,11 +231,24 @@ class TemplateService:
                description: Optional[str] = None, document_type_id: Optional[str] = None,
                extraction_fields: Optional[List[Dict[str, Any]]] = None, status_id: Optional[str] = None) -> Template:
         """Update a template"""
-        template = self.db.query(Template).filter(Template.id == template_id).first()
-        if not template:
+        # get_by_id checks permissions
+        template = self.get_by_id(template_id)
+
+        if document_type_id and document_type_id != template.document_type_id:
+            conflict = (
+            self.db.query(Template)
+            .filter(
+                Template.document_type_id == document_type_id,
+                Template.status_id == 8,
+                Template.id != template.id,
+            )
+            .first()
+        )
+
+        if conflict:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Template not found"
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Active template already exists for this document type"
             )
         
         # Verify document type exists if being updated
@@ -169,12 +303,8 @@ class TemplateService:
 
     def delete(self, template_id: str) -> Optional[str]:
         """Delete a template"""
-        template = self.db.query(Template).filter(Template.id == template_id).first()
-        if not template:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Template not found"
-            )
+        # get_by_id checks permissions
+        template = self.get_by_id(template_id)
         
         name = template.template_name
         self.db.delete(template)

@@ -35,12 +35,18 @@ class Template(Base):
     created_by = Column(
         String,
         ForeignKey("docucr.user.id"),
-        nullable=False
+        nullable=True
     )
 
     updated_by = Column(
         String,
         ForeignKey("docucr.user.id"),
+        nullable=True
+    )
+    
+    organisation_id = Column(
+        String,
+        ForeignKey("docucr.organisation.id"),
         nullable=True
     )
 
