@@ -4,6 +4,7 @@ from app.models.client import Client
 from app.models.organisation import Organisation
 from app.models.provider import Provider
 from app.services.activity_service import ActivityService
+from sqlalchemy import text
 from app.core.permissions import Permission
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, constr, field_validator
@@ -667,8 +668,13 @@ async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db
     return {"message": "Clients assigned successfully"}
 
 @router.post("/{client_id}/users/map", dependencies=[Depends(Permission("clients", "ADMIN"))])
-async def map_users_to_client_endpoint(client_id: str, request: MapUsersRequest, db: Session = Depends(get_db)):
-    ClientService.map_users_to_client(client_id, request.user_ids, request.assigned_by, db)
+async def map_users_to_client_endpoint(
+    client_id: str, 
+    request: MapUsersRequest, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    ClientService.map_users_to_client(client_id, request.user_ids, request.assigned_by, db, current_user)
     return {"message": "Users mapped successfully"}
 
 @router.post("/{client_id}/users/unassign", dependencies=[Depends(Permission("clients", "ADMIN"))])

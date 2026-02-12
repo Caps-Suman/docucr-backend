@@ -883,15 +883,39 @@ class ClientService:
         client_id: str,
         user_ids: List[str],
         assigned_by: str,
-        db: Session
+        db: Session,
+        current_user: User
     ):
+        
+        # Check Role
+        is_org_role = False
+        if hasattr(current_user, 'roles'):
+            role_names = [r.name for r in current_user.roles]
+            if "ORGANISATION_ROLE" in role_names:
+                is_org_role = True
+
+        # Determine assignment fields
+        final_assigned_by = None
+        final_organisation_id = None
+
+        if is_org_role:
+             # If Organisation Role, use their organisation_id
+             # assigned_by stays NULL (as per requirement "assigned_by": assigned_by if not org role)
+             # Wait, requirement says: if role is 'ORGANISATION_ROLE' then organisation_id = assigned_by.
+             # assigned_by in request is the ID of the user doing the assignment.
+             
+             final_organisation_id = assigned_by
+        else:
+             final_assigned_by = assigned_by
+
         # Insert ignoring duplicates
         stmt = insert(UserClient).values([
             {
                 "id": str(uuid.uuid4()),
                 "user_id": uid,
                 "client_id": client_id,
-                "assigned_by": assigned_by
+                "assigned_by": final_assigned_by,
+                "organisation_id": final_organisation_id
             }
             for uid in user_ids
         ]).on_conflict_do_nothing(
