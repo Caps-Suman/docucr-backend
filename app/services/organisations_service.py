@@ -29,7 +29,8 @@ class OrganisationService:
                     Organisation.last_name.ilike(search_term),
                     Organisation.email.ilike(search_term),
                     Organisation.username.ilike(search_term),
-                    Organisation.phone_number.ilike(search_term)
+                    Organisation.phone_number.ilike(search_term),
+                    Organisation.name.ilike(search_term)
                 )
             )
             
