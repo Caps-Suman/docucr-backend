@@ -50,12 +50,16 @@ class RoleService:
         if not current_user.is_superuser:
             if getattr(current_user, 'is_client', False):
                 query = query.filter(
-                    (User.created_by == str(current_user.id)) |
-                    (User.id == str(current_user.id))
+                    (Role.created_by == str(current_user.id)) |
+                    (Role.organisation_id.is_(None) & Role.created_by.is_(None)) # Allow Generic Roles?
                 )
-            else:
+            elif current_user.organisation_id:
+                 # Organisation Admin: See Own Org Roles + Global System Roles
                  query = query.filter(
-                        User.organisation_id == str(current_user.id)
+                        or_(
+                            Role.organisation_id == str(current_user.organisation_id),
+                            (Role.organisation_id.is_(None) & Role.created_by.is_(None))
+                        )
                     )
 
         # USER WITHOUT ORG → see roles they created + global roles
@@ -422,7 +426,7 @@ class RoleService:
             query = query.filter(
                 or_(
                     Role.organisation_id == str(current_user.organisation_id),
-                    Role.organisation_id.is_(None)
+                    (Role.organisation_id.is_(None) & Role.created_by.is_(None))
                 )
             )
 
@@ -431,7 +435,7 @@ class RoleService:
             query = query.filter(
                 or_(
                     Role.created_by == str(current_user.id),
-                    Role.organisation_id.is_(None)
+                    (Role.organisation_id.is_(None) & Role.created_by.is_(None))
                 )
             )
 

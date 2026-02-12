@@ -192,7 +192,10 @@ class UserService:
         # Let's show everyone who matches the filter contexts.
 
         # Context Filters
-        if organisation_id:
+        if not current_user.is_superuser and current_user.organisation_id:
+            # Enforce Organisation Isolation for Org Admins
+            query = query.filter(User.organisation_id == str(current_user.organisation_id))
+        elif organisation_id:
             if isinstance(organisation_id, list):
                 query = query.filter(User.organisation_id.in_(organisation_id))
             else:
