@@ -332,7 +332,7 @@ class UserService:
         # --------------------------------------------------
         elif "ORGANISATION_ROLE" in role_names:
             created_by_val = None
-            organisation_id_val = str(current_user.organisation_id)
+            organisation_id_val = str(current_user.id)
 
             if not organisation_id_val:
                 raise HTTPException(
