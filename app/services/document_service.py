@@ -1079,25 +1079,51 @@ class DocumentService:
         for doc in documents:
             raw = form_map.get(doc.id, {}) or {}
 
+            # client_name = None
+            # doc_type_name = None
+
+            # for field_id, value in raw.items():
+            #     field = field_map.get(str(field_id))
+            #     if not field or not value:
+            #         continue
+
+            #     label = field.label.lower()
+
+            #     if label == "client":
+            #         c = client_map.get(str(value))
+            #         if c:
+            #             client_name = c.business_name or f"{c.first_name} {c.last_name}"
             client_name = None
             doc_type_name = None
 
-            for field_id, value in raw.items():
-                field = field_map.get(str(field_id))
-                if not field or not value:
-                    continue
+            # -----------------------------------
+            # 1️⃣ PRIMARY: document.client_id
+            # -----------------------------------
+            if doc.client_id:
+                c = client_map.get(str(doc.client_id))
+                if c:
+                    client_name = c.business_name or f"{c.first_name} {c.last_name}"
 
-                label = field.label.lower()
+            # -----------------------------------
+            # 2️⃣ FALLBACK: form data client field
+            # -----------------------------------
+            if not client_name:
+                for field_id, value in raw.items():
+                    field = field_map.get(str(field_id))
+                    if not field or not value:
+                        continue
 
-                if label == "client":
-                    c = client_map.get(str(value))
-                    if c:
-                        client_name = c.business_name or f"{c.first_name} {c.last_name}"
+                    label = field.label.lower()
 
-                elif label == "document type":
-                    dt = doc_type_map.get(str(value))
-                    if dt:
-                        doc_type_name = dt.name
+                    if label == "client":
+                        c = client_map.get(str(value))
+                        if c:
+                            client_name = c.business_name or f"{c.first_name} {c.last_name}"
+
+                    elif label == "document type":
+                        dt = doc_type_map.get(str(value))
+                        if dt:
+                            doc_type_name = dt.name
 
             uploaded_by = None
             if doc.created_by and doc.created_by in users_map:

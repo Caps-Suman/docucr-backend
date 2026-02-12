@@ -120,8 +120,6 @@ def get_active_form(
 
     return form
 
-
-
 @router.get("/{form_id}", response_model=FormDetailResponse)
 def get_form(
     form_id: str,
