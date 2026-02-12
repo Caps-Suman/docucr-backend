@@ -99,7 +99,8 @@ class UserService:
         current_user: User,
         role_id: Optional[List[str]] = None,
         organisation_id: Optional[List[str]] = None,
-        client_id: Optional[List[str]] = None
+        client_id: Optional[List[str]] = None,
+        created_by: Optional[List[str]] = None
     ) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         query = db.query(User)
@@ -122,34 +123,33 @@ class UserService:
             query = query.filter(User.client_id == str(current_user.id))
 
         elif isinstance(current_user, User):
-            if not current_user.is_superuser:
-                if getattr(current_user, 'is_client', False):
-                    # Client Admin: See created users ONLY (exclude self)
-                    query = query.filter(User.created_by == str(current_user.id))
-                elif current_user.organisation_id:
-                     query = query.filter(User.organisation_id == str(current_user.organisation_id))
-                else:
-                     query = query.filter(User.id == str(current_user.id))
+            role_names = [r.name for r in current_user.roles]
+            
+            if current_user.is_superuser or "SUPER_ADMIN" in role_names:
+                pass
+            
+            elif "ORGANISATION_ROLE" in role_names:
+                 if current_user.organisation_id:
+                    query = query.filter(User.organisation_id == str(current_user.organisation_id))
+
+            elif "CLIENT_ADMIN" in role_names or getattr(current_user, 'is_client', False):
+                 filters = []
+                 if current_user.client_id:
+                     filters.append(User.client_id == str(current_user.client_id))
+                 
+                 # Always include created_by as fallback/legacy support
+                 filters.append(User.created_by == str(current_user.id))
+                 
+                 query = query.filter(or_(*filters))
+                 # Exclude self
+                 query = query.filter(User.id != str(current_user.id))
+
+            else:
+                 # Standard User -> Only users created by them
+                 query = query.filter(User.created_by == str(current_user.id))
 
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
-
-        # ... (rest of get_users) ...
-
-    # ... (skipping to get_user_stats) ...
-
-        if role_id:
-            # Handle list or single string (though type hint says List, runtime might vary if not careful, but Router ensures list)
-            if isinstance(role_id, list):
-                 query = query.join(UserRole).filter(UserRole.role_id.in_(role_id))
-            else:
-                 query = query.join(UserRole).filter(UserRole.role_id == role_id)
-
-        if organisation_id:
-            if isinstance(organisation_id, list):
-                query = query.filter(User.organisation_id.in_(organisation_id))
-            else:
-                query = query.filter(User.organisation_id == organisation_id)
 
         if client_id:
             # Filter by specific client_id (implicit or explicit link)
@@ -157,6 +157,25 @@ class UserService:
                 query = query.filter(User.client_id.in_(client_id))
             else:
                 query = query.filter(User.client_id == client_id)
+
+        if organisation_id:
+            if isinstance(organisation_id, list):
+                query = query.filter(User.organisation_id.in_(organisation_id))
+            else:
+                query = query.filter(User.organisation_id == organisation_id)
+
+        if created_by:
+            if isinstance(created_by, list):
+                query = query.filter(User.created_by.in_(created_by))
+            else:
+                query = query.filter(User.created_by == created_by)
+
+        if role_id:
+            # Handle list or single string (though type hint says List, runtime might vary if not careful, but Router ensures list)
+            if isinstance(role_id, list):
+                 query = query.join(UserRole).filter(UserRole.role_id.in_(role_id))
+            else:
+                 query = query.join(UserRole).filter(UserRole.role_id == role_id)
 
         if search:
             query = query.filter(
@@ -196,16 +215,6 @@ class UserService:
         """
         query = db.query(User)
         
-        # 1. Base Visibility Filtering (reuse existing logic if possible or reimplement for speed)
-        # Reusing get_users logic partially but optimized
-        
-        # Exclude SUPER_ADMIN role users from being *shown* as creators? 
-        # Usually creators are Admins, Org Admins, Client Admins. 
-        # But if a Super Admin created a user, we might want to see them.
-        # Let's show everyone who matches the filter contexts.
-
-        # Context Filters
-        # Context Filters
         if isinstance(current_user, Organisation):
             # Enforce Organisation Isolation for Org Admins
             query = query.filter(User.organisation_id == str(current_user.id))
@@ -215,12 +224,27 @@ class UserService:
             query = query.filter(User.client_id == str(current_user.id))
 
         elif isinstance(current_user, User):
-            if not current_user.is_superuser and current_user.organisation_id:
-                # Enforce Organisation Isolation for Org Admins (User)
-                query = query.filter(User.organisation_id == str(current_user.organisation_id))
-            elif getattr(current_user, 'is_client', False):
-                # Client User
-                query = query.filter(User.client_id == str(current_user.client_id))
+            role_names = [r.name for r in current_user.roles]
+
+            if current_user.is_superuser or "SUPER_ADMIN" in role_names:
+                pass
+            
+            elif "ORGANISATION_ROLE" in role_names:
+                if current_user.organisation_id:
+                    query = query.filter(User.organisation_id == str(current_user.organisation_id))
+
+            elif "CLIENT_ADMIN" in role_names or getattr(current_user, 'is_client', False):
+                 filters = []
+                 if current_user.client_id:
+                     filters.append(User.client_id == str(current_user.client_id))
+                 
+                 filters.append(User.created_by == str(current_user.id))
+                 query = query.filter(or_(*filters))
+            
+            else:
+                 # Standard User -> Only show themselves? (as per "fetch only created user by login user")
+                 # This implies they can only filter by themselves
+                 query = query.filter(User.id == str(current_user.id))
         
         # Additional Filters
         if organisation_id:
@@ -366,6 +390,9 @@ class UserService:
             created_by_val = str(current_user.id)
             organisation_id_val = str(client.organisation_id)
 
+            # Auto-assign client_id to new user
+            client_id_val = client.id
+
         # --------------------------------------------------
         # 4. FALLBACK (OPTIONAL)
         # --------------------------------------------------
@@ -389,6 +416,7 @@ class UserService:
             is_superuser=False,
             status_id=status_id_val,
             organisation_id=organisation_id_val,
+            client_id=client_id_val if 'client_id_val' in locals() else user_data.get('client_id'), # Use auto-assigned or provided
             created_by=created_by_val
         )
         

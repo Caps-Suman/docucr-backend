@@ -116,6 +116,7 @@ async def get_users(
     role_id: Optional[List[str]] = Query(None),
     organisation_id: Optional[List[str]] = Query(None),
     client_id: Optional[List[str]] = Query(None),
+    created_by: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -128,7 +129,8 @@ async def get_users(
         current_user,
         role_id=role_id,
         organisation_id=organisation_id,
-        client_id=client_id
+        client_id=client_id,
+        created_by=created_by
     )
     return UserListResponse(
         users=[UserResponse(**user) for user in users],
