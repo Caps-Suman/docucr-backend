@@ -99,7 +99,8 @@ class UserService:
         current_user: User,
         role_id: Optional[List[str]] = None,
         organisation_id: Optional[List[str]] = None,
-        client_id: Optional[List[str]] = None
+        client_id: Optional[List[str]] = None,
+        created_by: Optional[List[str]] = None
     ) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         query = db.query(User)
@@ -150,16 +151,12 @@ class UserService:
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
 
-        # ... (rest of get_users) ...
-
-    # ... (skipping to get_user_stats) ...
-
-        if role_id:
-            # Handle list or single string (though type hint says List, runtime might vary if not careful, but Router ensures list)
-            if isinstance(role_id, list):
-                 query = query.join(UserRole).filter(UserRole.role_id.in_(role_id))
+        if client_id:
+            # Filter by specific client_id (implicit or explicit link)
+            if isinstance(client_id, list):
+                query = query.filter(User.client_id.in_(client_id))
             else:
-                 query = query.join(UserRole).filter(UserRole.role_id == role_id)
+                query = query.filter(User.client_id == client_id)
 
         if organisation_id:
             if isinstance(organisation_id, list):
@@ -167,12 +164,18 @@ class UserService:
             else:
                 query = query.filter(User.organisation_id == organisation_id)
 
-        if client_id:
-            # Filter by specific client_id (implicit or explicit link)
-            if isinstance(client_id, list):
-                query = query.filter(User.client_id.in_(client_id))
+        if created_by:
+            if isinstance(created_by, list):
+                query = query.filter(User.created_by.in_(created_by))
             else:
-                query = query.filter(User.client_id == client_id)
+                query = query.filter(User.created_by == created_by)
+
+        if role_id:
+            # Handle list or single string (though type hint says List, runtime might vary if not careful, but Router ensures list)
+            if isinstance(role_id, list):
+                 query = query.join(UserRole).filter(UserRole.role_id.in_(role_id))
+            else:
+                 query = query.join(UserRole).filter(UserRole.role_id == role_id)
 
         if search:
             query = query.filter(
