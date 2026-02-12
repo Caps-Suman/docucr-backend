@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import Optional, List, Dict, Tuple
 import uuid
+from fastapi import HTTPException
 
 from app.models.user import User
 from app.models.user_role import UserRole
@@ -300,19 +301,80 @@ class UserService:
         
         status_id_val = active_status.id if active_status else None
 
-        organisation_id_val = user_data.get('organisation_id')
-        created_by_val = None
+        # organisation_id_val = user_data.get('organisation_id')
+        # created_by_val = None
 
-        if isinstance(current_user, Organisation):
+        # if isinstance(current_user, Organisation):
+        #     created_by_val = None
+        #     organisation_id_val = str(current_user.id)
+        # elif isinstance(current_user, User):
+        #     if not current_user.is_superuser:
+        #         created_by_val = str(current_user.id)
+        #         if current_user.id:
+        #             organisation_id_val = str(current_user.id)
+        #     else:
+        #         created_by_val = None
+
+        created_by_val = None
+        organisation_id_val = None
+
+        role_names = {r.name for r in current_user.roles}
+
+        # --------------------------------------------------
+        # 1. SUPER ADMIN
+        # --------------------------------------------------
+        if "SUPER_ADMIN" in role_names:
             created_by_val = None
-            organisation_id_val = str(current_user.id)
-        elif isinstance(current_user, User):
-            if not current_user.is_superuser:
-                created_by_val = str(current_user.id)
-                if current_user.id:
-                    organisation_id_val = str(current_user.id)
-            else:
-                created_by_val = None
+            organisation_id_val = None
+
+        # --------------------------------------------------
+        # 2. ORGANISATION ROLE
+        # --------------------------------------------------
+        elif "ORGANISATION_ROLE" in role_names:
+            created_by_val = None
+            organisation_id_val = str(current_user.organisation_id)
+
+            if not organisation_id_val:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Organisation role user is not linked to any organisation"
+                )
+
+        # --------------------------------------------------
+        # 3. CLIENT ROLE
+        # --------------------------------------------------
+        elif "CLIENT_ADMIN" in role_names:
+            client_id = getattr(current_user, 'client_id', None)
+            if not client_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Client admin user is not linked to any client"
+                )
+
+            client = (
+                db.query(Client)
+                .filter(Client.id == client_id)
+                .first()
+            )
+
+            if not client or not client.organisation_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Client user is not linked to any organisation"
+                )
+
+            created_by_val = str(current_user.id)
+            organisation_id_val = str(client.organisation_id)
+
+        # --------------------------------------------------
+        # 4. FALLBACK (OPTIONAL)
+        # --------------------------------------------------
+        else:
+            raise HTTPException(
+                status_code=403,
+                detail="User role is not permitted to create users"
+            )
+
 
         user = User(
             id=str(uuid.uuid4()),
