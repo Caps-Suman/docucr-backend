@@ -742,3 +742,13 @@ async def create_clients_bulk(
         failed=failed,
         errors=errors
     )
+
+@router.post("/fix-user-client-schema")
+def fix_user_client_schema(db: Session = Depends(get_db)):
+    try:
+        # Check if column exists, if not add it
+        db.execute(text("ALTER TABLE docucr.user_client ADD COLUMN IF NOT EXISTS organisation_id VARCHAR REFERENCES docucr.organisation(id);"))
+        db.commit()
+        return {"message": "UserClient schema updated successfully"}
+    except Exception as e:
+        return {"error": str(e)}
