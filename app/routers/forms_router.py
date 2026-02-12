@@ -1,4 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from app.models.client import Client
+from app.models.user import User
 from app.services.activity_service import ActivityService
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -61,6 +63,14 @@ def get_forms(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
+    if current_user.is_client:
+        return FormListResponse(
+            forms=[],
+            total=0,
+            page=page,
+            page_size=page_size
+        )
+
     forms, total = FormService.get_forms(page, page_size, db)
     return FormListResponse(
         forms=forms,
@@ -79,12 +89,34 @@ def get_form_stats(
 @router.get("/active", response_model=FormDetailResponse)
 def get_active_form(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     form = FormService.get_active_form(db)
+
     if not form:
-        raise HTTPException(status_code=404, detail="No active form found")
+        raise HTTPException(404, "No active form")
+
+    # CLIENT USER → LOCK CLIENT FIELD
+    if current_user.is_client:
+        
+        client = db.query(Client).filter(
+            Client.id == current_user.client_id
+        ).first()
+
+        client_label = None
+        if client:
+            client_label = client.business_name or f"{client.first_name} {client.last_name}"
+
+        for field in form["fields"]:
+            if field["label"].lower() == "client":
+                field["default_value"] = current_user.client_id
+                field["default_label"] = client_label   # 👈 IMPORTANT
+                field["readonly"] = True
+                field["disabled"] = True
+
     return form
+
+
 
 @router.get("/{form_id}", response_model=FormDetailResponse)
 def get_form(

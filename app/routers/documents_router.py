@@ -133,7 +133,7 @@ async def upload_documents(
             action="CREATE",
             entity_type="document",
             entity_id=str(doc.id),
-            user_id=current_user.id,
+            current_user=current_user,
             details={
                 "filename": doc.filename,
                 "size": doc.file_size,
@@ -346,7 +346,7 @@ async def update_document_form_data(
         action="UPDATE",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={
             "sub_action": "METADATA_UPDATE",
             "filename": document.filename,
@@ -375,19 +375,45 @@ def get_document_stats(
 def get_documents(
     skip: int = 0,
     limit: int = 25,
-    status_id: Optional[str] = None,
+    status_code: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     search_query: Optional[str] = None,
     form_filters: Optional[str] = None,
     document_type_id: Optional[UUID] = None,
+    client_id: Optional[UUID] = None,
+    organisation_id: Optional[UUID] = None,
+    organisation_filter: Optional[str] = None,
+    uploaded_by: Optional[str] = None,
+
     shared_only: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ")),
 ):
 
-    docs, total = document_service.get_user_documents(db, current_user, skip, limit)
+    parsed_form_filters = None
+    if form_filters:
+        try:
+            parsed_form_filters = json.loads(form_filters)
+        except:
+            parsed_form_filters = None
+
+    docs, total = document_service.get_user_documents(
+        db=db,
+        current_user=current_user,
+        skip=skip,
+        limit=limit,
+        status_id=status_code,
+        date_from=date_from,
+        date_to=date_to,
+        search_query=search_query,
+        form_filters=parsed_form_filters,
+        document_type_id=document_type_id,
+        client_id=client_id,
+        organisation_id=organisation_filter,
+        shared_only=shared_only,
+        uploaded_by=uploaded_by,
+    )
 
     return {
         "documents": docs,
@@ -559,6 +585,7 @@ async def get_document_download_url(
         .filter(Document.id == document_id)
         .first()
     )
+    print("CURRENT USER:", type(current_user), current_user.id, getattr(current_user, "organisation_id", None))
 
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -585,7 +612,8 @@ async def get_document_download_url(
         action="DOWNLOAD",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=str(current_user.id),
+        current_user=current_user,
+        # user_id=str(current_user.id),
         details={"filename": filename},
         request=request,
         background_tasks=background_tasks
@@ -739,7 +767,7 @@ async def cancel_document(
         action="UPDATE",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"sub_action": "CANCEL_ANALYSIS"},
         request=request,
         background_tasks=background_tasks
@@ -772,7 +800,7 @@ async def reanalyze_document(
             action="UPDATE",
             entity_type="document",
             entity_id=str(document_id),
-            user_id=current_user.id,
+            current_user=current_user,
             details={"sub_action": "REANALYZE"},
             request=request,
             background_tasks=background_tasks
@@ -807,7 +835,7 @@ async def archive_document(
         action="UPDATE",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"sub_action": "ARCHIVE"},
         request=request,
         background_tasks=background_tasks
@@ -839,7 +867,7 @@ async def unarchive_document(
         action="UPDATE",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"sub_action": "UNARCHIVE"},
         request=request,
         background_tasks=background_tasks
@@ -870,12 +898,49 @@ async def delete_document(
         action="DELETE",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"filename": filename},
         request=request,
         background_tasks=background_tasks
     )
     return {"message": "Document deleted successfully"}
+
+@router.get("/filter/organisations")
+def get_org_filter(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+
+    roles = [r.name for r in current_user.roles]
+    if "SUPER_ADMIN" not in roles:
+        return []
+
+    orgs = db.query(Organisation.id, Organisation.name).all()
+
+    return [{"id": str(o.id), "name": o.name} for o in orgs]
+
+@router.get("/filter/uploaded-by")
+def get_uploaded_by_filter(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    # visible documents only
+    base = DocumentService._document_access_query(db, current_user)
+
+    user_ids = db.query(Document.created_by)\
+        .filter(Document.created_by.isnot(None))\
+        .distinct().all()
+
+    user_ids = [u[0] for u in user_ids]
+
+    users = db.query(User.id, User.first_name, User.last_name)\
+        .filter(User.id.in_(user_ids)).all()
+
+    return [
+        {
+            "id": str(u.id),
+            "name": f"{u.first_name} {u.last_name}"
+        }
+        for u in users
+    ]
 
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str = "ae5b4fa6-44bb-45ce-beac-320bb4e21697"):

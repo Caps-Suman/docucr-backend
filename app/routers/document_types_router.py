@@ -203,7 +203,7 @@ def delete_document_type(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("document_types", "DELETE")),
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     """Delete a document type"""
     service = DocumentTypeService(db)
@@ -214,10 +214,10 @@ def delete_document_type(
         action="DELETE",
         entity_type="document_type",
         entity_id=document_type_id,
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": name},
         request=request,
         background_tasks=background_tasks
     )
-    
+
     return {"message": "Document type deleted successfully"}

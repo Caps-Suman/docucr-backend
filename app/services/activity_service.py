@@ -3,6 +3,14 @@ from fastapi import Request
 from typing import Optional, Dict, Any
 from app.models.activity_log import ActivityLog
 import uuid
+from app.models.organisation import Organisation
+from app.models.user_role import UserRole
+from app.models.role import Role
+from app.models.client import Client
+from app.models.user_client import UserClient
+from sqlalchemy import String, cast, desc, or_
+
+from app.models.user import User
 
 class ActivityService:
     @staticmethod
@@ -14,17 +22,32 @@ class ActivityService:
         if hasattr(value, "__str__") and not isinstance(value, (int, float, bool, str)):
             return str(value)
         return value
+    @staticmethod
+    def _resolve_org_id(current_user):
+        if not current_user:
+            return None
 
+        # logged in as organisation model
+        if isinstance(current_user, Organisation):
+            return str(current_user.id)
+
+        # logged in as user under organisation
+        if isinstance(current_user, User):
+            return str(current_user.organisation_id)
+
+        return None
     @staticmethod
     def log_task(
         action: str,
         entity_type: str,
         user_id: Optional[str] = None,
         entity_id: Optional[str] = None,
+        organisation_id: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None
     ):
+
         """
         Background task to write activity log.
         Creates its own DB session to ensure persistence after request logic finishes.
@@ -35,6 +58,7 @@ class ActivityService:
             activity_entry = ActivityLog(
                 id=uuid.uuid4(),
                 user_id=user_id,
+                organisation_id=organisation_id,
                 action=action,
                 entity_type=entity_type,
                 entity_id=entity_id,
@@ -52,59 +76,82 @@ class ActivityService:
 
     @staticmethod
     def log(
-        db: Session, # Kept for backward compatibility if needed, though we prefer background_tasks
+        db,
         action: str,
         entity_type: str,
-        entity_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
-        request: Optional[Request] = None,
-        background_tasks: Optional[Any] = None # Support FastAPI BackgroundTasks
+        entity_id: str = None,
+        current_user=None,
+        user_id: str = None,
+        details: dict = None,
+        request=None,
+        background_tasks=None,
     ):
         """
-        Logs an action. Prefer using `background_tasks` for zero-latency.
+        Universal activity logger.
+        Handles:
+        - organisation login
+        - staff user
+        - client user
+        No endpoint changes required.
         """
-        ip_address = None
-        user_agent = None
 
-        if request:
-            ip_address = request.client.host if request.client else None
-            user_agent = request.headers.get("user-agent")
+        try:
+            resolved_user_id = None
+            resolved_org_id = None
 
-        if background_tasks:
-            # Zero-latency: Offload to background
-            background_tasks.add_task(
-                ActivityService.log_task,
+            # ---------------------------------------
+            # CASE 1: current_user passed
+            # ---------------------------------------
+            if current_user:
+
+                # Organisation login
+                if current_user.__class__.__name__ == "Organisation":
+                    resolved_org_id = str(current_user.id)
+
+                # User login
+                else:
+                    resolved_user_id = str(current_user.id)
+
+                    if getattr(current_user, "organisation_id", None):
+                        resolved_org_id = str(current_user.organisation_id)
+
+            # ---------------------------------------
+            # CASE 2: user_id manually passed
+            # ---------------------------------------
+            elif user_id:
+                from app.models.user import User
+                user = db.query(User).filter(User.id == user_id).first()
+
+                if user:
+                    resolved_user_id = str(user.id)
+                    if user.organisation_id:
+                        resolved_org_id = str(user.organisation_id)
+
+            # ---------------------------------------
+            # FAIL SAFE → never crash
+            # ---------------------------------------
+            if not resolved_user_id and not resolved_org_id:
+                print("⚠️ Activity skipped: no valid actor")
+                return
+
+            from app.models.activity_log import ActivityLog
+
+            log = ActivityLog(
+                user_id=resolved_user_id,
+                organisation_id=resolved_org_id,
                 action=action,
                 entity_type=entity_type,
-                user_id=user_id,
                 entity_id=entity_id,
-                details=details,
-                ip_address=ip_address,
-                user_agent=user_agent
+                details=details or {},
+                ip_address=request.client.host if request else None,
+                user_agent=request.headers.get("user-agent") if request else None,
             )
-            return None
-        else:
-            # Fallback: Synchronous write (Blocking)
-            activity_entry = ActivityLog(
-                id=uuid.uuid4(),
-                user_id=user_id,
-                action=action,
-                entity_type=entity_type,
-                entity_id=entity_id,
-                details=details,
-                ip_address=ip_address,
-                user_agent=user_agent
-            )
-            db.add(activity_entry)
-            try:
-                db.commit()
-                db.refresh(activity_entry)
-                return activity_entry
-            except Exception as e:
-                print(f"Failed to write activity log: {e}")
-                db.rollback()
-                return None
+
+            db.add(log)
+            db.commit()
+
+        except Exception as e:
+            print("❌ Activity log failed:", e)
 
     @staticmethod
     def calculate_changes(old_obj: Any, new_data: Dict[str, Any], exclude: list = None) -> Dict[str, Dict[str, Any]]:
@@ -197,6 +244,8 @@ class ActivityService:
         # Add more actions here as needed
     }
 
+    from sqlalchemy import String, or_, cast, desc
+
     @staticmethod
     def get_activity_logs(
         db: Session,
@@ -204,80 +253,121 @@ class ActivityService:
         offset: int = 0,
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
+        current_user=None,
         action: Optional[str] = None,
         user_name: Optional[str] = None,
-        start_date: Optional[Any] = None # datetime
+        start_date: Optional[Any] = None
     ) -> dict:
-        """
-        Fetches activity logs filtered by entity, joins user data,
-        and generates human-readable descriptions.
-        """
-        from app.models.user import User  # Avoid circular import
-        from sqlalchemy import desc
 
-        # 1. Fetch Logs (Query builder)
+        if not current_user:
+            return {"items": [], "total": 0}
+
         query = db.query(ActivityLog)
-        
+
+        # =====================================================
+        # ROLE DETECTION
+        # =====================================================
+
+        # ---------- SUPER ADMIN ----------
+        if isinstance(current_user, User) and getattr(current_user, "is_superuser", False):
+            pass
+
+        # ---------- ORGANISATION LOGIN ----------
+        elif isinstance(current_user, Organisation):
+
+            # everything under organisation
+            query = query.filter(
+                ActivityLog.organisation_id == str(current_user.id)
+            )
+
+        # ---------- USER LOGIN ----------
+        elif isinstance(current_user, User):
+
+            # ---------- CLIENT ADMIN ----------
+            if current_user.is_client and getattr(current_user, "is_client_admin", False):
+
+                # get client users
+                client_user_ids = db.query(User.id).filter(
+                    User.client_id == current_user.client_id
+                )
+
+                query = query.filter(
+                    or_(
+                        ActivityLog.user_id == str(current_user.id),
+                        ActivityLog.user_id.in_(client_user_ids)
+                    )
+                )
+
+            # ---------- ORG USER ----------
+            elif not current_user.is_client:
+                query = query.filter(
+                    ActivityLog.user_id == str(current_user.id)
+                )
+
+            # ---------- CLIENT USER ----------
+            else:
+                query = query.filter(
+                    ActivityLog.user_id == str(current_user.id)
+                )
+
+        # =====================================================
+        # OPTIONAL FILTERS
+        # =====================================================
+
         if entity_id:
             query = query.filter(ActivityLog.entity_id == str(entity_id))
-        
+
         if entity_type:
             query = query.filter(ActivityLog.entity_type == entity_type)
-            
+
         if action:
             query = query.filter(ActivityLog.action == action)
-            
+
         if start_date:
             query = query.filter(ActivityLog.created_at >= start_date)
 
-        # Join User
-        query = query.join(User, ActivityLog.user_id == User.id, isouter=True) 
-
         if user_name:
             query = query.filter(
-                (User.first_name.ilike(f"%{user_name}%")) | 
-                (User.last_name.ilike(f"%{user_name}%")) | 
-                (User.username.ilike(f"%{user_name}%")) | 
-                (User.email.ilike(f"%{user_name}%"))
+                or_(
+                    User.first_name.ilike(f"%{user_name}%"),
+                    User.last_name.ilike(f"%{user_name}%"),
+                    User.email.ilike(f"%{user_name}%")
+                )
             )
-        
+
         total = query.count()
-        logs = query.order_by(desc(ActivityLog.created_at)).limit(limit).offset(offset).all()
+
+        logs = (
+            query.order_by(desc(ActivityLog.created_at))
+            .limit(limit)
+            .offset(offset)
+            .all()
+        )
 
         results = []
+
         for log in logs:
-            # 2. Build User Name
-            user_name_display = "System"
-            user_email = None
-            user_phone = None
-            
-            if log.user:
+            user_display = "Organisation"
+            email = None
+
+            if getattr(log, "user", None):
                 parts = [
                     log.user.first_name,
-                    log.user.middle_name, # Assuming it exists, if not it will be ignored by filter
+                    log.user.middle_name,
                     log.user.last_name
                 ]
-                # Filter None or empty strings
-                user_name_display = " ".join([p for p in parts if p]) or log.user.username or "Unknown User"
-                user_email = log.user.email
-                user_phone = getattr(log.user, "phone", None) # Safe access
+                user_display = " ".join([p for p in parts if p]) or log.user.username
+                email = log.user.email
 
-            # 3. Generate Description
-            description = ActivityService._generate_description(log, user_name_display)
-
-            # 4. Map to DTO Structure
             results.append({
                 "id": str(log.id),
-                "name": user_name_display,
-                "email": user_email,
-                "phone": user_phone,
+                "name": user_display,
+                "email": email,
                 "action": log.action,
-                "action_label": ActivityService.ACTION_CONFIG.get(log.action, {}).get("label", log.action.capitalize()),
                 "entity_type": log.entity_type,
                 "entity_id": log.entity_id,
-                "entity_name": None, # Could resolve if needed, but costly
                 "user_id": log.user_id,
-                "description": description,
+                "organisation_id": log.organisation_id,
                 "created_at": log.created_at.isoformat() if log.created_at else None,
                 "details": log.details
             })
@@ -286,6 +376,7 @@ class ActivityService:
             "items": results,
             "total": total
         }
+
 
     @staticmethod
     def _generate_description(log: ActivityLog, user_name: str) -> str:
