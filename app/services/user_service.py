@@ -619,50 +619,59 @@ class UserService:
 
 
     @staticmethod
-    def can_manage_user(current_user: User, target_user: User) -> bool:
+    def can_manage_user(current_user, target_user: User) -> bool:
 
-        # super admin → always
-        if current_user.is_superuser:
+        # ---------- SUPER ADMIN ----------
+        if isinstance(current_user, User) and current_user.is_superuser:
             return True
 
-        # client → can manage users they created + self
-        if getattr(current_user, "is_client", False):
-            return (
-                str(target_user.created_by) == str(current_user.id)
-                or str(target_user.id) == str(current_user.id)
-            )
-
-        # org user → same organisation
-        if current_user.id:
+        # ---------- ORGANISATION LOGIN ----------
+        if isinstance(current_user, Organisation):
             return str(target_user.organisation_id) == str(current_user.id)
+
+        # ---------- USER LOGIN ----------
+        if isinstance(current_user, User):
+
+            role_names = [r.name for r in current_user.roles]
+
+            # org admin user
+            if "ORGANISATION_ROLE" in role_names:
+                return str(target_user.organisation_id) == str(current_user.organisation_id)
+
+            # client admin
+            if "CLIENT_ADMIN" in role_names:
+                return str(target_user.created_by) == str(current_user.id)
+
+            # fallback → cannot manage
+            return False
 
         return False
 
-    @staticmethod
-    def deactivate_user(user_id: str, db: Session, current_user: User):
 
+
+    @staticmethod
+    def deactivate_user(user_id: str, db: Session, current_user):
         user = db.query(User).filter(User.id == user_id).first()
         if not user or user.is_superuser:
             return None
 
-        # 🔥 permission check
         if not UserService.can_manage_user(current_user, user):
-            raise ValueError("Not allowed to deactivate this user")
+            raise ValueError("Not allowed")
 
         inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
 
-        if inactive_status:
-            user.status_id = inactive_status.id
+        user.status_id = inactive_status.id
 
-            if user.is_client:
-                client = db.query(Client).filter(Client.created_by == user.id).first()
-                if client:
-                    client.status_id = inactive_status.id
+        if user.is_client:
+            client = db.query(Client).filter(Client.created_by == user.id).first()
+            if client:
+                client.status_id = inactive_status.id
 
-            db.commit()
-            db.refresh(user)
+        db.commit()
+        db.refresh(user)
 
         return UserService._format_user_response(user, db)
+
 
     @staticmethod
     def get_user_stats(db: Session, current_user) -> Dict:

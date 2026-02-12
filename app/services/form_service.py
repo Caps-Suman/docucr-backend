@@ -41,42 +41,6 @@ class FormService:
 
         return query.filter(Form.organisation_id == org_id)
 
-
-    # @staticmethod
-    # def get_forms(page: int, page_size: int, db: Session, current_user:str) -> Tuple[List[Dict], int]:
-    #     offset = (page - 1) * page_size
-        
-    #     # We need to join Status to filter or select code.
-    #     # Original query selected Form.status_id, which is now Integer.
-    #     # We want to return the code.
-    #     # So join Status and select Status.code
-    #     query = db.query(
-    #         Form.id,
-    #         Form.name,
-    #         Form.description,
-    #         Form.status_id,
-    #         Status.code.label('status_code'),
-    #         Form.created_at,
-    #         func.count(FormField.id).label('fields_count')
-    #     ).outerjoin(FormField, Form.id == FormField.form_id)\
-    #     .outerjoin(Status, Form.status_id == Status.id)\
-    #     .group_by(Form.id, Form.name, Form.description, Form.status_id, Status.code, Form.created_at)\
-    #     .order_by(Form.created_at.desc())
-
-    #     query = FormService._apply_access_filter(query, current_user)
-
-        
-    #     total = query.count()
-    #     forms = query.offset(offset).limit(page_size).all()
-        
-    #     result = []
-    #     for row in forms:
-    #         r = dict(row._mapping)
-    #         # rename status_code to statusCode for frontend
-    #         r['statusCode'] = r.pop('status_code', None)
-    #         result.append(r)
-
-    #     return result, total
     @staticmethod
     def get_form_stats(db: Session, current_user) -> Dict[str, int]:
 
@@ -113,53 +77,15 @@ class FormService:
             "inactive_forms": total_forms - active_forms
         }
 
-    # @staticmethod
-    # def get_forms(
-    #     page: int,
-    #     page_size: int,
-    #     db: Session,
-    #     current_user,
-    #     status: Optional[str] = None
-    # ) -> Tuple[List[Dict], int]:
-
-    #     offset = (page - 1) * page_size
-
-    #     query = db.query(
-    #         Form.id,
-    #         Form.name,
-    #         Form.description,
-    #         Form.status_id,
-    #         Status.code.label("status_code"),
-    #         Form.created_at,
-    #         func.count(FormField.id).label("fields_count")
-    #     ).outerjoin(FormField, Form.id == FormField.form_id)\
-    #     .outerjoin(Status, Form.status_id == Status.id)\
-    #     .group_by(Form.id, Status.code)\
-    #     .order_by(Form.created_at.desc())
-
-    #     query = FormService._apply_access_filter(query, current_user)
-
-    #     # status filter
-    #     if status:
-    #         status_obj = db.query(Status).filter(Status.code == status).first()
-    #         if status_obj:
-    #             query = query.filter(Form.status_id == status_obj.id)
-
-    #     total = query.count()
-    #     rows = query.offset(offset).limit(page_size).all()
-
-    #     result = []
-    #     for row in rows:
-    #         r = dict(row._mapping)
-    #         r["statusCode"] = r.pop("status_code", None)
-    #         result.append(r)
-
-    #     return result, total
 
     @staticmethod
     def get_forms(page, page_size, db, current_user, status=None):
 
         offset = (page - 1) * page_size
+        from sqlalchemy.orm import aliased
+
+        UserAlias = aliased(User)
+        OrgAlias = aliased(Organisation)
 
         query = db.query(
             Form.id,
@@ -168,15 +94,29 @@ class FormService:
             Form.status_id,
             Status.code.label("status_code"),
             Form.created_at,
+            Form.created_by,
+            Form.organisation_id,
+            OrgAlias.name.label("organisation_name"),
+            UserAlias.first_name.label("user_first_name"),
+            UserAlias.last_name.label("user_last_name"),
             func.count(FormField.id).label("fields_count")
         ).outerjoin(FormField, Form.id == FormField.form_id)\
         .outerjoin(Status, Form.status_id == Status.id)\
-        .group_by(Form.id, Status.code)\
+        .outerjoin(OrgAlias, Form.organisation_id == OrgAlias.id)\
+        .outerjoin(UserAlias, Form.created_by == UserAlias.id)\
+        .group_by(
+            Form.id,
+            Status.code,
+            OrgAlias.name,
+            UserAlias.first_name,
+            UserAlias.last_name
+        )\
         .order_by(Form.created_at.desc())
 
+        # hierarchy filter
         query = FormService._apply_access_filter(query, current_user)
 
-        # APPLY FILTER FROM STATS CLICK
+        # status filter
         if status:
             status_obj = db.query(Status).filter(Status.code == status).first()
             if status_obj:
@@ -186,9 +126,24 @@ class FormService:
         rows = query.offset(offset).limit(page_size).all()
 
         result = []
+
         for row in rows:
             r = dict(row._mapping)
+
+            if r.get("user_first_name"):
+                r["created_by_name"] = f"{r['user_first_name']} {r['user_last_name']}"
+                r["creator_type"] = "user"
+
+            elif r.get("organisation_name"):
+                r["created_by_name"] = r["organisation_name"]
+                r["creator_type"] = "organisation"
+
+            else:
+                r["created_by_name"] = "Unknown"
+                r["creator_type"] = "unknown"
+
             r["statusCode"] = r.pop("status_code", None)
+
             result.append(r)
 
         return result, total
@@ -230,7 +185,7 @@ class FormService:
         }
     
     @staticmethod
-    def get_active_form(db: Session) -> Optional[Dict]:
+    def get_active_form(db: Session, current_user:str) -> Optional[Dict]:
         active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
         if not active_status:
             return None
@@ -239,36 +194,11 @@ class FormService:
         if not form:
             return None
         
-        return FormService.get_form_by_id(form.id, db)
+        return FormService.get_form_by_id(form.id, db, current_user)
     
     @staticmethod
     def create_form(data: Dict[str, Any], user_id: str, db: Session, current_user:str) -> Dict:
-        # active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
-        # inactive_status = db.query(Status).filter(Status.code == "INACTIVE").first()
 
-        # org_id = FormService._resolve_org_id(current_user)
-
-        # if active_status and inactive_status and org_id:
-        #     existing_active = db.query(Form).filter(
-        #         Form.status_id == active_status.id,
-        #         Form.organisation_id == org_id
-        #     ).first()
-
-        #     if existing_active:
-        #         existing_active.status_id = inactive_status.id
-
-        # if getattr(current_user, "is_superuser", False):
-        #     org_id = data.get("organisation_id")
-        # else:
-        #     org_id = FormService._resolve_org_id(current_user)
-
-        # if not org_id:
-        #     raise PermissionError("No access")
-
-        # creator_id = None
-
-        # if isinstance(current_user, User):
-        #     creator_id = current_user.id
         active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
         inactive_status = db.query(Status).filter(Status.code == "INACTIVE").first()
 
@@ -287,7 +217,14 @@ class FormService:
                 existing_active.status_id = inactive_status.id
 
         # creator handling
-        creator_id = current_user.id if isinstance(current_user, User) else None
+        creator_id = None
+
+        if isinstance(current_user, User):
+            creator_id = str(current_user.id)
+
+        elif isinstance(current_user, Organisation):
+            creator_id = str(current_user.id)
+
         form = Form(
             id=str(uuid.uuid4()),
             name=data['name'],
@@ -296,14 +233,6 @@ class FormService:
             status_id=active_status.id if active_status else None,
             created_by=creator_id
         )
-
-        # form = Form(
-        #     id=str(uuid.uuid4()),
-        #     name=data['name'],
-        #     description=data.get('description'),
-        #     status_id=active_status.id if active_status else None,
-        #     created_by=user_id
-        # )
         db.add(form)
         
         fields = data.get('fields', [])
