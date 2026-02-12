@@ -3,12 +3,14 @@ from sqlalchemy import func, or_
 from typing import Optional, List, Dict, Tuple
 import uuid
 from datetime import datetime
-
+import phonenumbers
+from fastapi import HTTPException
 from app.models.organisation import Organisation
 from app.models.status import Status
 from app.models.user_role import UserRole
 from app.models.organisation_role import OrganisationRole
 from app.core.security import get_password_hash
+from phonenumbers import NumberParseException, PhoneNumberType
 
 class OrganisationService:
 
@@ -43,6 +45,55 @@ class OrganisationService:
     def get_organisation_by_id(org_id: str, db: Session) -> Optional[Dict]:
         org = db.query(Organisation).filter(Organisation.id == org_id).first()
         return OrganisationService._format_organisation(org, db) if org else None
+    @staticmethod
+    def validate_phone(country_code: str, phone: str) -> str:
+        """
+        country_code: '+91', '+1', etc
+        phone: national number only (9876543210)
+        returns normalized E164 number
+        """
+
+        if not phone:
+            raise ValueError("Phone number required")
+
+        if not country_code:
+            raise ValueError("Country code required")
+
+        # remove +
+        cc = country_code.replace("+", "").strip()
+
+        # combine
+        full_number = f"+{cc}{phone}"
+
+        # hard safety check (prevents 50 digit junk)
+        if len(phone) > 15:
+            raise ValueError("Phone number too long")
+
+        try:
+            parsed = phonenumbers.parse(full_number, None)
+        except NumberParseException:
+            raise ValueError("Invalid phone format")
+
+        # possible length for that country
+        if not phonenumbers.is_possible_number(parsed):
+            raise ValueError("Invalid length for country")
+
+        # real telecom validation
+        if not phonenumbers.is_valid_number(parsed):
+            raise ValueError("Invalid phone for country")
+
+        # OPTIONAL: only allow mobile numbers
+        number_type = phonenumbers.number_type(parsed)
+        if number_type not in (
+            PhoneNumberType.MOBILE,
+            PhoneNumberType.FIXED_LINE_OR_MOBILE,
+        ):
+            raise ValueError("Only mobile numbers allowed")
+
+        return phonenumbers.format_number(
+            parsed,
+            phonenumbers.PhoneNumberFormat.E164
+        )
 
     @staticmethod
     def create_organisation(org_data: Dict, db: Session) -> Dict:
@@ -56,7 +107,13 @@ class OrganisationService:
         if not password_input:
             password_input = "Default@123"
         hashed_pw = get_password_hash(password_input)
+        phone_number = org_data.get("phone_number")
+        country_code = org_data.get("phone_country_code")
 
+        normalized_phone = None
+
+        if phone_number:
+            normalized_phone = OrganisationService.validate_phone(phone_number, country_code)
         new_org = Organisation(
             id=str(uuid.uuid4()),
             name=org_data['name'], # Added name
@@ -66,8 +123,8 @@ class OrganisationService:
             first_name=org_data['first_name'],
             middle_name=org_data.get('middle_name'),
             last_name=org_data['last_name'],
-            phone_country_code=org_data.get('phone_country_code'),
-            phone_number=org_data.get('phone_number'),
+            phone_country_code=country_code,
+            phone_number=normalized_phone,  # ← normalized
             status_id=active_status.id if active_status else None
         )
         
