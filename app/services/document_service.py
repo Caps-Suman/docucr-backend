@@ -1015,73 +1015,71 @@ class DocumentService:
             .options(joinedload(Document.status))
             .options(joinedload(Document.form_data_relation))
         )
+        is_super_admin = isinstance(current_user, User) and getattr(current_user, "is_superuser", False)
 
         # =========================================================
-        # ACCESS CONTROL
+        # ACCESS CONTROL (CLEAN HIERARCHY)
         # =========================================================
-        if organisation_id and isinstance(current_user, User):
-            roles = [r.name for r in current_user.roles]
-            if "SUPER_ADMIN" in roles:
-                query = query.filter(Document.organisation_id == organisation_id)
-        is_super_admin = False
 
-        if isinstance(current_user, User):
-            role_names = [r.name for r in current_user.roles]
-            is_super_admin = "SUPER_ADMIN" in role_names
+        # -------------------------
+        # SUPER ADMIN
+        # -------------------------
+        if isinstance(current_user, User) and getattr(current_user, "is_superuser", False):
+            pass
 
-            if is_super_admin:
-                pass
+        # -------------------------
+        # ORGANISATION LOGIN
+        # -------------------------
+        elif isinstance(current_user, Organisation):
+            query = query.filter(
+                Document.organisation_id == str(current_user.id)
+            )
 
-            # =========================================================
-            # ACCESS CONTROL (CLEAN VERSION)
-            # =========================================================
+        # -------------------------
+        # USER LOGIN
+        # -------------------------
+        elif isinstance(current_user, User):
 
-            is_super_admin = False
+            role_names = [r.name for r in getattr(current_user, "roles", [])]
 
-            if isinstance(current_user, User):
-                role_names = [r.name for r in current_user.roles]
-                is_super_admin = "SUPER_ADMIN" in role_names
+            # -------- CLIENT USERS --------
+            if current_user.is_client:
 
-                # -------------------------
-                # SUPER ADMIN → everything
-                # -------------------------
-                if is_super_admin:
-                    pass
-
-                # -------------------------
-                # CLIENT USERS (HIGHEST PRIORITY)
-                # includes client admin + client user
-                # -------------------------
-                elif current_user.is_client:
-                    query = query.filter(
-                        Document.client_id == current_user.client_id
-                    )
-
-                # -------------------------
-                # STAFF USERS
-                # -------------------------
-                elif current_user.organisation_id:
-                    assigned_clients = db.query(UserClient.client_id).filter(
-                        UserClient.user_id == current_user.id
+                # client admin → all users of client
+                if getattr(current_user, "is_client_admin", False):
+                    client_user_ids = db.query(User.id).filter(
+                        User.client_id == current_user.client_id
                     )
 
                     query = query.filter(
                         or_(
-                            Document.created_by == current_user.id,
-                            Document.client_id.in_(assigned_clients),
-                            Document.organisation_id == current_user.organisation_id,
+                            Document.client_id == current_user.client_id,
+                            Document.created_by.in_(client_user_ids)
                         )
                     )
 
-                # fallback
+                # normal client user
                 else:
-                    query = query.filter(Document.created_by == current_user.id)
+                    query = query.filter(
+                        Document.created_by == str(current_user.id)
+                    )
 
-            elif isinstance(current_user, Organisation):
-                query = query.filter(Document.organisation_id == current_user.id)
-
+            # -------- ORG USERS --------
             else:
-                raise Exception("Unknown actor")
+                assigned_clients = db.query(UserClient.client_id).filter(
+                    UserClient.user_id == current_user.id
+                )
+
+                query = query.filter(
+                    or_(
+                        Document.created_by == str(current_user.id),
+                        Document.client_id.in_(assigned_clients),
+                        Document.organisation_id == str(current_user.organisation_id)
+                    )
+                )
+
+        else:
+            raise Exception("Unknown actor")
 
 
         # =========================================================
