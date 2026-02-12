@@ -89,20 +89,26 @@ def get_form_stats(
 ):
     return FormService.get_form_stats(db, current_user)
 
-@router.get("/active", response_model=FormDetailResponse)
+@router.get("/active")
 def get_active_form(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     form = FormService.get_active_form(db, current_user)
 
-
+    # ------------------------------------
+    # NO ACTIVE FORM → return null safely
+    # ------------------------------------
     if not form:
-        raise HTTPException(404, "No active form")
+        return {
+            "form": None,
+            "has_active_form": False
+        }
 
-    # CLIENT USER → LOCK CLIENT FIELD
+    # ------------------------------------
+    # CLIENT USER LOCK LOGIC
+    # ------------------------------------
     if current_user.is_client:
-        
         client = db.query(Client).filter(
             Client.id == current_user.client_id
         ).first()
@@ -111,14 +117,48 @@ def get_active_form(
         if client:
             client_label = client.business_name or f"{client.first_name} {client.last_name}"
 
-        for field in form["fields"]:
-            if field["label"].lower() == "client":
+        for field in form.get("fields", []):
+            if field.get("label", "").lower() == "client":
                 field["default_value"] = current_user.client_id
-                field["default_label"] = client_label   # 👈 IMPORTANT
+                field["default_label"] = client_label
                 field["readonly"] = True
                 field["disabled"] = True
 
-    return form
+    return {
+        "form": form,
+        "has_active_form": True
+    }
+
+# @router.get("/active", response_model=FormDetailResponse)
+# def get_active_form(
+#     db: Session = Depends(get_db),
+#     current_user: User = Depends(get_current_user)
+# ):
+#     form = FormService.get_active_form(db, current_user)
+
+
+#     if not form:
+#         raise HTTPException(404, "No active form")
+
+#     # CLIENT USER → LOCK CLIENT FIELD
+#     if current_user.is_client:
+        
+#         client = db.query(Client).filter(
+#             Client.id == current_user.client_id
+#         ).first()
+
+#         client_label = None
+#         if client:
+#             client_label = client.business_name or f"{client.first_name} {client.last_name}"
+
+#         for field in form["fields"]:
+#             if field["label"].lower() == "client":
+#                 field["default_value"] = current_user.client_id
+#                 field["default_label"] = client_label   # 👈 IMPORTANT
+#                 field["readonly"] = True
+#                 field["disabled"] = True
+
+#     return form
 
 @router.get("/{form_id}", response_model=FormDetailResponse)
 def get_form(
