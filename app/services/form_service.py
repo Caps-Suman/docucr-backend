@@ -185,77 +185,72 @@ class FormService:
         }
     
     @staticmethod
-    def get_active_form(db: Session, current_user:str) -> Optional[Dict]:
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
+    def get_active_form(db: Session, current_user) -> Optional[Dict]:
+        active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
         if not active_status:
             return None
-        
-        form = db.query(Form).filter(Form.status_id == active_status.id).first()
+
+        query = db.query(Form).filter(Form.status_id == active_status.id)
+
+        # 🔥 apply org filter
+        query = FormService._apply_access_filter(query, current_user)
+
+        form = query.order_by(Form.created_at.desc()).first()
         if not form:
             return None
-        
+
         return FormService.get_form_by_id(form.id, db, current_user)
+
     
     @staticmethod
-    def create_form(data: Dict[str, Any], user_id: str, db: Session, current_user:str) -> Dict:
+    def create_form(data: Dict[str, Any], user_id: str, db: Session, current_user) -> Dict:
 
         active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
         inactive_status = db.query(Status).filter(Status.code == "INACTIVE").first()
 
         org_id = FormService._resolve_org_id(current_user)
         if not org_id:
-            raise PermissionError("No access")
+            raise PermissionError("No organisation access")
 
-        # deactivate existing active form for THIS org
+        # 🔥 deactivate existing active form for SAME org only
         if active_status and inactive_status:
-            existing_active = db.query(Form).filter(
+            db.query(Form).filter(
                 Form.organisation_id == org_id,
                 Form.status_id == active_status.id
-            ).first()
+            ).update({Form.status_id: inactive_status.id})
 
-            if existing_active:
-                existing_active.status_id = inactive_status.id
-
-        # creator handling
-        creator_id = None
-
-        if isinstance(current_user, User):
-            creator_id = str(current_user.id)
-
-        elif isinstance(current_user, Organisation):
-            creator_id = str(current_user.id)
+        creator_id = str(current_user.id)
 
         form = Form(
             id=str(uuid.uuid4()),
-            name=data['name'],
-            description=data.get('description'),
+            name=data["name"],
+            description=data.get("description"),
             organisation_id=org_id,
             status_id=active_status.id if active_status else None,
             created_by=creator_id
         )
         db.add(form)
-        
-        fields = data.get('fields', [])
-        for idx, field_data in enumerate(fields):
-            field = FormField(
+
+        for idx, field_data in enumerate(data.get("fields", [])):
+            db.add(FormField(
                 id=str(uuid.uuid4()),
                 form_id=form.id,
-                field_type=field_data['field_type'],
-                label=field_data['label'],
-                placeholder=field_data.get('placeholder'),
-                required=field_data.get('required', False),
-                options=field_data.get('options'),
-                validation=field_data.get('validation'),
-                default_value=field_data.get('default_value'),  # 👈 ADD
+                field_type=field_data["field_type"],
+                label=field_data["label"],
+                placeholder=field_data.get("placeholder"),
+                required=field_data.get("required", False),
+                options=field_data.get("options"),
+                validation=field_data.get("validation"),
+                default_value=field_data.get("default_value"),
                 order=idx,
-                is_system=field_data.get('is_system', False)
-            )
-            db.add(field)
-        
+                is_system=field_data.get("is_system", False)
+            ))
+
         db.commit()
         db.refresh(form)
-        
-        return FormService.get_form_by_id(form.id,db,current_user)
+
+        return FormService.get_form_by_id(form.id, db, current_user)
+
     
     @staticmethod
     def update_form(form_id: str, data: Dict[str, Any], db: Session, current_user:str) -> Optional[Dict]:
@@ -271,27 +266,25 @@ class FormService:
         if 'description' in data:
             form.description = data['description']
         if 'status_id' in data:
-            # Check if trying to activate this form
-            active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-            
-            # Map input status code (potentially string) to ID if needed, but here logic compares IDs? 
-            # `data['status_id']` from frontend is string code ('ACTIVE').
-            # We must resolve it.
             status_code_input = data['status_id']
             status_obj = db.query(Status).filter(Status.code == status_code_input).first()
-            
+
             if status_obj:
-                 new_status_id = status_obj.id
-                 
-                 if active_status and new_status_id == active_status.id:
-                    # Deactivate all other forms first
-                    inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
-                    if inactive_status:
-                        db.query(Form).filter(
-                            and_(Form.status_id == active_status.id, Form.id != form_id)
-                        ).update({Form.status_id: inactive_status.id})
-                 
-                 form.status_id = new_status_id
+                new_status_id = status_obj.id
+                form.status_id = new_status_id
+
+                active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+                inactive_status = db.query(Status).filter(Status.code == "INACTIVE").first()
+
+                # 🔥 if activating → deactivate other forms of SAME org
+                if active_status and new_status_id == active_status.id and inactive_status:
+                    db.query(Form).filter(
+                        Form.organisation_id == form.organisation_id,
+                        Form.id != form.id,
+                        Form.status_id == active_status.id
+                    ).update({Form.status_id: inactive_status.id})
+                        
+                form.status_id = new_status_id
 
         if 'fields' in data:
             db.query(FormField).filter(FormField.form_id == str(form_id)).delete()
