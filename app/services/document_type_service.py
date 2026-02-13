@@ -4,8 +4,9 @@ from typing import List, Optional, Dict
 from app.models.document_type import DocumentType
 from app.models.status import Status
 from app.models.user import User
+from app.models.organisation import Organisation
 from fastapi import HTTPException, status
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 class DocumentTypeService:
     def __init__(self, db: Session, current_user: Optional[User] = None):
@@ -104,6 +105,40 @@ class DocumentTypeService:
             )
         return document_type
 
+    @staticmethod
+    def _check_duplicate(name: str, db: Session, current_user, exclude_id: Optional[str] = None) -> bool:
+        query = db.query(DocumentType).filter(func.upper(DocumentType.name) == name.upper())
+
+        if exclude_id:
+            query = query.filter(DocumentType.id != exclude_id)
+
+        # SaaS Scoping
+        if getattr(current_user, "is_superuser", False):
+            # Super Admin: Global scope (organisation_id is NULL)
+            query = query.filter(DocumentType.organisation_id.is_(None))
+        
+        elif isinstance(current_user, Organisation):
+            # Organisation object (from login)
+            query = query.filter(DocumentType.organisation_id == str(current_user.id))
+            
+        elif isinstance(current_user, User):
+            if current_user.organisation_id:
+                # Organisation User
+                query = query.filter(DocumentType.organisation_id == str(current_user.organisation_id))
+            else:
+                # Independent user -> Global scope
+                query = query.filter(DocumentType.organisation_id.is_(None))
+        else:
+            # Fallback
+            org_id = getattr(current_user, 'organisation_id', None)
+            if org_id:
+                query = query.filter(DocumentType.organisation_id == str(org_id))
+            else:
+                query = query.filter(DocumentType.organisation_id.is_(None))
+
+        return query.first() is not None
+
+
     def create(self, name: str, description: Optional[str] = None, status_id: Optional[str] = None):
         # Role check
         if not self.current_user:
@@ -127,18 +162,11 @@ class DocumentTypeService:
         # Normalize
         name = name.strip().upper()
 
-        # Duplicate check (scoped to organisation or global)
-        existing_query = self.db.query(DocumentType).filter(DocumentType.name == name)
-        
-        if organisation_id:
-             existing_query = existing_query.filter(DocumentType.organisation_id == organisation_id)
-        else:
-             existing_query = existing_query.filter(DocumentType.organisation_id.is_(None))
-             
-        if existing_query.first():
+        # Duplicate check (SaaS-based)
+        if self._check_duplicate(name, self.db, self.current_user):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Document type with this name already exists"
+                detail=f"Document type with name '{name}' already exists"
             )
 
         try:
@@ -168,21 +196,11 @@ class DocumentTypeService:
         if name is not None:
             name = name.strip().upper()
             
-            # Duplicate check excluding current
-            existing_query = self.db.query(DocumentType).filter(
-                DocumentType.name == name,
-                DocumentType.id != document_type_id
-            )
-            
-            if document_type.organisation_id:
-                existing_query = existing_query.filter(DocumentType.organisation_id == document_type.organisation_id)
-            else:
-                existing_query = existing_query.filter(DocumentType.organisation_id.is_(None))
-
-            if existing_query.first():
+            # Duplicate check (SaaS-based) excluding current
+            if self._check_duplicate(name, self.db, self.current_user, exclude_id=document_type_id):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Document type with this name already exists"
+                    detail=f"Document type with name '{name}' already exists"
                 )
             document_type.name = name
 

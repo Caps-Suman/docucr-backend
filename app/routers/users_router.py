@@ -116,6 +116,7 @@ async def get_users(
     role_id: Optional[List[str]] = Query(None),
     organisation_id: Optional[List[str]] = Query(None),
     client_id: Optional[List[str]] = Query(None),
+    created_by: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -128,7 +129,8 @@ async def get_users(
         current_user,
         role_id=role_id,
         organisation_id=organisation_id,
-        client_id=client_id
+        client_id=client_id,
+        created_by=created_by
     )
     return UserListResponse(
         users=[UserResponse(**user) for user in users],
@@ -195,7 +197,7 @@ async def get_current_user_profile(
             "organisation_name": current_user.username
         }
 
-    return UserService._format_user_response(current_user, db)
+    return UserService._format_user_response_for_me(current_user, db)
 
 @router.get("/stats")
 async def get_user_stats(
@@ -330,58 +332,29 @@ async def update_user(
 
 @router.post("/{user_id}/activate", response_model=UserResponse)
 async def activate_user(
-    user_id: str, 
+    user_id: str,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("user_module", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
-    # ---- SELF-ACTION BLOCK ----
-    if current_user.id == user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="You cannot activate your own account"
-        )
+    if str(current_user.id) == str(user_id):
+        raise HTTPException(403, "You cannot activate yourself")
 
-    # ---- ROLE CHECK ----
-    # ---- allow org OR admin ----
-    is_org = not isinstance(current_user, User)  # organisation login
-    is_admin = False
-
-    is_org = isinstance(current_user, Organisation)
-
-    is_admin = False
-    if isinstance(current_user, User):
-        role_names = [r.name for r in current_user.roles]
-        is_admin = (
-            current_user.is_superuser
-            or "ADMIN" in role_names
-            or "SUPER_ADMIN" in role_names
-        )
-
-    if not (is_admin or is_org):
-        raise HTTPException(403, "Not allowed")
-
-
-
-    # ---- TARGET USER VALIDATION ----
     target_user = db.query(User).filter(User.id == user_id).first()
     if not target_user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
 
     if target_user.is_superuser:
-        raise HTTPException(
-            status_code=403,
-            detail="Super admin cannot be activated via API"
-        )
+        raise HTTPException(403, "Cannot modify super admin")
 
-    # ---- ACTIVATE ----
-    user = UserService.activate_user(user_id,db,current_user)
+    if not UserService.can_manage_user(current_user, target_user):
+        raise HTTPException(403, "Not allowed to activate this user")
+
+    user = UserService.activate_user(user_id, db, current_user)
     if not user:
-        raise HTTPException(status_code=400, detail="Cannot activate user")
+        raise HTTPException(400, "Activation failed")
 
-    # ---- ACTIVITY LOG ----
     ActivityService.log(
         db=db,
         action="ACTIVATE",
@@ -395,69 +368,46 @@ async def activate_user(
     return UserResponse(**user)
 
 
+
 @router.post("/{user_id}/deactivate", response_model=UserResponse)
 async def deactivate_user(
-    user_id: str, 
+    user_id: str,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("user_module", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
-    # ---- SELF-DEACTIVATION BLOCK ----
-    if current_user.id == user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="You cannot deactivate your own account"
-        )
+    # block self
+    if isinstance(current_user, User) and str(current_user.id) == user_id:
+        raise HTTPException(403, "You cannot deactivate yourself")
 
-    # ---- ROLE CHECK ----
-    is_org = not isinstance(current_user, User)
-    is_admin = False
-
-    if isinstance(current_user, User):
-        role_names = [role.name for role in current_user.roles]
-        is_admin = (
-            current_user.is_superuser or
-            "ADMIN" in role_names or
-            "SUPER_ADMIN" in role_names
-        )
-
-    if not (is_admin or is_org):
-        raise HTTPException(
-            status_code=403,
-            detail="You are not allowed to deactivate users"
-        )
-
-
-    # ---- TARGET USER SAFETY ----
     target_user = db.query(User).filter(User.id == user_id).first()
     if not target_user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
 
     if target_user.is_superuser:
-        raise HTTPException(
-            status_code=403,
-            detail="Super admin cannot be deactivated"
-        )
+        raise HTTPException(403, "Cannot deactivate super admin")
 
-    # ---- DEACTIVATE ----
+    # ---- PERMISSION ----
+    if not UserService.can_manage_user(current_user, target_user):
+        raise HTTPException(403, "Not allowed to deactivate this user")
+
     user = UserService.deactivate_user(user_id, db, current_user)
     if not user:
-        raise HTTPException(status_code=400, detail="Cannot deactivate user")
+        raise HTTPException(400, "Deactivate failed")
 
-    # ---- ACTIVITY LOG ----
     ActivityService.log(
         db=db,
         action="DEACTIVATE",
         entity_type="user",
         entity_id=user_id,
-        user_id=current_user.id,
+        user_id=getattr(current_user, "id", None),
         request=request,
         background_tasks=background_tasks
     )
 
     return UserResponse(**user)
+
 
 class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=6, description="New password for the user")

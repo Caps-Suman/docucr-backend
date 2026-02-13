@@ -421,6 +421,55 @@ def get_documents(
         "page": (skip // limit) + 1,
         "page_size": limit,
     }
+@router.get("/filters/uploaded-by")
+def get_uploaded_by_filter(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # only documents user can see
+    base_query = DocumentService._document_access_query(db, current_user)
+
+    creator_ids = (
+        base_query.with_entities(Document.created_by)
+        .filter(Document.created_by.isnot(None))
+        .distinct()
+        .all()
+    )
+
+    creator_ids = [c[0] for c in creator_ids if c[0]]
+
+    if not creator_ids:
+        return []
+
+    users = (
+        db.query(User)
+        .filter(User.id.in_(creator_ids))
+        .all()
+    )
+
+    return [
+        {
+            "id": str(u.id),
+            "name": f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email
+        }
+        for u in users
+    ]
+
+
+@router.get("/filter/organisations")
+def get_org_filter(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not getattr(current_user, "is_superuser", False):
+        return []
+
+    orgs = db.query(Organisation.id, Organisation.name).all()
+
+    return [
+        {"id": str(o.id), "name": o.name}
+        for o in orgs
+    ]
 
 @router.get("/{document_id}")
 async def get_document_detail(

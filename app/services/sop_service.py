@@ -401,7 +401,9 @@ class SOPService:
 
     @staticmethod
     def update_sop(sop_id: str, sop_data: Dict, db: Session) -> Optional[SOP]:
-        db_sop = SOPService.get_sop_by_id(sop_id, db)
+        # db_sop = SOPService.get_sop_by_id(sop_id, db)
+        db_sop = db.query(SOP).filter(SOP.id == sop_id).first()
+
         if not db_sop:
             return None
         
