@@ -1219,7 +1219,22 @@ class DocumentService:
     #             )
     #         )
     #     return query.filter(Document.id == document_id).first()
+    @staticmethod
+    def _resolve_org_id(current_user):
+        if not current_user:
+            return None
 
+        # superadmin handled separately
+        if getattr(current_user, "is_superuser", False):
+            return None
+
+        if isinstance(current_user, Organisation):
+            return str(current_user.id)
+
+        if isinstance(current_user, User):
+            return str(current_user.organisation_id) if current_user.organisation_id else None
+
+        return None
     @staticmethod
     def get_document_detail(db: Session, document_id: int, user: User):
         return (
@@ -1229,6 +1244,43 @@ class DocumentService:
             .filter(Document.id == document_id)
             .first()
         )
+    @staticmethod
+    def get_uploaded_by_filter(db: Session, current_user):
+
+        query = db.query(
+            User.id,
+            func.concat(User.first_name, " ", User.last_name).label("name")
+        )
+
+        # =============================
+        # SUPERADMIN → ALL USERS
+        # =============================
+        if getattr(current_user, "is_superuser", False):
+            return query.all()
+
+        org_id = DocumentService._resolve_org_id(current_user)
+
+        # =============================
+        # ORGANISATION LOGIN
+        # =============================
+        if isinstance(current_user, Organisation):
+            return query.filter(User.organisation_id == org_id).all()
+
+        # =============================
+        # ORG USER LOGIN
+        # =============================
+        if isinstance(current_user, User) and current_user.organisation_id:
+            return query.filter(User.organisation_id == current_user.organisation_id).all()
+
+        # =============================
+        # CLIENT LOGIN
+        # =============================
+        if isinstance(current_user, User) and current_user.client_id:
+            return query.filter(User.client_id == current_user.client_id).all()
+
+        return []
+
+
 
     # @staticmethod
     # async def archive_document(db: Session, document_id: int, created_by: str, current_user:User) -> bool:
