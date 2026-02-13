@@ -9,8 +9,10 @@ class DocumentListConfig(Base):
     __table_args__ = {'schema': 'docucr'}
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String, ForeignKey("docucr.user.id"), nullable=False, unique=True)
+    user_id = Column(String, ForeignKey("docucr.user.id"), nullable=True)
+    organisation_id = Column(String, ForeignKey("docucr.organisation.id"), nullable=True)
     configuration = Column(JSONB, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     user = relationship("User")
+    organisation = relationship("Organisation")
