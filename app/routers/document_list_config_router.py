@@ -33,7 +33,20 @@ async def get_config(
 ):
     """Get user's document list configuration"""
     try:
-        configuration = DocumentListConfigService.get_user_config(db, current_user.id)
+        # Determine organisation ID
+        org_id = None
+        if hasattr(current_user, "organisation_id"):
+            org_id = current_user.organisation_id
+        elif hasattr(current_user, "id"):
+             # Fallback for Organisation object which is its own org
+             # Verify it's an organisation by checking table name or just assuming?
+             # Given the context, if it doesn't have organisation_id but has id, it's likely the Organisation itself.
+             org_id = current_user.id
+        
+        if not org_id:
+             return {"configuration": None}
+
+        configuration = DocumentListConfigService.get_org_config(db, org_id)
 
         if configuration and "columns" in configuration:
             columns = configuration["columns"]
@@ -54,8 +67,12 @@ async def get_config(
 
                 # Persist auto-heal so it doesn't repeat every GET
                 configuration["columns"] = columns
-                DocumentListConfigService.save_user_config(
-                    db, current_user.id, configuration
+                
+                # If org_id came from current_user.id, it's an Org, so no user_id to track
+                track_user_id = current_user.id if hasattr(current_user, "organisation_id") else None
+                
+                DocumentListConfigService.save_org_config(
+                    db, org_id, configuration, track_user_id
                 )
 
         return {"configuration": configuration}
@@ -70,7 +87,17 @@ async def get_my_config(
 ):
     """Get user's document list configuration without strict permissions"""
     try:
-        configuration = DocumentListConfigService.get_config(db)
+        # Determine organisation ID
+        org_id = None
+        if hasattr(current_user, "organisation_id"):
+            org_id = current_user.organisation_id
+        elif hasattr(current_user, "id"):
+             org_id = current_user.id
+
+        if not org_id:
+             return {"configuration": None}
+             
+        configuration = DocumentListConfigService.get_org_config(db, org_id)
 
         if configuration and "columns" in configuration:
             columns = configuration["columns"]
@@ -91,8 +118,12 @@ async def get_my_config(
 
                 # Persist auto-heal so it doesn't repeat every GET
                 configuration["columns"] = columns
-                DocumentListConfigService.save_user_config(
-                    db, current_user.id, configuration
+                
+                # If org_id came from current_user.id, it's an Org, so no user_id to track
+                track_user_id = current_user.id if hasattr(current_user, "organisation_id") else None
+                
+                DocumentListConfigService.save_org_config(
+                    db, org_id, configuration, track_user_id
                 )
 
         return {"configuration": configuration}
@@ -132,19 +163,31 @@ async def update_config(
                 "required": False
             })
 
+        # Determine organisation ID
+        org_id = None
+        if hasattr(current_user, "organisation_id"):
+            org_id = current_user.organisation_id
+        elif hasattr(current_user, "id"):
+             org_id = current_user.id
+
+        if not org_id:
+            raise HTTPException(status_code=400, detail="User must belong to an organisation to save configuration")
+
         configuration["columns"] = columns
 
+        # If org_id came from current_user.id, it's an Org, so no user_id to track
+        track_user_id = current_user.id if hasattr(current_user, "organisation_id") else None
 
-        saved_config = DocumentListConfigService.save_user_config(
-            db, current_user.id, configuration
+        saved_config = DocumentListConfigService.save_org_config(
+            db, org_id, configuration, track_user_id
         )
         
         ActivityService.log(
             db=db,
             action="UPDATE",
             entity_type="document_list_view_config",
-            entity_id=current_user.id,
-            user_id=current_user.id,
+            entity_id=org_id,
+            user_id=track_user_id if track_user_id else current_user.id, # Log even if org? ActivityService might need user_id.. if org, maybe use org_id as user_id or None? Assuming ActivityService handles string IDs.
             request=request,
             background_tasks=background_tasks
         )
@@ -167,15 +210,28 @@ async def delete_config(
 ):
     """Delete user's document list configuration (reset to default)"""
     try:
-        deleted = DocumentListConfigService.delete_user_config(db, current_user.id)
+        # Determine organisation ID
+        org_id = None
+        if hasattr(current_user, "organisation_id"):
+            org_id = current_user.organisation_id
+        elif hasattr(current_user, "id"):
+             org_id = current_user.id
+
+        if not org_id:
+             return {"message": "No configuration found to delete"}
+
+        deleted = DocumentListConfigService.delete_org_config(db, org_id)
         
         if deleted:
+            # If org_id came from current_user.id, it's an Org, so no user_id to track
+            track_user_id = current_user.id if hasattr(current_user, "organisation_id") else None
+
             ActivityService.log(
                 db=db,
                 action="DELETE",
                 entity_type="document_list_view_config",
-                entity_id=current_user.id,
-                user_id=current_user.id,
+                entity_id=org_id,
+                user_id=track_user_id if track_user_id else current_user.id,
                 request=request,
                 background_tasks=background_tasks
             )
