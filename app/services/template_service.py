@@ -227,61 +227,99 @@ class TemplateService:
         self.db.refresh(template)
         return template
 
-    def update(self, template_id: str, template_name: Optional[str] = None, 
-               description: Optional[str] = None, document_type_id: Optional[str] = None,
-               extraction_fields: Optional[List[Dict[str, Any]]] = None, status_id: Optional[str] = None) -> Template:
-        """Update a template"""
-        # get_by_id checks permissions
+    def update(
+    self,
+    template_id: str,
+    template_name: Optional[str] = None,
+    description: Optional[str] = None,
+    document_type_id: Optional[str] = None,
+    extraction_fields: Optional[List[Dict[str, Any]]] = None,
+    status_id: Optional[str] = None,
+) -> Template:
+
         template = self.get_by_id(template_id)
 
-        if document_type_id and document_type_id != template.document_type_id:
-            conflict = (
-            self.db.query(Template)
-            .filter(
-                Template.document_type_id == document_type_id,
-                Template.status_id == 8,
-                Template.id != template.id,
-            )
-            .first()
+        # -----------------------------
+        # Resolve new status
+        # -----------------------------
+        new_status_id = template.status_id
+
+        if status_id is not None:
+            if isinstance(status_id, str) and not status_id.isdigit():
+                st = self.db.query(Status).filter(Status.code == status_id).first()
+                if st:
+                    new_status_id = st.id
+            else:
+                new_status_id = status_id
+
+        # -----------------------------
+        # Resolve new document type
+        # -----------------------------
+        new_doc_type = document_type_id or template.document_type_id
+
+        # -----------------------------
+        # CONFLICT CHECK
+        # ONLY IF ACTIVATING
+        # -----------------------------
+        active_status = (
+            self.db.query(Status).filter(Status.code == "ACTIVE").first()
         )
 
-        if conflict:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Active template already exists for this document type"
+        if active_status and new_status_id == active_status.id:
+
+            conflict = (
+                self.db.query(Template)
+                .filter(
+                    Template.document_type_id == new_doc_type,
+                    Template.status_id == active_status.id,
+                    Template.id != template.id,
+                )
+                .first()
             )
-        
-        # Verify document type exists if being updated
+
+            if conflict:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Active template already exists for this document type",
+                )
+
+        # -----------------------------
+        # Validate document type
+        # -----------------------------
         if document_type_id:
-            document_type = self.db.query(DocumentType).filter(DocumentType.id == document_type_id).first()
+            document_type = (
+                self.db.query(DocumentType)
+                .filter(DocumentType.id == document_type_id)
+                .first()
+            )
             if not document_type:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Document type not found"
+                    detail="Document type not found",
                 )
-        
-        # Update fields
+
+        # -----------------------------
+        # Apply updates
+        # -----------------------------
         if template_name is not None:
             template.template_name = template_name
+
         if description is not None:
             template.description = description
+
         if document_type_id is not None:
             template.document_type_id = document_type_id
-        if status_id is not None:
-             # Resolve Status Code
-             if isinstance(status_id, str) and not status_id.isdigit(): # If code
-                 st = self.db.query(Status).filter(Status.code == status_id).first()
-                 if st:
-                     template.status_id = st.id
-             else:
-                 template.status_id = status_id
+
+        template.status_id = new_status_id
 
         if extraction_fields is not None:
             template.extraction_fields = extraction_fields
-        
+
         self.db.commit()
         self.db.refresh(template)
+
         return template
+
 
     def _update_status(self, template_id: str, status_code: str) -> Template:
         """Helper method to update template status"""

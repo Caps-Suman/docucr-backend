@@ -44,7 +44,9 @@ class FormService:
     @staticmethod
     def get_form_stats(db: Session, current_user) -> Dict[str, int]:
 
-        # CLIENT → no access
+        # --------------------------
+        # CLIENT → no forms
+        # --------------------------
         if getattr(current_user, "is_client", False):
             return {
                 "total_forms": 0,
@@ -52,24 +54,58 @@ class FormService:
                 "inactive_forms": 0
             }
 
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
+        # --------------------------
+        # SUPERADMIN → ALL FORMS
+        # --------------------------
+        if getattr(current_user, "is_superuser", False):
+            total_forms = db.query(func.count(Form.id)).scalar() or 0
 
-        # base query
-        total_query = db.query(func.count(Form.id))
-        active_query = db.query(func.count(Form.id))
+            active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+            active_forms = 0
 
-        # apply hierarchy filter
-        total_query = FormService._apply_access_filter(total_query, current_user)
+            if active_status:
+                active_forms = db.query(func.count(Form.id))\
+                    .filter(Form.status_id == active_status.id)\
+                    .scalar() or 0
+
+            return {
+                "total_forms": total_forms,
+                "active_forms": active_forms,
+                "inactive_forms": total_forms - active_forms
+            }
+
+        # --------------------------
+        # ORG / ORG USER
+        # --------------------------
+        org_id = None
+
+        if isinstance(current_user, Organisation):
+            org_id = str(current_user.id)
+
+        elif hasattr(current_user, "organisation_id"):
+            org_id = str(current_user.organisation_id)
+
+        if not org_id:
+            return {
+                "total_forms": 0,
+                "active_forms": 0,
+                "inactive_forms": 0
+            }
+
+        active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+
+        total_forms = db.query(func.count(Form.id))\
+            .filter(Form.organisation_id == org_id)\
+            .scalar() or 0
+
+        active_forms = 0
 
         if active_status:
-            active_query = active_query.filter(Form.status_id == active_status.id)
-        else:
-            active_query = active_query.filter(False)
-
-        active_query = FormService._apply_access_filter(active_query, current_user)
-
-        total_forms = total_query.scalar() or 0
-        active_forms = active_query.scalar() or 0
+            active_forms = db.query(func.count(Form.id))\
+                .filter(
+                    Form.organisation_id == org_id,
+                    Form.status_id == active_status.id
+                ).scalar() or 0
 
         return {
             "total_forms": total_forms,

@@ -585,82 +585,102 @@ async def update_client(
     )
         
     return ClientResponse(**updated_client)
-@router.post("/{client_id}/activate", response_model=ClientResponse,
-             dependencies=[Depends(Permission("clients", "UPDATE"))])
+@router.post("/{client_id}/activate", response_model=ClientResponse)
 async def activate_client(
     client_id: str,
     db: Session = Depends(get_db),
     request: Request = None,
     background_tasks: BackgroundTasks = None,
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
-    # ---- ROLE CHECK ----
-    if not _is_admin_user(current_user):
-        raise HTTPException(
-            status_code=403,
-            detail="You are not allowed to activate clients"
-        )
-
-    # ---- TARGET VALIDATION ----
-    client = ClientService.get_client_by_id(client_id, db)
+    client = db.query(Client).filter(Client.id == client_id).first()
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # ---- ACTIVATE ----
-    updated_client = ClientService.activate_client(client_id, db)
-    if not updated_client:
-        raise HTTPException(status_code=400, detail="Cannot activate client")
+    # -----------------------------
+    # PERMISSION LOGIC
+    # -----------------------------
+    allow = False
 
-    # ---- LOG ----
+    # SUPERADMIN
+    if isinstance(current_user, User) and current_user.is_superuser:
+        allow = True
+
+    # ORG LOGIN
+    elif isinstance(current_user, Organisation):
+        if str(client.organisation_id) == str(current_user.id):
+            allow = True
+
+    # ORG USER
+    elif isinstance(current_user, User):
+        if current_user.organisation_id and str(client.organisation_id) == str(current_user.organisation_id):
+            allow = True
+
+    if not allow:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    updated_client = ClientService.activate_client(client_id, db)
+
     ActivityService.log(
         db=db,
         action="ACTIVATE",
         entity_type="client",
         entity_id=client_id,
-        user_id=current_user.id,
+        current_user=current_user,
         request=request,
         background_tasks=background_tasks
     )
 
     return ClientResponse(**updated_client)
-@router.post("/{client_id}/deactivate", response_model=ClientResponse,
-             dependencies=[Depends(Permission("clients", "UPDATE"))])
+
+@router.post("/{client_id}/deactivate", response_model=ClientResponse)
 async def deactivate_client(
     client_id: str,
     db: Session = Depends(get_db),
     request: Request = None,
     background_tasks: BackgroundTasks = None,
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
-    # ---- ROLE CHECK ----
-    if not _is_admin_user(current_user):
-        raise HTTPException(
-            status_code=403,
-            detail="You are not allowed to deactivate clients"
-        )
-
-    # ---- TARGET VALIDATION ----
-    client = ClientService.get_client_by_id(client_id, db)
+    client = db.query(Client).filter(Client.id == client_id).first()
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # ---- DEACTIVATE ----
-    updated_client = ClientService.deactivate_client(client_id, db)
-    if not updated_client:
-        raise HTTPException(status_code=400, detail="Cannot deactivate client")
+    # -----------------------------
+    # PERMISSION LOGIC
+    # -----------------------------
+    allow = False
 
-    # ---- LOG ----
+    # SUPERADMIN
+    if isinstance(current_user, User) and current_user.is_superuser:
+        allow = True
+
+    # ORG LOGIN
+    elif isinstance(current_user, Organisation):
+        if str(client.organisation_id) == str(current_user.id):
+            allow = True
+
+    # ORG USER
+    elif isinstance(current_user, User):
+        if current_user.organisation_id and str(client.organisation_id) == str(current_user.organisation_id):
+            allow = True
+
+    if not allow:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    updated_client = ClientService.deactivate_client(client_id, db)
+
     ActivityService.log(
         db=db,
         action="DEACTIVATE",
         entity_type="client",
         entity_id=client_id,
-        user_id=current_user.id,
+        current_user=current_user,
         request=request,
         background_tasks=background_tasks
     )
 
     return ClientResponse(**updated_client)
+
 
 @router.post("/users/{user_id}/assign", dependencies=[Depends(Permission("clients", "ADMIN"))])
 async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db: Session = Depends(get_db)):
