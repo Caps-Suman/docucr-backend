@@ -97,45 +97,40 @@ class OrganisationService:
 
     @staticmethod
     def create_organisation(org_data: Dict, db: Session) -> Dict:
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        
-        # Hash password if provided (though UI might not send it yet based on description)
-        # Assuming a default password if not provided for now or handling it if provided
-        print('password: ',org_data.get('password'))
-        password_input = org_data.get('password')
-        print('password_input: ',password_input)
-        if not password_input:
-            password_input = "Default@123"
+        active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+
+        # password
+        password_input = org_data.get("password") or "Default@123"
         hashed_pw = get_password_hash(password_input)
-        phone_number = org_data.get("phone_number")
-        country_code = org_data.get("phone_country_code")
 
-        normalized_phone = None
-
-        if phone_number:
-            normalized_phone = OrganisationService.validate_phone(phone_number, country_code)
         new_org = Organisation(
             id=str(uuid.uuid4()),
-            name=org_data['name'], # Added name
-            email=org_data['email'],
-            username=org_data['username'],
+            name=org_data["name"],
+            email=org_data["email"],
+            username=org_data["username"],
             hashed_password=hashed_pw,
-            first_name=org_data['first_name'],
-            middle_name=org_data.get('middle_name'),
-            last_name=org_data['last_name'],
-            phone_country_code=country_code,
-            phone_number=normalized_phone,  # ← normalized
-            status_id=active_status.id if active_status else None
+            first_name=org_data.get("first_name"),
+            middle_name=org_data.get("middle_name"),
+            last_name=org_data.get("last_name"),
+            phone_country_code=org_data.get("phone_country_code"),
+            phone_number=org_data.get("phone_number"),
+            status_id=active_status.id if active_status else None,
         )
-        
+
         db.add(new_org)
         db.commit()
         db.refresh(new_org)
 
-        organisation_role_id = 'f7129eb0-7305-4279-8994-ee9256f91447'
-        OrganisationService._assign_roles(new_org.id, [organisation_role_id], db)
-        
-        return OrganisationService._format_organisation(new_org, db)
+        return {
+            "id": new_org.id,
+            "name": new_org.name,
+            "email": new_org.email,
+            "username": new_org.username,
+            "first_name": new_org.first_name,
+            "last_name": new_org.last_name,
+            "status_id": new_org.status_id,
+        }
+
 
     @staticmethod
     def _assign_roles(org_id: str, role_ids: List[str], db: Session):
