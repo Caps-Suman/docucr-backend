@@ -121,15 +121,16 @@ class OrganisationService:
         db.commit()
         db.refresh(new_org)
 
-        return {
-            "id": new_org.id,
-            "name": new_org.name,
-            "email": new_org.email,
-            "username": new_org.username,
-            "first_name": new_org.first_name,
-            "last_name": new_org.last_name,
-            "status_id": new_org.status_id,
-        }
+        # return {
+        #     "id": new_org.id,
+        #     "name": new_org.name,
+        #     "email": new_org.email,
+        #     "username": new_org.username,
+        #     "first_name": new_org.first_name,
+        #     "last_name": new_org.last_name,
+        #     "status_id": new_org.status_id,
+        # }
+        return new_org
 
 
     @staticmethod
