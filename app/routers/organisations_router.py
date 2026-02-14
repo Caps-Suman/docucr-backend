@@ -109,7 +109,9 @@ def get_organisations(
 ):
     orgs, total = OrganisationService.get_organisations(page, page_size, search, status_id, db)
     return OrganisationListResponse(
-        organisations=[OrganisationResponse(**org) for org in orgs],
+    organisations=[
+        OrganisationResponse.model_validate(o, from_attributes=True)
+        for o in orgs],
         total=total,
         page=page,
         page_size=page_size
@@ -132,19 +134,20 @@ def create_organisation(
         
     org_data = org.model_dump()
     created_org = OrganisationService.create_organisation(org_data, db)
-    
+
     ActivityService.log(
         db=db,
         action="CREATE",
         entity_type="organisation",
-        entity_id=created_org['id'],
+        entity_id=str(created_org.id),
         user_id=current_user.id,
-        details={"name": created_org['name']},
+        details={"name": created_org.name},
         request=request,
         background_tasks=background_tasks
     )
-    
-    return OrganisationResponse(**created_org)
+
+    return OrganisationResponse.model_validate(created_org, from_attributes=True)
+
 
 @router.put("/{org_id}", response_model=OrganisationResponse)
 def update_organisation(
@@ -168,19 +171,20 @@ def update_organisation(
     updated_org = OrganisationService.update_organisation(org_id, org_data, db)
     if not updated_org:
         raise HTTPException(status_code=404, detail="Organisation not found")
-        
+
     ActivityService.log(
         db=db,
         action="UPDATE",
         entity_type="organisation",
         entity_id=org_id,
         user_id=current_user.id,
-        details={"name": updated_org['name']},
+        details={"name": updated_org.name},
         request=request,
         background_tasks=background_tasks
     )
-    
-    return OrganisationResponse(**updated_org)
+
+    return OrganisationResponse.model_validate(updated_org, from_attributes=True)
+
 
 @router.post("/{org_id}/deactivate", response_model=OrganisationResponse)
 def deactivate_organisation(
@@ -194,19 +198,19 @@ def deactivate_organisation(
     deactivated_org = OrganisationService.deactivate_organisation(org_id, db)
     if not deactivated_org:
         raise HTTPException(status_code=404, detail="Organisation not found")
-        
+
     ActivityService.log(
         db=db,
         action="DEACTIVATE",
         entity_type="organisation",
         entity_id=org_id,
         user_id=current_user.id,
-        details={"name": deactivated_org['name']},
+        details={"name": deactivated_org.name},
         request=request,
         background_tasks=background_tasks
     )
-    
-    return OrganisationResponse(**deactivated_org)
+
+    return OrganisationResponse.model_validate(deactivated_org, from_attributes=True)
 
 class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=6, description="New password for the organisation")
