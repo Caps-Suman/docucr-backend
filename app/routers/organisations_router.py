@@ -139,14 +139,15 @@ def create_organisation(
         db=db,
         action="CREATE",
         entity_type="organisation",
-        entity_id=str(created_org.id),
+        entity_id=str(created_org["id"]),
         user_id=current_user.id,
-        details={"name": created_org.name},
+        details={"name": created_org["name"]},
         request=request,
         background_tasks=background_tasks
     )
 
-    return OrganisationResponse.model_validate(created_org, from_attributes=True)
+    return OrganisationResponse(**created_org)
+
 
 
 @router.put("/{org_id}", response_model=OrganisationResponse)
@@ -178,12 +179,13 @@ def update_organisation(
         entity_type="organisation",
         entity_id=org_id,
         user_id=current_user.id,
-        details={"name": updated_org.name},
+        details={"name": updated_org["name"]},
         request=request,
         background_tasks=background_tasks
     )
 
-    return OrganisationResponse.model_validate(updated_org, from_attributes=True)
+    return OrganisationResponse(**updated_org)
+
 
 
 @router.post("/{org_id}/deactivate", response_model=OrganisationResponse)
@@ -205,12 +207,13 @@ def deactivate_organisation(
         entity_type="organisation",
         entity_id=org_id,
         user_id=current_user.id,
-        details={"name": deactivated_org.name},
+        details={"name": deactivated_org["name"]},
         request=request,
         background_tasks=background_tasks
     )
 
-    return OrganisationResponse.model_validate(deactivated_org, from_attributes=True)
+    return OrganisationResponse(**deactivated_org)
+
 
 class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=6, description="New password for the organisation")

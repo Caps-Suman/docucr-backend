@@ -130,7 +130,7 @@ class OrganisationService:
         #     "last_name": new_org.last_name,
         #     "status_id": new_org.status_id,
         # }
-        return new_org
+        return OrganisationService._format_organisation(new_org, db)
 
 
     @staticmethod
