@@ -130,6 +130,9 @@ class OrganisationService:
         #     "last_name": new_org.last_name,
         #     "status_id": new_org.status_id,
         # }
+        organisation_role_id = 'f7129eb0-7305-4279-8994-ee9256f91447'
+        OrganisationService._assign_roles(new_org.id, [organisation_role_id], db)
+        
         return OrganisationService._format_organisation(new_org, db)
 
 
