@@ -1141,6 +1141,13 @@ class ClientService:
                 "last_name": p.last_name,
                 "npi": p.npi,
                 "type": "Individual", # Default as per requirement
+                "address_line_1": p.address_line_1,
+                "address_line_2": p.address_line_2,
+                "city": p.city,
+                "state_code": p.state_code,
+                "state_name": p.state_name,
+                "country": p.country,
+                "zip_code": p.zip_code,
                 "created_at": p.created_at
             }
             for p in providers

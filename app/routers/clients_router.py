@@ -162,6 +162,17 @@ class ProviderResponse(BaseModel):
     last_name: str
     npi: Optional[str]
     type: Optional[str] = "Individual" # Added type field
+    
+    # Address
+    address_line_1: Optional[str] = None
+    address_line_2: Optional[str] = None
+    city: Optional[str] = None
+    state_code: Optional[str] = None
+    state_name: Optional[str] = None
+    country: Optional[str] = None
+    zip_code: Optional[str] = None
+    location_id: Optional[UUID] = None
+    
     created_at: Optional[datetime]
 
     class Config:
