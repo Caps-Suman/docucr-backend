@@ -1,4 +1,7 @@
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
+import os
+import uuid
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request, File, UploadFile
+from app.services.s3_service import s3_service
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -92,3 +95,30 @@ async def change_password(
     )
     
     return {"message": "Password changed successfully"}
+
+@router.post("/me/avatar")
+async def update_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("profile", "UPDATE"))
+):
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+    
+    try:
+        s3_key, bucket_name = await s3_service.upload_file(
+            file.file,
+            file.filename,
+            file.content_type,
+            s3_key=f"profile_images/{current_user.id}/{uuid.uuid4()}_{file.filename}"
+        )
+        
+        region = os.getenv('AWS_REGION', 'us-east-1')
+        profile_image_url = f"https://{bucket_name}.s3.{region}.amazonaws.com/{s3_key}"
+        
+        ProfileService.update_avatar(current_user, profile_image_url, db)
+        
+        return {"profile_image_url": profile_image_url, "message": "Avatar updated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

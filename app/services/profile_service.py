@@ -18,7 +18,8 @@ class ProfileService:
             "phone_country_code": user.phone_country_code,
             "phone_number": user.phone_number,
             "is_superuser": user.is_superuser,
-            "created_at": user.created_at
+            "created_at": user.created_at,
+            "profile_image_url": user.profile_image_url
         }
 
     @staticmethod
@@ -41,3 +42,10 @@ class ProfileService:
     @staticmethod
     def check_username_exists(username: str, exclude_id: str, db: Session) -> bool:
         return db.query(User).filter(User.username == username, User.id != exclude_id).first() is not None
+
+    @staticmethod
+    def update_avatar(user: User, profile_image_url: str, db: Session) -> bool:
+        user.profile_image_url = profile_image_url
+        db.commit()
+        db.refresh(user)
+        return True
