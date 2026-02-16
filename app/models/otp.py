@@ -9,6 +9,7 @@ class OTP(Base):
     id = Column(String, primary_key=True, index=True)
     email = Column(String, nullable=False, index=True)
     otp_code = Column(String, nullable=False)
+    purpose = Column(String, nullable=False, default='RESET') # Default to RESET for backward compatibility
     is_used = Column(Boolean, default=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

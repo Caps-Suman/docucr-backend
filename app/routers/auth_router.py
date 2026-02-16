@@ -7,7 +7,7 @@ from typing import Optional
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models import user
-from app.models import user
+from app.models import user, OTP
 from app.services.auth_service import AuthService
 from app.services.activity_service import ActivityService
 from app.models.user import User
@@ -31,6 +31,10 @@ class ResetPasswordRequest(BaseModel):
     email: str
     otp: str
     new_password: str
+
+class TwoFactorRequest(BaseModel):
+    email: str
+    otp: str
 
 @router.post("/login")
 async def login(request: LoginRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -91,6 +95,16 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
     if not AuthService.check_user_active(user, db):
         raise HTTPException(status_code=403, detail="Account is inactive")
         
+    # Check for 2FA - Compulsory for all except Super Admins
+    if not user.is_superuser:
+        if AuthService.initiate_2fa(user.email, db):
+            return {
+                "requires_2fa": True,
+                "message": "2FA code sent to your email"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to send 2FA code")
+
     ActivityService.log(
         db,
         action="LOGIN",
@@ -203,8 +217,8 @@ async def forgot_password(request: ForgotPasswordRequest, req: Request, backgrou
         # Log attempt for non-existent user? Maybe strictly for security auditing but optional here.
         raise HTTPException(status_code=404, detail="User not found")
 
-    otp_code = AuthService.generate_otp(request.email, db)
-    sent = send_otp_email(request.email, otp_code)
+    otp_code = AuthService.generate_otp(request.email, db, purpose="RESET")
+    sent = send_otp_email(request.email, otp_code, purpose="RESET")
     
     if sent:
         ActivityService.log(
@@ -223,7 +237,7 @@ async def forgot_password(request: ForgotPasswordRequest, req: Request, backgrou
 
 @router.post("/reset-password")
 async def reset_password(request: ResetPasswordRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    if not AuthService.verify_otp(request.email, request.otp, db):
+    if not AuthService.verify_otp(request.email, request.otp, db, purpose="RESET"):
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     
     if not AuthService.reset_user_password(request.email, request.otp, request.new_password, db):
@@ -239,6 +253,81 @@ async def reset_password(request: ResetPasswordRequest, req: Request, background
     )
     
     return {"message": "Password reset successfully"}
+
+@router.post("/verify-2fa")
+async def verify_2fa(request: TwoFactorRequest, db: Session = Depends(get_db)):
+    if not AuthService.verify_otp(request.email, request.otp, db, purpose="LOGIN"):
+        raise HTTPException(status_code=400, detail="Invalid or expired 2FA code")
+    
+    user = db.query(User).filter(User.email == request.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Mark OTP as used
+    otp_record = db.query(OTP).filter(OTP.email == request.email, OTP.otp_code == request.otp, OTP.purpose == "LOGIN").first()
+    if otp_record:
+        otp_record.is_used = True
+        db.commit()
+
+    roles = AuthService.get_user_roles(user.id, db)
+    if not roles:
+        raise HTTPException(status_code=403, detail="No active roles assigned")
+    
+    if len(roles) == 1:
+        tokens = AuthService.generate_tokens(user.email, roles[0]["id"])
+        permissions = AuthService.get_role_permissions(roles[0]["id"], db)
+        
+        client = None
+        client_name = None
+        if user.is_client and user.client_id:
+            client = AuthService.get_client_by_id(user.client_id, db)
+            if client:
+                client_name = (
+                    client.business_name
+                    or f"{client.first_name} {client.last_name}".strip()
+                )
+
+        return {
+            **tokens,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "role": roles[0],
+                "is_client": user.is_client,
+                "client_id": user.client_id,
+                "client_name": client_name,
+                "permissions": permissions
+            }
+        }
+    
+    from app.core.security import create_access_token
+    temp_token = create_access_token(data={"sub": user.email, "temp": True}, expires_delta=timedelta(minutes=5))
+    
+    return {
+        "requires_role_selection": True,
+        "temp_token": temp_token,
+        "roles": roles,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name
+        }
+    }
+
+@router.post("/resend-2fa")
+async def resend_2fa(request: LoginRequest, db: Session = Depends(get_db)):
+    # Note: Using LoginRequest because resend-2fa doesn't need password but frontend might send it or just email
+    user = db.query(User).filter(User.email == request.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if AuthService.initiate_2fa(request.email, db):
+        return {"message": "2FA code resent to your email"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to send 2FA code")
 
 @router.post("/refresh")
 async def refresh_token(request: Request, db: Session = Depends(get_db)):
