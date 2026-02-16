@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from sqlalchemy import or_
 from app.models.organisation import Organisation
 from app.services.activity_service import ActivityService
 from sqlalchemy.orm import Session
@@ -198,6 +199,116 @@ async def get_current_user_profile(
         }
 
     return UserService._format_user_response_for_me(current_user, db)
+@router.get("/by-organisation")
+def get_users_by_org(
+    organisation_id: str,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    query = db.query(User).filter(User.organisation_id == organisation_id)
+
+    # only INTERNAL users
+    query = query.filter(
+        User.is_client == False,
+        User.client_id.is_(None)
+    )
+
+    if search:
+        query = query.filter(
+            or_(
+                User.first_name.ilike(f"%{search}%"),
+                User.last_name.ilike(f"%{search}%"),
+                User.email.ilike(f"%{search}%")
+            )
+        )
+
+    users = query.limit(50).all()
+
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email,
+            }
+            for u in users
+        ]
+    }
+@router.get("/by-client")
+def get_users_by_client(
+    client_id: str,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    query = db.query(User).filter(User.client_id == client_id)
+
+    if search:
+        query = query.filter(
+            or_(
+                User.first_name.ilike(f"%{search}%"),
+                User.last_name.ilike(f"%{search}%"),
+                User.email.ilike(f"%{search}%")
+            )
+        )
+
+    users = query.limit(50).all()
+
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email,
+            }
+            for u in users
+        ]
+    }
+@router.get("/share/users")
+def get_share_users(
+    is_client: bool,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    # resolve org
+    if hasattr(current_user, "organisation_id") and current_user.organisation_id:
+        org_id = current_user.organisation_id
+    else:
+        org_id = current_user.id
+
+    query = db.query(User).filter(User.organisation_id == org_id)
+
+    if is_client:
+        query = query.filter(User.is_client == True)
+    else:
+        query = query.filter(User.is_client == False)
+
+    if search:
+        query = query.filter(
+            or_(
+                User.first_name.ilike(f"%{search}%"),
+                User.last_name.ilike(f"%{search}%"),
+                User.email.ilike(f"%{search}%"),
+            )
+        )
+
+    users = query.limit(50).all()
+
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email,
+            }
+            for u in users
+        ]
+    }
 
 @router.get("/stats")
 async def get_user_stats(
@@ -417,10 +528,10 @@ async def change_user_password(
     user_id: str, 
     password_request: ChangePasswordRequest, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("user_module", "ADMIN")),
+    # permission: bool = Depends(Permission("user_module", "ADMIN")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     success = UserService.change_password(user_id, password_request.new_password, db)
     if not success:

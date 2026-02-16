@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from typing import Optional, List, Dict, Tuple
 import uuid
 from fastapi import HTTPException
@@ -87,8 +87,7 @@ class UserService:
     @staticmethod
     def _is_supervisor(user: User) -> bool:
         return user.is_supervisor is True
-
-
+    
     @staticmethod
     def get_users(
         page: int, 

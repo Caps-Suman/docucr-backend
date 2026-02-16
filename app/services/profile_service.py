@@ -32,7 +32,7 @@ class ProfileService:
         return True
 
     @staticmethod
-    def change_password(user: User, current_password: str, new_password: str, db: Session) -> bool:
+    def change_password(user: str, current_password: str, new_password: str, db: Session) -> bool:
         if not verify_password(current_password, user.hashed_password):
             return False
         user.hashed_password = get_password_hash(new_password)

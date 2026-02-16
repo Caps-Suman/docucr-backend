@@ -7,6 +7,7 @@ from app.core.security import get_current_user
 from app.core.permissions import Permission
 from app.services.document_share_service import DocumentShareService
 from app.models.user import User
+from app.services.user_service import UserService
 from ..services.activity_service import ActivityService
 from fastapi import Request
 
@@ -46,3 +47,20 @@ async def get_shared_documents(
     """Get documents shared with current user"""
     service = DocumentShareService(db)
     return service.get_shared_documents(current_user.id)
+
+
+@router.get("/share/users")
+def get_share_users(
+    type: str,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    users = UserService.get_users_for_share(
+        db=db,
+        current_user=current_user,
+        mode=type,
+        search=search
+    )
+
+    return {"users": users}

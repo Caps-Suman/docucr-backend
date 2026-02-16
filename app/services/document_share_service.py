@@ -8,8 +8,11 @@ from typing import List, Dict
 from app.models.document_share import DocumentShare
 from app.models.document import Document
 from app.models.organisation import Organisation
+from app.models.role import Role
 from app.models.user import User
 from fastapi import HTTPException, status
+
+from app.models.user_role import UserRole
 
 class DocumentShareService:
     def __init__(self, db: Session):
@@ -148,6 +151,70 @@ class DocumentShareService:
 
         return created, users
 
+    @staticmethod
+    def get_users_for_share(db: Session, current_user, mode: str, search: str | None):
+        query = db.query(User)
+
+        # ---------------------------
+        # resolve organisation id
+        # ---------------------------
+        if hasattr(current_user, "is_org") and current_user.is_org:
+            org_id = str(current_user.id)
+        else:
+            org_id = str(current_user.organisation_id)
+
+        query = db.query(User).filter(User.organisation_id == org_id)
+
+        # ---------------------------
+        # CLIENT USERS ONLY
+        # ---------------------------
+        if mode == "client":
+            query = (
+                query
+                .join(UserRole, UserRole.user_id == User.id)
+                .join(Role, Role.id == UserRole.role_id)
+                .filter(Role.name == "CLIENT_ADMIN")
+            )
+
+        # ---------------------------
+        # INTERNAL USERS ONLY
+        # ---------------------------
+        if mode == "internal":
+            query = (
+                query
+                .outerjoin(UserRole, UserRole.user_id == User.id)
+                .outerjoin(Role, Role.id == UserRole.role_id)
+                .filter(
+                    or_(
+                        Role.name != "CLIENT_ADMIN",
+                        Role.name.is_(None)
+                    )
+                )
+            )
+
+        # ---------------------------
+        # SEARCH
+        # ---------------------------
+        if search:
+            query = query.filter(
+                or_(
+                    User.first_name.ilike(f"%{search}%"),
+                    User.last_name.ilike(f"%{search}%"),
+                    User.email.ilike(f"%{search}%")
+                )
+            )
+
+        users = query.limit(50).all()
+
+        return [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email
+            }
+            for u in users
+        ]
 
     # -----------------------------
     # Get shared documents

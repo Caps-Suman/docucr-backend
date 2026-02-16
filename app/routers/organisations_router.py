@@ -226,7 +226,7 @@ async def change_organisation_password(
     permission: bool = Depends(Permission("users", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     success = OrganisationService.change_password(org_id, password_request.new_password, db)
     if not success:
