@@ -132,12 +132,12 @@ class AuthService:
         return user_role[1] if user_role else None
 
     @staticmethod
-    def generate_otp(email: str, db: Session) -> str:
+    def generate_otp(email: str, db: Session, purpose: str = "RESET") -> str:
         otp_code = ''.join(random.choices(string.digits, k=6))
         # Use timezone-aware UTC
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
-        otp_record = db.query(OTP).filter(OTP.email == email).first()
+        otp_record = db.query(OTP).filter(OTP.email == email, OTP.purpose == purpose).first()
         if otp_record:
             otp_record.otp_code = otp_code
             otp_record.expires_at = expires_at
@@ -147,6 +147,7 @@ class AuthService:
                 id=str(uuid.uuid4()),
                 email=email,
                 otp_code=otp_code,
+                purpose=purpose,
                 expires_at=expires_at,
                 is_used=False
             )
@@ -155,15 +156,15 @@ class AuthService:
         return otp_code
 
     @staticmethod
-    def verify_otp(email: str, otp: str, db: Session) -> bool:
-        otp_record = db.query(OTP).filter(OTP.email == email, OTP.otp_code == otp).first()
+    def verify_otp(email: str, otp: str, db: Session, purpose: str = "RESET") -> bool:
+        otp_record = db.query(OTP).filter(OTP.email == email, OTP.otp_code == otp, OTP.purpose == purpose).first()
         if not otp_record or otp_record.is_used or otp_record.expires_at < datetime.now(timezone.utc):
             return False
         return True
 
     @staticmethod
     def reset_user_password(email: str, otp: str, new_password: str, db: Session) -> bool:
-        otp_record = db.query(OTP).filter(OTP.email == email, OTP.otp_code == otp).first()
+        otp_record = db.query(OTP).filter(OTP.email == email, OTP.otp_code == otp, OTP.purpose == "RESET").first()
         if not otp_record:
             return False
 
@@ -175,3 +176,8 @@ class AuthService:
         otp_record.is_used = True
         db.commit()
         return True
+
+    @staticmethod
+    def initiate_2fa(email: str, db: Session) -> bool:
+        otp_code = AuthService.generate_otp(email, db, purpose="LOGIN")
+        return send_otp_email(email, otp_code, purpose="LOGIN")
