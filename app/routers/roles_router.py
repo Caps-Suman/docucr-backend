@@ -212,7 +212,7 @@ async def create_role(
         action="CREATE",
         entity_type="role",
         entity_id=str(created_role["id"]),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": created_role["name"]},
         request=request,
         background_tasks=background_tasks
@@ -286,7 +286,7 @@ async def update_role(
         action="UPDATE",
         entity_type="role",
         entity_id=role_id,
-        user_id=current_user.id,
+        current_user=current_user,
         details={
             "name": updated_role["name"],
             "changes": changes
@@ -317,7 +317,7 @@ async def delete_role(
         action="DELETE",
         entity_type="role",
         entity_id=role_id,
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": name},
         request=request,
         background_tasks=background_tasks

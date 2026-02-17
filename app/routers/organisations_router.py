@@ -140,7 +140,7 @@ def create_organisation(
         action="CREATE",
         entity_type="organisation",
         entity_id=str(created_org["id"]),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": created_org["name"]},
         request=request,
         background_tasks=background_tasks
@@ -178,7 +178,7 @@ def update_organisation(
         action="UPDATE",
         entity_type="organisation",
         entity_id=org_id,
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": updated_org["name"]},
         request=request,
         background_tasks=background_tasks
@@ -206,7 +206,7 @@ def deactivate_organisation(
         action="DEACTIVATE",
         entity_type="organisation",
         entity_id=org_id,
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": deactivated_org["name"]},
         request=request,
         background_tasks=background_tasks
@@ -238,7 +238,7 @@ async def change_organisation_password(
         action="CHANGE_PASSWORD",
         entity_type="organisation",
         entity_id=org_id,
-        user_id=current_user.id,
+        current_user=current_user,
         request=request,
         background_tasks=background_tasks
     )

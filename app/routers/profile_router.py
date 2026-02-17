@@ -29,7 +29,7 @@ class PasswordChangeRequest(BaseModel):
 
 @router.get("/me")
 async def get_profile(
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     permission: bool = Depends(Permission("profile", "READ"))
 ):
     return ProfileService.get_profile(current_user)

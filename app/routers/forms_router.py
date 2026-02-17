@@ -129,36 +129,6 @@ def get_active_form(
         "has_active_form": True
     }
 
-# @router.get("/active", response_model=FormDetailResponse)
-# def get_active_form(
-#     db: Session = Depends(get_db),
-#     current_user: User = Depends(get_current_user)
-# ):
-#     form = FormService.get_active_form(db, current_user)
-
-
-#     if not form:
-#         raise HTTPException(404, "No active form")
-
-#     # CLIENT USER → LOCK CLIENT FIELD
-#     if current_user.is_client:
-        
-#         client = db.query(Client).filter(
-#             Client.id == current_user.client_id
-#         ).first()
-
-#         client_label = None
-#         if client:
-#             client_label = client.business_name or f"{client.first_name} {client.last_name}"
-
-#         for field in form["fields"]:
-#             if field["label"].lower() == "client":
-#                 field["default_value"] = current_user.client_id
-#                 field["default_label"] = client_label   # 👈 IMPORTANT
-#                 field["readonly"] = True
-#                 field["disabled"] = True
-
-#     return form
 
 @router.get("/{form_id}", response_model=FormDetailResponse)
 def get_form(
@@ -194,7 +164,7 @@ def create_form(
             action="CREATE",
             entity_type="form",
             entity_id=created_form["id"],
-            user_id=current_user.id,
+            current_user=current_user,
             details={"name": created_form["name"]},
             request=request,
             background_tasks=background_tasks
@@ -243,7 +213,7 @@ def update_form(
             action="UPDATE",
             entity_type="form",
             entity_id=form_id,
-            user_id=current_user.id,
+            current_user=current_user,
             details={"name": updated_form.get('name'), "changes": changes},
             request=request,
             background_tasks=background_tasks
@@ -273,7 +243,7 @@ def delete_form(
         action="DELETE",
         entity_type="form",
         entity_id=form_id,
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": name},
         request=request,
         background_tasks=background_tasks

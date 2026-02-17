@@ -32,6 +32,18 @@ async def share_documents(
         user_ids=request.user_ids,
         actor=current_user   # 🔥 PASS OBJECT
     )
+    ActivityService.log(
+        db=db,
+        action="SHARE",
+        entity_type="document",
+        current_user=current_user,
+        details={
+            "document_ids": request.document_ids,
+            "shared_with": request.user_ids,
+            "new_shares": created
+        },
+        background_tasks=background_tasks
+    )
 
     return {
         "message": "Documents shared successfully" if created else "Already shared",
@@ -46,21 +58,12 @@ async def get_shared_documents(
 ):
     """Get documents shared with current user"""
     service = DocumentShareService(db)
-    return service.get_shared_documents(current_user.id)
-
-
-@router.get("/share/users")
-def get_share_users(
-    type: str,
-    search: str | None = None,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
-):
-    users = UserService.get_users_for_share(
+    ActivityService.log(
         db=db,
-        current_user=current_user,
-        mode=type,
-        search=search
+        action="VIEW_SHARED",
+        entity_type="document",
+        current_user=current_user
     )
 
-    return {"users": users}
+    return service.get_shared_documents(current_user)
+

@@ -466,12 +466,13 @@ async def create_client(
         action="CREATE",
         entity_type="client",
         entity_id=str(created_client['id']),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": created_client['business_name']},
         request=request,
         background_tasks=background_tasks
     )
-    
+
+        
     return ClientResponse(**created_client)
 
 @router.post(
@@ -510,6 +511,14 @@ def add_providers(
         ))
 
     db.commit()
+    ActivityService.log(
+        db=db,
+        action="ADD_PROVIDER",
+        entity_type="client",
+        entity_id=str(client_id),
+        details={"count": len(providers)}
+    )
+
     return {"success": True}
 
 @router.get("/{client_id}/providers", response_model=ProviderListResponse)
@@ -585,15 +594,16 @@ async def update_client(
         db=db,
         action="UPDATE",
         entity_type="client",
-        entity_id=client_id,
-        current_user=current_user.id,
+        entity_id=str(client_id),
+        current_user=current_user,
         details={
-            "name": updated_client['business_name'],
+            "name": updated_client.get("business_name"),
             "changes": changes
         },
         request=request,
         background_tasks=background_tasks
     )
+
         
     return ClientResponse(**updated_client)
 @router.post("/{client_id}/activate", response_model=ClientResponse)
@@ -636,11 +646,12 @@ async def activate_client(
         db=db,
         action="ACTIVATE",
         entity_type="client",
-        entity_id=client_id,
+        entity_id=str(client_id),
         current_user=current_user,
         request=request,
         background_tasks=background_tasks
     )
+
 
     return ClientResponse(**updated_client)
 
@@ -684,11 +695,12 @@ async def deactivate_client(
         db=db,
         action="DEACTIVATE",
         entity_type="client",
-        entity_id=client_id,
+        entity_id=str(client_id),
         current_user=current_user,
         request=request,
         background_tasks=background_tasks
     )
+
 
     return ClientResponse(**updated_client)
 
@@ -706,11 +718,28 @@ async def map_users_to_client_endpoint(
     current_user: User = Depends(get_current_user)
 ):
     ClientService.map_users_to_client(client_id, request.user_ids, request.assigned_by, db, current_user)
+    ActivityService.log(
+        db=db,
+        action="MAP_USERS",
+        entity_type="client",
+        entity_id=str(client_id),
+        current_user=current_user,
+        details={"user_ids": request.user_ids}
+    )
+
     return {"message": "Users mapped successfully"}
 
 @router.post("/{client_id}/users/unassign", dependencies=[Depends(Permission("clients", "ADMIN"))])
 async def unassign_users_from_client_endpoint(client_id: str, request: UnassignUsersToClientRequest, db: Session = Depends(get_db)):
     ClientService.unassign_users_from_client(client_id, request.user_ids, db)
+    ActivityService.log(
+        db=db,
+        action="UNASSIGN_USERS",
+        entity_type="client",
+        entity_id=str(client_id),
+        details={"user_ids": request.user_ids}
+    )
+
     return {"message": "Users unassigned successfully"}
 
 @router.get("/users/{user_id}", response_model=List[ClientResponse])
@@ -754,13 +783,17 @@ async def create_clients_bulk(
                 
                 ActivityService.log(
                     db=db,
-                    action="CREATE",
+                    action="BULK_CREATE",
                     entity_type="client",
-                    entity_id=str(client['id']),
-                    user_id=current_user.id,
+                    current_user=current_user,
+                    details={
+                        "success": success,
+                        "failed": failed
+                    },
                     request=request_obj,
                     background_tasks=background_tasks
                 )
+
             else:
                 failed += 1
                 errors.append(f"Failed to create client with data: {client_data}")

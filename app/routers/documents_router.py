@@ -181,31 +181,38 @@ async def get_document_form_data(
     # ---- resolve fields ----
     resolved_data = {}
 
-    if document.form_data_relation.data:
-        from ..models.form import FormField
-        from ..models.client import Client
-        from ..models.document_type import DocumentType
+    raw = document.form_data_relation.data or {}
 
-        for field_id, value in document.form_data_relation.data.items():
-            field = db.query(FormField).filter(FormField.id == field_id).first()
+    for key, value in raw.items():
 
-            if not field:
-                resolved_data[field_id] = value
-                continue
+        # 🔥 handle system client field directly
+        if key == "client_id":
+            client = db.query(Client).filter(Client.id == value).first()
+            if client:
+                resolved_data["Client"] = (
+                    client.business_name
+                    or f"{client.first_name} {client.last_name}".strip()
+                )
+            else:
+                resolved_data["Client"] = value
+            continue
 
-            display_value = value
+        # normal form field resolution
+        field = db.query(FormField).filter(FormField.id == key).first()
 
-            if field.field_type == "client_dropdown":
-                client = db.query(Client).filter(Client.id == value).first()
-                if client:
-                    display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
+        if not field:
+            resolved_data[key] = value
+            continue
 
-            elif field.field_type == "document_type_dropdown":
-                doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
-                if doc_type:
-                    display_value = doc_type.name
+        display_value = value
 
-            resolved_data[field.label] = display_value
+        if field.field_type == "document_type_dropdown":
+            doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
+            if doc_type:
+                display_value = doc_type.name
+
+        resolved_data[field.label] = display_value
+
 
     return {
         "data": resolved_data,
@@ -362,7 +369,7 @@ async def update_document_form_data(
 def get_document_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ"))
+    # permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get aggregate document statistics for the cards"""
     return document_service.get_document_stats(
@@ -385,7 +392,7 @@ def get_documents(
     organisation_id: Optional[UUID] = None,
     organisation_filter: Optional[str] = None,
     uploaded_by: Optional[str] = None,
-
+    request: Request = None,
     shared_only: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -421,6 +428,8 @@ def get_documents(
         "page": (skip // limit) + 1,
         "page_size": limit,
     }
+
+
 @router.get("/filters/uploaded-by")
 def get_uploaded_by_filter(
     current_user = Depends(get_current_user),
@@ -476,6 +485,7 @@ async def get_document_detail(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    request: Request = None,
     permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get document details including extracted data"""
@@ -526,8 +536,8 @@ async def get_document_detail(
 async def get_document_preview_url(
     document_id: int,
     current_user = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ"))
 ):
     document = (
         DocumentService
@@ -548,78 +558,15 @@ async def get_document_preview_url(
     if not presigned_url:
         raise HTTPException(status_code=500, detail="Failed to generate preview URL")
 
+
     return {"url": presigned_url}
 
-# @router.get("/{document_id}/preview-url")
-# async def get_document_preview_url(
-#     document_id: int,
-#     current_user: User = Depends(get_current_user),
-#     db: Session = Depends(get_db),
-#     permission: bool = Depends(Permission("documents", "READ"))
-# ):
-#     """Get secure, temporary pre-signed URL for preview with role-based access control"""
-#     from ..models.user_role import UserRole
-#     from ..models.role import Role
-#     from ..models.status import Status
-#     from ..models.user_client import UserClient
-#     from ..models.client import Client
-#     from ..models.document_form_data import DocumentFormData
-#     from sqlalchemy import cast, String, or_
-    
-#     # Get user's roles to determine access level
-#     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-#         User.id == current_user.id,
-#         Role.status_id.in_(
-#             db.query(Status.id).filter(Status.code == 'ACTIVE')
-#         )
-#     ).all()
-    
-#     role_names = [role.name for role in user_roles]
-#     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-#     query = DocumentService._document_access_query(db, current_user)
-#     document = query.filter(Document.id == document_id).first()
 
-    
-#     if not is_admin:
-#         # assigned_client_ids = db.query(UserClient.client_id).filter(
-#         #     UserClient.user_id == current_user.id
-#         # ).subquery()
-#         assigned_client_ids = select(UserClient.client_id).where(
-#             UserClient.user_id == current_user.id
-#         )
-#         client_documents_query = db.query(Document.id).join(
-#             DocumentFormData, Document.id == DocumentFormData.document_id
-#         ).join(
-#             Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-#         ).filter(
-#             Client.id.in_(assigned_client_ids)
-#         )
-        
-#         query = query.filter(
-#             or_(
-#                 Document.created_by == current_user.id,
-#                 Document.id.in_(client_documents_query)
-#             )
-#         )
-    
-#     document = query.first()
-#     if not document or not document.s3_key:
-#         raise HTTPException(status_code=404, detail="Document not found")
-        
-#     from ..services.s3_service import s3_service
-    
-#     presigned_url = s3_service.generate_presigned_url(document.s3_key, expiration=3600)
-#     if not presigned_url:
-#         raise HTTPException(status_code=500, detail="Failed to generate preview URL")
-        
-#     return {"url": presigned_url}
 @router.get("/{document_id}/download-url")
 async def get_document_download_url(
     document_id: int,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "EXPORT")),
     background_tasks: BackgroundTasks = None,
     request: Request = None
 ):
@@ -676,7 +623,6 @@ async def get_document_report_url(
     document_id: int,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "EXPORT")),
     background_tasks: BackgroundTasks = None,
     request: Request = None
 ):
@@ -709,16 +655,7 @@ async def get_document_report_url(
     if not presigned_url:
         raise HTTPException(status_code=500, detail="Failed to generate report URL")
 
-    ActivityService.log(
-        db,
-        action="DOWNLOAD_REPORT",
-        entity_type="document",
-        entity_id=str(document_id),
-        user_id=str(current_user.id),
-        details={"filename": filename},
-        request=request,
-        background_tasks=background_tasks
-    )
+
 
     return {"url": presigned_url}
 
@@ -729,7 +666,6 @@ async def get_document_report_data(
     page: int = Query(None),
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ"))
 ):
     document = (
         DocumentService
@@ -796,7 +732,6 @@ async def cancel_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None
 ):
@@ -829,7 +764,6 @@ async def reanalyze_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None
 ):
@@ -840,9 +774,7 @@ async def reanalyze_document(
             document_id,
             current_user
         )
-
-
-        
+    
         # Activity Log
         ActivityService.log(
             db,

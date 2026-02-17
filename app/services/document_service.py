@@ -51,39 +51,107 @@ class DocumentService:
             "is_client": user.is_client,
             "is_staff": not user.is_client
         }
+    @staticmethod
+    def _document_access_query(db: Session, actor):
+        base = db.query(Document)
+
+        # =========================
+        # SUPER ADMIN
+        # =========================
+        if isinstance(actor, User) and actor.is_superuser:
+            return base
+
+        # =========================
+        # ORGANISATION LOGIN
+        # =========================
+        if isinstance(actor, Organisation):
+            return base.filter(Document.organisation_id == actor.id)
+
+        # =========================
+        # CLIENT USER / CLIENT ADMIN
+        # =========================
+        if isinstance(actor, User) and actor.client_id:
+
+            client_docs = base.filter(
+                or_(
+                    Document.created_by == actor.id,
+                    Document.client_id == actor.client_id
+                )
+            )
+
+            shared_docs = (
+                db.query(Document)
+                .join(DocumentShare, DocumentShare.document_id == Document.id)
+                .filter(DocumentShare.user_id == actor.id)
+            )
+
+            return client_docs.union(shared_docs)
+
+        # =========================
+        # INTERNAL STAFF
+        # =========================
+        if isinstance(actor, User) and actor.organisation_id:
+
+            assigned_clients = (
+                db.query(UserClient.client_id)
+                .filter(UserClient.user_id == actor.id)
+            )
+
+            staff_docs = base.filter(
+                or_(
+                    Document.created_by == actor.id,
+                    Document.client_id.in_(assigned_clients)
+                )
+            )
+
+            shared_docs = (
+                db.query(Document)
+                .join(DocumentShare, DocumentShare.document_id == Document.id)
+                .filter(DocumentShare.user_id == actor.id)
+            )
+
+            return staff_docs.union(shared_docs)
+
+        # fallback
+        return base.filter(Document.created_by == actor.id)
+
     # @staticmethod
     # def _document_access_query(db: Session, actor):
-
     #     base = db.query(Document)
 
-    #     # SUPERADMIN → sees everything
+    #     # -----------------------------
+    #     # SUPER ADMIN (User)
+    #     # -----------------------------
     #     if isinstance(actor, User):
     #         role_names = [r.name for r in actor.roles]
     #         if "SUPER_ADMIN" in role_names:
     #             return base
 
-    #     # -------------------------
-    #     # ORGANISATION LOGIN
-    #     # -------------------------
+    #     # -----------------------------
+    #     # 🔥 ORGANISATION LOGIN
+    #     # actor = Organisation
+    #     # -----------------------------
     #     if isinstance(actor, Organisation):
-    #         return base.filter(
+    #         org_docs = base.filter(
     #             Document.organisation_id == actor.id
     #         )
 
-    #     # -------------------------
-    #     # CLIENT USER
-    #     # -------------------------
-    #     if isinstance(actor, User) and actor.is_client:
-    #         return base.filter(
-    #             and_(
-    #                 Document.client_id == actor.client_id,
-    #                 Document.client_id.isnot(None)
-    #             )
-    #         )
+    #         # also allow shared docs TO organisation users later if needed
+    #         return org_docs
 
-    #     # -------------------------
-    #     # STAFF USER
-    #     # -------------------------
+    #     # -----------------------------
+    #     # CLIENT USER
+    #     # -----------------------------
+    #     if isinstance(actor, User) and actor.client_id:
+    #         client_docs = base.filter(
+    #             Document.client_id == actor.client_id
+    #         )
+    #     else:
+    #         client_docs = None
+
+    #     # -----------------------------
+    #     # STAFF USER (org member)
+    #     # -----------------------------
     #     if isinstance(actor, User) and actor.organisation_id:
 
     #         assigned_clients = (
@@ -91,86 +159,47 @@ class DocumentService:
     #             .filter(UserClient.user_id == actor.id)
     #         )
 
-    #         return base.filter(
+    #         staff_docs = base.filter(
     #             or_(
     #                 Document.created_by == actor.id,
     #                 Document.organisation_id == actor.organisation_id,
-    #                 Document.client_id.in_(assigned_clients)
+    #                 Document.client_id.in_(assigned_clients),
     #             )
     #         )
+    #     else:
+    #         staff_docs = None
 
-    #     return base.filter(Document.created_by == actor.id)
-    @staticmethod
-    def _document_access_query(db: Session, actor):
+    #     # -----------------------------
+    #     # OWN DOCS fallback
+    #     # -----------------------------
+    #     own_docs = base.filter(Document.created_by == actor.id)
 
-        base = db.query(Document)
+    #     # -----------------------------
+    #     # 🔥 SHARED ACCESS (users only)
+    #     # -----------------------------
+    #     from app.models.document_share import DocumentShare
 
-        # -----------------------------
-        # SUPER ADMIN
-        # -----------------------------
-        if hasattr(actor, "roles"):
-            role_names = [r.name for r in actor.roles]
-            if "SUPER_ADMIN" in role_names:
-                return base
+    #     if isinstance(actor, User):
+    #         shared_docs = (
+    #             db.query(Document)
+    #             .join(DocumentShare, DocumentShare.document_id == Document.id)
+    #             .filter(DocumentShare.user_id == actor.id)
+    #         )
+    #     else:
+    #         shared_docs = None
 
-        # -----------------------------
-        # ORG LOGIN
-        # actor has no organisation_id but has id
-        # -----------------------------
-        if hasattr(actor, "is_org") and actor.is_org:
-            return base.filter(Document.organisation_id == actor.id)
+    #     # -----------------------------
+    #     # COMBINE ALL
+    #     # -----------------------------
+    #     queries = [q for q in [client_docs, staff_docs, own_docs, shared_docs] if q]
 
-        # -----------------------------
-        # USER INSIDE ORG
-        # -----------------------------
-        if hasattr(actor, "organisation_id") and actor.organisation_id:
+    #     if queries:
+    #         q = queries[0]
+    #         for other in queries[1:]:
+    #             q = q.union(other)
+    #         return q
 
-            # client user
-            if getattr(actor, "is_client", False):
-                return (
-                    base
-                    .join(User, Document.created_by == User.id)
-                    .filter(
-                        or_(
-                            User.client_id == actor.client_id,
-                            User.created_by == actor.id
-
-                            # User.client_id == getattr(actor, "resolved_client_id", actor.client_id),
-                            # User.created_by == actor.id
-                        )
-                    )
-                )
-
-            # if getattr(actor, "is_client", False):
-            #     return base.filter(Document.client_id == actor.client_id)
-
-            # staff
-            assigned_clients = (
-                db.query(UserClient.client_id)
-                .filter(UserClient.user_id == actor.id)
-            )
-
-            return base.filter(
-                or_(
-                    Document.created_by == actor.id,
-                    Document.client_id.in_(assigned_clients),
-                )
-                # or_(
-                #     Document.created_by == actor.id,
-                #     Document.organisation_id == actor.organisation_id,
-                #     Document.client_id.in_(assigned_clients),
-                # )
-            )
-
-        # -----------------------------
-        # fallback
-        # -----------------------------
-        if hasattr(actor, "id"):
-            return base.filter(Document.created_by == actor.id)
-
-        return base.filter(text("1=0"))
-
-
+    #     return own_docs
 
 
     @staticmethod
@@ -339,30 +368,9 @@ class DocumentService:
              # Assume it exists or use a default?
              # Ideally statuses are seeded.
              pass
-        # parsed_form_data = {}
-        # extracted_client_id = None
-
-        # if form_data:
-        #     try:
-        #         parsed_form_data = json.loads(form_data)
-        #         extracted_client_id = DocumentService.extract_client_id_from_form_data(
-        #             db, parsed_form_data
-        #         )
-        #     except Exception:
-        #         parsed_form_data = {}
-
-        # 🔒 HARD RULE: client users use THEIR client_id only
-        # if user.is_client and user.client_id:
-        #     client_id = str(user.client_id)
-        # else:
-        #     client_id = extracted_client_id
-        # if user.is_client:
-        #     parsed_form_data.pop("client_id", None)
+    
         parsed_form_data = json.loads(form_data) if form_data else {}
 
-        # ============================================
-        # AUTO-INJECT DEFAULT VALUES FOR CLIENT USERS
-        # ============================================
         if isinstance(user, User) and user.is_client:
 
             # force client id
@@ -487,72 +495,6 @@ class DocumentService:
         ))
         
         return documents
-    # @staticmethod
-    # def _visible_documents_query(db, actor):
-
-    #     # ---------------------------------------
-    #     # ACTOR = ORGANISATION LOGIN
-    #     # ---------------------------------------
-    #     if isinstance(actor, Organisation):
-    #         base = db.query(Document).filter(
-    #             Document.organisation_id == actor.id
-    #         )
-
-    #         assigned_clients = (
-    #             db.query(UserClient.client_id)
-    #             .join(User, UserClient.user_id == User.id)
-    #             .filter(User.organisation_id == actor.id)
-    #         )
-
-    #         return base.filter(
-    #             or_(
-    #                 Document.organisation_id == actor.id,
-    #                 Document.client_id.in_(assigned_clients)
-    #             )
-    #         )
-
-    #     # ---------------------------------------
-    #     # ACTOR = USER LOGIN
-    #     # ---------------------------------------
-    #     if isinstance(actor, User):
-
-    #         base = db.query(Document)
-
-    #         role_names = [r.name for r in actor.roles]
-
-    #         # SUPERADMIN
-    #         if "SUPER_ADMIN" in role_names:
-    #             return base
-
-    #         # CLIENT USER
-    #         if actor.is_client:
-    #             return base.filter(
-    #                 or_(
-    #                     Document.client_id == actor.client_id,
-    #                     Document.created_by == actor.id
-    #                 )
-    #             )
-
-    #         # STAFF USER
-    #         if actor.organisation_id:
-    #             assigned_clients = (
-    #                 db.query(UserClient.client_id)
-    #                 .filter(UserClient.user_id == actor.id)
-    #             )
-
-    #             return base.filter(
-    #                 or_(
-    #                     Document.created_by == actor.id,
-    #                     Document.organisation_id == actor.organisation_id,
-    #                     Document.client_id.in_(assigned_clients)
-    #                 )
-    #             )
-
-    #         # fallback
-    #         return base.filter(Document.created_by == actor.id)
-
-    #     raise Exception("Unknown actor")
-
     @staticmethod
     async def _process_uploads_background(documents: List[Document], files_data: List[dict],
                                         enable_ai: bool = False, document_type_id: str = None, 
@@ -930,13 +872,20 @@ class DocumentService:
         # =====================================================
         # SHARED WITH ME
         # =====================================================
+        base_query = DocumentService._document_access_query(db, current_user)
+
         if shared_only and isinstance(current_user, User):
-            query = query.join(
+            shared_query = db.query(Document).join(
                 DocumentShare,
                 DocumentShare.document_id == Document.id
             ).filter(
                 DocumentShare.user_id == current_user.id
             )
+
+            query = shared_query
+        else:
+            query = base_query
+
 
         # =====================================================
         # OPTIONAL FILTERS
@@ -1146,11 +1095,16 @@ class DocumentService:
                             doc_type_name = dt.name
 
             uploaded_by = None
+
+            # uploaded by user
             if doc.created_by and doc.created_by in users_map:
                 u = users_map[doc.created_by]
                 uploaded_by = f"{u.first_name} {u.last_name}"
-            elif doc.organisation_id:
-                uploaded_by = "Organisation"
+
+            # uploaded by organisation entity login
+            elif doc.organisation_id and doc.organisation_id in org_map:
+                uploaded_by = org_map[doc.organisation_id].name
+
 
             row = {
                 "id": doc.id,
@@ -1748,8 +1702,11 @@ class DocumentService:
     def get_document_stats(db: Session, user):
 
         base = DocumentService._document_access_query(db, user)
+        # base_query = DocumentService._document_access_query(db, current_user)
 
-        total_all = base.count()
+        # total_all = base.count()
+        total_all = base.distinct(Document.id).count()
+
         total_archived = base.filter(Document.is_archived == True).count()
 
         status_counts = (
@@ -1758,18 +1715,19 @@ class DocumentService:
             .with_entities(Status.code, func.count(Document.id))
             .group_by(Status.code)
             .all()
-        )
+        )   
 
         counts = {code: count for code, count in status_counts}
 
         shared_with_me = 0
         if isinstance(user, User):
             shared_with_me = (
-                db.query(DocumentShare)
-                .join(Document, Document.id == DocumentShare.document_id)
+                db.query(Document)
+                .join(DocumentShare, DocumentShare.document_id == Document.id)
                 .filter(DocumentShare.user_id == user.id)
                 .count()
             )
+
 
         return {
             "total": total_all,  # 🔥 includes archived
@@ -1784,72 +1742,5 @@ class DocumentService:
             "archived": total_archived,
         }
 
-        # Get user's roles to determine access level
-        # user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-        #     User.id == user_id,
-        #     Role.status_id.in_(
-        #         db.query(Status.id).filter(Status.code == 'ACTIVE')
-        #     )
-        # ).all()
-        
-        # role_names = [role.name for role in user_roles]
-        # is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-        
-        # # Base query for documents
-        # base_query = db.query(Document)
-        
-        # if not is_admin:
-        #     # Non-admin users see only their documents and assigned client documents
-        #     # assigned_client_ids = db.query(UserClient.client_id).filter(
-        #     #     UserClient.user_id == user_id
-        #     # ).subquery()
-        #     assigned_client_ids = select(UserClient.client_id).where(
-        #         UserClient.user_id == user_id
-        #     )
-        #     client_documents_query = db.query(Document.id).join(
-        #         DocumentFormData, Document.id == DocumentFormData.document_id
-        #     ).join(
-        #         Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-        #     ).filter(
-        #         Client.id.in_(assigned_client_ids)
-        #     )
-            
-        #     base_query = base_query.filter(
-        #         or_(
-        #             Document.user_id == user_id,
-        #             Document.id.in_(client_documents_query)
-        #         )
-        #     )
-        
-        # # Total active (not archived) documents
-        # total_active = base_query.filter(
-        #     Document.is_archived == False
-        # ).count()
-        
-        # # Total archived documents
-        # total_archived = base_query.filter(
-        #     Document.is_archived == True
-        # ).count()
-        
-        # # Counts by status
-        # status_counts = base_query.join(Document.status)\
-        #  .filter(Document.is_archived == False)\
-        #  .with_entities(Status.code, func.count(Document.id))\
-        #  .group_by(Status.code).all()
-        
-        # counts_dict = {code: count for code, count in status_counts}
-        
-        # # Get shared documents count
-        # share_service = DocumentShareService(db)
-        # shared_count = share_service.get_shared_documents_count(user_id)
-        
-        # # Aggregated stats for the cards
-        # return {
-        #     "total": total_active,
-        #     "processed": counts_dict.get("COMPLETED", 0),
-        #     "processing": counts_dict.get("PROCESSING", 0) + counts_dict.get("ANALYZING", 0) + counts_dict.get("AI_QUEUED", 0),
-        #     "sharedWithMe": shared_count,
-        #     "archived": total_archived
-        # }
 
 document_service = DocumentService()

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from app.models.organisation import Organisation
 from app.services.activity_service import ActivityService
 from sqlalchemy.orm import Session
@@ -133,6 +133,13 @@ async def get_users(
         client_id=client_id,
         created_by=created_by
     )
+    ActivityService.log(
+        db=db,
+        action="VIEW",
+        entity_type="user_list",
+        current_user=current_user,
+    )
+
     return UserListResponse(
         users=[UserResponse(**user) for user in users],
         total=total,
@@ -167,12 +174,6 @@ async def get_creators(
         client_id=client_id
     )
 
-# @router.get("/me", response_model=UserResponse)
-# async def get_current_user_profile(
-#     current_user: User = Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     return UserService._format_user_response(current_user, db)
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_profile(
     current_user = Depends(get_current_user),
@@ -197,6 +198,12 @@ async def get_current_user_profile(
             "created_by_name": None,
             "organisation_name": current_user.username
         }
+    ActivityService.log(
+        db=db,
+        action="VIEW",
+        entity_type="profile",
+        current_user=current_user
+    )
 
     return UserService._format_user_response_for_me(current_user, db)
 @router.get("/by-organisation")
@@ -274,7 +281,7 @@ def get_share_users(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    # resolve org
+    # resolve org id
     if hasattr(current_user, "organisation_id") and current_user.organisation_id:
         org_id = current_user.organisation_id
     else:
@@ -282,10 +289,27 @@ def get_share_users(
 
     query = db.query(User).filter(User.organisation_id == org_id)
 
+    # -------------------------
+    # CLIENT USERS
+    # -------------------------
     if is_client:
-        query = query.filter(User.is_client == True)
+        query = query.filter(
+            or_(
+                User.is_client.is_(True),
+                User.client_id.isnot(None)
+            )
+        )
+
+    # -------------------------
+    # INTERNAL USERS
+    # -------------------------
     else:
-        query = query.filter(User.is_client == False)
+        query = query.filter(
+            and_(
+                User.is_client.is_(False),
+                User.client_id.is_(None)
+            )
+        )
 
     if search:
         query = query.filter(
@@ -297,6 +321,13 @@ def get_share_users(
         )
 
     users = query.limit(50).all()
+    ActivityService.log(
+        db=db,
+        action="VIEW",
+        entity_type="share_users",
+        current_user=current_user,
+        details={"is_client": is_client}
+    )
 
     return {
         "users": [
@@ -344,6 +375,13 @@ async def get_user(
     user = UserService.get_user_by_id(user_id, db)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    ActivityService.log(
+        db=db,
+        action="VIEW",
+        entity_type="user",
+        entity_id=user_id,
+    )
+
     return UserResponse(**user)
 
 @router.post("/", response_model=UserResponse)
@@ -368,12 +406,13 @@ async def create_user(
         db=db,
         action="CREATE",
         entity_type="user",
-        entity_id=created_user.id,
-        user_id=current_user.id,
-        details={"username": created_user.username, "email": created_user.email},
+        entity_id=str(created_user.id),
+        current_user=current_user,
+        details={"username": created_user.username},
         request=request,
         background_tasks=background_tasks
     )
+
     
     return UserResponse(
     **UserService._format_user_response(created_user, db)
@@ -433,7 +472,7 @@ async def update_user(
         action="UPDATE",
         entity_type="user",
         entity_id=user_id,
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": full_name, "changes": changes},
         request=request,
         background_tasks=background_tasks
@@ -471,7 +510,7 @@ async def activate_user(
         action="ACTIVATE",
         entity_type="user",
         entity_id=user_id,
-        user_id=current_user.id,
+        user_id=current_user,
         request=request,
         background_tasks=background_tasks
     )
@@ -543,7 +582,7 @@ async def change_user_password(
         action="CHANGE_PASSWORD",
         entity_type="user",
         entity_id=user_id,
-        user_id=current_user.id,
+        user_id=current_user,
         request=request,
         background_tasks=background_tasks
     )
@@ -586,7 +625,7 @@ async def map_clients_to_user(
         action="UPDATE",
         entity_type="user",
         entity_id=user_id,
-        user_id=current_user.id,
+        user_id=current_user,
         details={"action": "map_clients", "client_ids": request.client_ids}
     )
     
@@ -612,7 +651,7 @@ async def unassign_clients(
         action="UPDATE",
         entity_type="user",
         entity_id=request.user_id,
-        user_id=current_user.id,
+        user_id=current_user,
         details={"action": "unassign_clients", "client_ids": request.client_ids}
     )
     

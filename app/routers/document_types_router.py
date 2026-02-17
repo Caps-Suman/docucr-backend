@@ -95,7 +95,7 @@ def create_document_type(
         action="CREATE",
         entity_type="document_type",
         entity_id=result.id,
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": result.name},
         request=request,
         background_tasks=background_tasks
@@ -131,9 +131,11 @@ def update_document_type(
     # Using service.get_by_id is safer as it includes org checks
     original_obj = service.get_by_id(document_type_id)
 
+    update_payload = document_type_data.model_dump(exclude_unset=True)
+
     changes = ActivityService.calculate_changes(
-        original_obj, 
-        {"name": document_type_data.name, "description": document_type_data.description, "status_id": document_type_data.status_id}
+        original_obj,
+        update_payload
     )
 
     result = service.update(document_type_id, document_type_data.name, document_type_data.description, document_type_data.status_id)
@@ -143,7 +145,7 @@ def update_document_type(
         action="UPDATE",
         entity_type="document_type",
         entity_id=document_type_id,
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": result.name, "changes": changes},
         request=request,
         background_tasks=background_tasks
@@ -169,7 +171,7 @@ def activate_document_type(
         action="ACTIVATE",
         entity_type="document_type",
         entity_id=document_type_id,
-        user_id=current_user.id,
+        current_user=current_user,
         request=request,
         background_tasks=background_tasks
     )
@@ -194,7 +196,7 @@ def deactivate_document_type(
         action="DEACTIVATE",
         entity_type="document_type",
         entity_id=document_type_id,
-        user_id=current_user.id,
+        current_user=current_user,
         request=request,
         background_tasks=background_tasks
     )
@@ -219,7 +221,7 @@ def delete_document_type(
         action="DELETE",
         entity_type="document_type",
         entity_id=document_type_id,
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": name},
         request=request,
         background_tasks=background_tasks

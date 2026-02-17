@@ -8,6 +8,8 @@ from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
 from uuid import UUID
 import io
+from app.services.activity_service import ActivityService
+from fastapi import Request, BackgroundTasks
 
 from app.core.database import get_db
 from app.models.user import User
@@ -123,16 +125,34 @@ class AISOPExtractResponse(BaseModel):
 def create_sop(
     sop: SOPCreate, 
     db: Session = Depends(get_db),
-    current_user: Any = Depends(Permission("SOPS", "CREATE"))
+    permission: bool = Depends(Permission("SOPS", "CREATE")),
+    current_user = Depends(get_current_user),
+    request: Request = None,
+    background_tasks: BackgroundTasks = None,
+
 ):
     sop_data = sop.model_dump()
-    return SOPService.create_sop(sop_data, db, current_user)
+    result = SOPService.create_sop(sop_data, db, current_user)
+
+    ActivityService.log(
+        db=db,
+        action="CREATE",
+        entity_type="sop",
+        entity_id=str(result["id"]),
+        current_user=current_user,
+        details={"title": result["title"]},
+        request=request,
+        background_tasks=background_tasks
+    )
+    return result
+    # return SOPService.create_sop(sop_data, db, current_user)
 
 @router.get("/check-client-sop/{client_id}")
 def check_client_sop(
     client_id: str,
     db: Session = Depends(get_db),
-    current_user: Any = Depends(get_current_user)
+    permission: bool = Depends(Permission("SOPS", "CREATE")),
+    current_user = Depends(get_current_user)
 ):
     exists = SOPService.check_sop_exists(client_id, db)
     return {"exists": exists}
@@ -234,46 +254,99 @@ def get_sop(
     if not sop:
         raise HTTPException(status_code=404, detail="SOP not found")
     return sop
-
 @router.put("/{sop_id}", response_model=SOPResponse)
 def update_sop(
     sop_id: str, 
     sop: SOPUpdate, 
     db: Session = Depends(get_db),
-    current_user: User = Depends(Permission("SOPS", "UPDATE"))
+    current_user: User = Depends(Permission("SOPS", "UPDATE")),
+    request: Request = None,
+    background_tasks: BackgroundTasks = None,
 ):
-    updated_sop = SOPService.update_sop(sop_id, sop.model_dump(exclude_unset=True), db)
-    if not updated_sop:
-        raise HTTPException(status_code=404, detail="SOP not found")
-    return updated_sop
+    existing = SOPService.get_sop_by_id(sop_id, db)
+
+    updated = SOPService.update_sop(
+        sop_id,
+        sop.model_dump(exclude_unset=True),
+        db
+    )
+
+    if not updated:
+        raise HTTPException(404, "SOP not found")
+
+    changes = ActivityService.calculate_changes(
+        existing,
+        sop.model_dump(exclude_unset=True)
+    )
+
+    ActivityService.log(
+        db=db,
+        action="UPDATE",
+        entity_type="sop",
+        entity_id=str(sop_id),
+        current_user=current_user,
+        details={"title": updated["title"], "changes": changes},
+        request=request,
+        background_tasks=background_tasks
+    )
+
+    return updated
+
 
 @router.patch("/{sop_id}", response_model=SOPResponse)
 def update_sop_status(
     sop_id: str,
     status_update: SOPStatusUpdate,
     db: Session = Depends(get_db),
+    request:Request=None,
+    background_tasks:BackgroundTasks=None,
     current_user: User = Depends(Permission("SOPS", "UPDATE"))
 ):
     updated_sop = SOPService.update_sop(sop_id, status_update.model_dump(), db)
     if not updated_sop:
         raise HTTPException(status_code=404, detail="SOP not found")
+    ActivityService.log(
+        db=db,
+        action="STATUS_CHANGE",
+        entity_type="sop",
+        entity_id=str(sop_id),
+        current_user=current_user,
+        details={"status_id": status_update.status_id},
+        request=request,
+        background_tasks=background_tasks
+    )
+
     return updated_sop
 
 @router.delete("/{sop_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_sop(
     sop_id: str, 
     db: Session = Depends(get_db),
+    request:Request=None,
+    background_tasks:BackgroundTasks=None,
     current_user: User = Depends(Permission("SOPS", "DELETE"))
 ):
     success = SOPService.delete_sop(sop_id, db)
     if not success:
         raise HTTPException(status_code=404, detail="SOP not found")
+    ActivityService.log(
+        db=db,
+        action="DELETE",
+        entity_type="sop",
+        entity_id=str(sop_id),
+        current_user=current_user,
+        request=request,
+        background_tasks=background_tasks
+    )
+
     return None
 
 @router.get("/{sop_id}/pdf")
 def download_sop_pdf(
     sop_id: str,
     db: Session = Depends(get_db),
+    request:Request=None,
+    background_tasks:BackgroundTasks=None,
     current_user: User = Depends(Permission("SOPS", "EXPORT"))
 ):
     sop = SOPService.get_sop_by_id(sop_id, db)
@@ -282,6 +355,17 @@ def download_sop_pdf(
     
     pdf_buffer = SOPService.generate_sop_pdf(sop)
     filename = sop.get('title', 'SOP').replace(' ', '_')
+    ActivityService.log(
+        db=db,
+        action="EXPORT",
+        entity_type="sop",
+        entity_id=str(sop_id),
+        current_user=current_user,
+        details={"title": sop.get("title")},
+        request=request,
+        background_tasks=background_tasks
+    )
+
     return StreamingResponse(
         io.BytesIO(pdf_buffer),
         media_type="application/pdf",
