@@ -99,3 +99,12 @@ async def get_activity_logs(
         "limit": limit,
         "pages": pages
     }
+@router.get("/entity-types")
+def get_entity_types(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    from app.services.activity_service import ActivityService
+
+    types = ActivityService.get_entity_types(db, current_user)
+    return {"entity_types": types}

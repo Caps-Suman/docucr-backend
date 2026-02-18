@@ -1,5 +1,6 @@
 from importlib.resources import path
 import uuid
+from fastapi import HTTPException
 from sqlalchemy.orm import Session, defer, joinedload
 from sqlalchemy import desc, func, or_
 from typing import Optional, List, Dict, Tuple, Any
@@ -37,11 +38,14 @@ class SOPService:
 
         return db.query(SOP).filter(SOP.status_id.in_(allowed_ids))
 
+
     @staticmethod
-    def check_sop_exists(client_id: str, db: Session) -> bool:
+    def check_sop_exists(client_id: str, provider_ids: list[str] | None, db: Session) -> bool:
         """
-        Check if an active SOP already exists for the given client_id.
+        NPI1 → only one SOP per client
+        NPI2 → providers cannot exist in another active SOP
         """
+
         active_status = db.query(Status).filter(
             Status.code == "ACTIVE",
             Status.type == "GENERAL"
@@ -50,12 +54,44 @@ class SOPService:
         if not active_status:
             return False
 
-        exists = db.query(SOP).filter(
-            SOP.client_id == client_id,
-            SOP.status_id == active_status.id
-        ).first()
+        client = db.query(Client).filter(Client.id == client_id).first()
+        if not client:
+            return False
 
-        return True if exists else False
+        # -----------------------------
+        # NPI1
+        # -----------------------------
+        if client.type == "Individual":
+            exists_q = db.query(SOP.id).filter(
+                SOP.client_id == client_id,
+                SOP.status_id == active_status.id
+            ).first()
+
+            return bool(exists_q)
+
+        # -----------------------------
+        # NPI2
+        # -----------------------------
+        if client.type != "Individual":
+
+            if not provider_ids:
+                return False
+
+            # if ANY provider already linked to active SOP → block
+            exists_q = (
+                db.query(SopProviderMapping.id)
+                .join(SOP, SOP.id == SopProviderMapping.sop_id)
+                .filter(
+                    SOP.client_id == client_id,
+                    SOP.status_id == active_status.id,
+                    SopProviderMapping.provider_id.in_(provider_ids)
+                )
+                .first()
+            )
+
+            return bool(exists_q)
+
+        return False
 
     @staticmethod
     def get_sops(
@@ -264,6 +300,10 @@ class SOPService:
         if sop.creator:
             names = [sop.creator.first_name, sop.creator.middle_name, sop.creator.last_name]
             data["created_by_name"] = " ".join([n for n in names if n]).strip()
+
+        elif sop.organisation:
+            data["created_by_name"] = sop.organisation.name
+
         else:
             data["created_by_name"] = None
 
@@ -334,9 +374,56 @@ class SOPService:
             for p in linked_providers
         ]
         return formatted_sop
+    @staticmethod
+    def get_blocked_providers(
+        client_id: str,
+        provider_ids: list[str],
+        db: Session
+    ) -> list[str]:
+        """
+        Returns provider IDs that already have ACTIVE SOP
+        """
+
+        active_status = db.query(Status).filter(
+            Status.code == "ACTIVE",
+            Status.type == "GENERAL"
+        ).first()
+
+        if not active_status:
+            return []
+
+        client = db.query(Client).filter(Client.id == client_id).first()
+        if not client:
+            return []
+
+        # NPI1 → whole client blocked
+        if client.type == "Individual":
+            exists = db.query(SOP.id).filter(
+                SOP.client_id == client_id,
+                SOP.status_id == active_status.id
+            ).first()
+
+            if exists:
+                return ["CLIENT_BLOCKED"]  # special flag
+
+            return []
+
+        # NPI2 → provider-level block
+        blocked = (
+            db.query(SopProviderMapping.provider_id)
+            .join(SOP, SOP.id == SopProviderMapping.sop_id)
+            .filter(
+                SOP.client_id == client_id,
+                SOP.status_id == active_status.id,
+                SopProviderMapping.provider_id.in_(provider_ids)
+            )
+            .all()
+        )
+
+        return [str(b[0]) for b in blocked]
 
     @staticmethod
-    def create_sop(sop_data: Dict, db: Session, current_user: Any) -> SOP:
+    def create_sop(sop_data: Dict, db: Session, current_user: Any, client_id:str) -> SOP:
         # Extract provider_ids
         provider_ids = sop_data.pop("provider_ids", [])
 
@@ -377,6 +464,8 @@ class SOPService:
                 Status.type == "GENERAL"
             ).first()
             sop_data["status_id"] = active.id
+        if SOPService.check_sop_exists(client_id, provider_ids, db):
+            raise HTTPException(400, "Provider already has active SOP")
 
         db_sop = SOP(**sop_data)
         db.add(db_sop)
