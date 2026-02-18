@@ -88,7 +88,8 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
                 "is_client": False, # Organisations aren't clients in this context
                 "client_id": None,
                 "client_name": None,
-                "permissions": permissions 
+                "permissions": permissions,
+                "profile_image_url": getattr(org, 'profile_image_url', None)
             }
         }
     
@@ -100,7 +101,8 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
         if AuthService.initiate_2fa(user.email, db):
             return {
                 "requires_2fa": True,
-                "message": "2FA code sent to your email"
+                "message": "2FA code sent to your email",
+                "profile_image_url": user.profile_image_url
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to send 2FA code")
@@ -145,7 +147,8 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
                 "is_client": user.is_client,
                 "client_id": user.client_id,
                 "client_name": client_name,
-                "permissions": permissions
+                "permissions": permissions,
+                "profile_image_url": user.profile_image_url
             }
         }
     
@@ -202,7 +205,8 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
             "is_client": current_user.is_client,
             "client_id": current_user.client_id,
             "client_name": client_name,
-            "permissions": permissions
+            "permissions": permissions,
+            "profile_image_url": current_user.profile_image_url
         }
     }
 
@@ -298,7 +302,8 @@ async def verify_2fa(request: TwoFactorRequest, db: Session = Depends(get_db)):
                 "is_client": user.is_client,
                 "client_id": user.client_id,
                 "client_name": client_name,
-                "permissions": permissions
+                "permissions": permissions,
+                "profile_image_url": user.profile_image_url
             }
         }
     

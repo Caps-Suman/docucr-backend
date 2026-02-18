@@ -97,6 +97,7 @@ class UserResponse(BaseModel):
     organisation_name: Optional[str] = None
     client_id: Optional[str] = None
     client_name: Optional[str] = None
+    profile_image_url: Optional[str] = None
     
     class Config:
         from_attributes = True
