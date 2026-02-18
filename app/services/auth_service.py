@@ -134,6 +134,7 @@ class AuthService:
     @staticmethod
     def generate_otp(email: str, db: Session, purpose: str = "RESET") -> str:
         otp_code = ''.join(random.choices(string.digits, k=6))
+        print(f"DEBUG: OTP for {email} ({purpose}): {otp_code}")
         # Use timezone-aware UTC
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 

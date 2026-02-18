@@ -924,7 +924,8 @@ class UserService:
             "client_count": client_count,
             "created_by_name": created_by_name,
             "organisation_name": organisation_name,
-            "client_id": client_id
+            "client_id": client_id,
+            "profile_image_url": user.profile_image_url
         }
 
     @staticmethod
@@ -1000,8 +1001,9 @@ class UserService:
             "client_count": client_count,
             "created_by_name": created_by_name,
             "organisation_name": organisation_name,
-            "client_id": client_id
-        }    
+            "client_id": client_id,
+            "profile_image_url": user.profile_image_url
+        }
 
     @staticmethod
     def _assign_roles(user_id: str, role_ids: List[str], db: Session):
