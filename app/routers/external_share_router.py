@@ -6,6 +6,7 @@ from typing import List, Optional
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.permissions import Permission
+from app.models.organisation import Organisation
 from app.models.user import User
 from app.services.external_share_service import ExternalShareService
 from ..services.activity_service import ActivityService
@@ -47,7 +48,7 @@ async def create_external_share(
         document_id=request.document_id,
         email=request.email,
         password=request.password,
-        shared_by=current_user.id,
+        shared_by=current_user,
         expires_in_days=request.expires_in_days
     )
 
@@ -56,7 +57,7 @@ async def create_external_share(
         action="SHARE",
         entity_type="document",
         entity_id=str(request.document_id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={
             "sub_action": "EXTERNAL_SHARE", 
             "email": request.email, 
@@ -75,7 +76,7 @@ async def create_external_share(
 @router.post("/batch")
 async def create_external_share_batch(
     request: CreateBatchExternalShareRequest,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "SHARE")),
     req: Request = None,
@@ -87,9 +88,10 @@ async def create_external_share_batch(
         document_ids=request.document_ids,
         email=request.email,
         password=request.password,
-        shared_by=current_user.id,
+        current_user=current_user,   # pass object
         expires_in_days=request.expires_in_days
     )
+
     
     for doc_id in request.document_ids:
         ActivityService.log(
@@ -97,7 +99,7 @@ async def create_external_share_batch(
             action="SHARE",
             entity_type="document",
             entity_id=str(doc_id),
-            user_id=current_user.id,
+            current_user=current_user,
             details={
                 "sub_action": "EXTERNAL_SHARE", 
                 "email": request.email, 
@@ -121,9 +123,18 @@ async def get_share_metadata(token: str, db: Session = Depends(get_db)):
     """Get public metadata for a share token (filename, etc.) before authentication."""
     service = ExternalShareService(db)
     share = service.get_share_by_token(token)
+    if share.shared_by_org_id:
+        org = db.query(Organisation).filter(
+            Organisation.id == share.shared_by_org_id
+        ).first()
+        shared_by = org.name if org else "Organisation"
+    else:
+        user = share.shared_by_user
+        shared_by = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username
+
     return {
         "filename": share.document.filename,
-        "shared_by": f"{share.shared_by_user.first_name} {share.shared_by_user.last_name}",
+        "shared_by": shared_by,
         "expires_at": share.expires_at.isoformat()
     }
 
