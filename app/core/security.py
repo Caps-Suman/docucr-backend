@@ -45,44 +45,30 @@ def get_current_user(
     db: Session = Depends(get_db)
 ):
     token = credentials.credentials
-
+    
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        print("TOKEN PAYLOAD:", payload)
 
         if payload.get("type") != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type")
+            raise HTTPException(401, "Invalid token type")
 
         email = payload.get("sub")
+        organisation_id = payload.get("organisation_id")
+
         if not email:
-            raise HTTPException(status_code=401, detail="Invalid token")
+            raise HTTPException(401, "Invalid token")
 
     except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(401, "Invalid token")
 
-    # ---- try USER first ----
     user = db.query(User).filter(User.email == email).first()
     if user:
         user.is_org = False
 
-        # Contextual Client ID Logic
-        role_names = [r.name for r in user.roles]
-        if "CLIENT_ADMIN" in role_names:
-             if user.client_id:
-                 # Check if client exists/valid
-                 from app.models.client import Client
-                 client = db.query(Client).filter(Client.id == user.client_id).first()
-                 if client:
-                     user.client_id = str(client.id)
-        else:
-             # Override for sub-users: Fetch creator's client_id
-             if user.created_by:
-                 creator = db.query(User).filter(User.id == user.created_by).first()
-                 if creator and creator.client_id:
-                     user.client_id = str(creator.client_id)
-
-        # Fallback if not set
-        if not hasattr(user, 'client_id'):
-            user.client_id = user.client_id
+        # 🔥 attach runtime context (DO NOT mutate DB fields)
+        user.context_organisation_id = organisation_id
+        user.context_is_superadmin = user.is_superuser and not organisation_id
 
         return user
 
@@ -93,63 +79,26 @@ def get_current_user(
 
     raise HTTPException(401, "Not found")
 
-    # 🔴 IMPORTANT: convert organisation → pseudo user
-    class OrgWrapper:
-        def __init__(self, org):
-            self.id = org.id
-            self.organisation_id = org.id
-            self.email = org.email
-            self.is_superuser = org.is_superuser
-            self.roles = org.roles
-            self.is_org = True
-            self.client_id = None
 
-    return OrgWrapper(org)
-
+def decode_token(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
     
-# def get_current_user(
-#     credentials: HTTPAuthorizationCredentials = Depends(security),
-#     db: Session = Depends(get_db)
-# ):
-#     token = credentials.credentials
+def allow_temp_superadmin(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    token = credentials.credentials
+    payload = decode_token(token)
 
-#     try:
-#         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    # allow temp superadmin session
+    if payload.get("temp") and payload.get("superadmin"):
+        return payload
 
-#         if payload.get("type") != "access":
-#             raise HTTPException(status_code=401, detail="Invalid token type")
+    raise HTTPException(403, "Superadmin temp session required")
 
-#         email = payload.get("sub")
-#         if not email:
-#             raise HTTPException(status_code=401, detail="Invalid token")
-
-#     except JWTError:
-#         raise HTTPException(status_code=401, detail="Invalid token")
-
-#     # ---- try USER first ----
-#     user = db.query(User).filter(User.email == email).first()
-#     if user:
-#         user.is_org = False
-#         return user
-
-#     org = db.query(Organisation).filter(Organisation.email == email).first()
-#     if org:
-#         org.is_org = True
-#         return org
-
-#     raise HTTPException(401, "Not found")
-
-#     # 🔴 IMPORTANT: convert organisation → pseudo user
-#     class OrgWrapper:
-#         def __init__(self, org):
-#             self.id = org.id
-#             self.organisation_id = org.id
-#             self.email = org.email
-#             self.is_superuser = org.is_superuser
-#             self.roles = org.roles
-#             self.is_org = True
-
-#     return OrgWrapper(org)
 
 def get_current_role_id(request: Request = None, credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[str]:
     # We can get token from credentials

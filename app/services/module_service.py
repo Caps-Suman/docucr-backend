@@ -41,16 +41,203 @@ class ModuleService:
             } for s in m.submodules_list]
         } for m in modules]
 
+    # @staticmethod
+    # def get_user_modules(email: str, db: Session, role_id: str = None, organisation_id:str=None) -> List[Dict]:
+    #     user = db.query(User).filter(User.email == email).first()
+    #     org = None
+    #     if not user:
+    #         org = db.query(Organisation).filter(Organisation.email == email).first()
+    #         if not org:
+    #             return []
+    #     if organisation_id:
+    #         query = query.filter(User.organisation_id == organisation_id)
+    #     # Query for RoleModule (Module-level permissions)
+    #     query = db.query(
+    #         Module.id,
+    #         Module.name,
+    #         Module.label,
+    #         Module.description,
+    #         Module.route,
+    #         Module.icon,
+    #         Module.category,
+    #         Module.display_order,
+    #         Module.color_from,
+    #         Module.color_to,
+    #         Privilege.name.label('privilege_name')
+    #     ).join(
+    #         RoleModule, Module.id == RoleModule.module_id
+    #     )
+
+    #     if user:
+    #         query = query.join(
+    #             UserRole, RoleModule.role_id == UserRole.role_id
+    #         ).filter(
+    #             UserRole.user_id == user.id
+    #         )
+    #     elif org:
+    #         query = query.join(
+    #              OrganisationRole, RoleModule.role_id == OrganisationRole.role_id
+    #         ).filter(
+    #             OrganisationRole.organisation_id == org.id
+    #         )
+
+    #     # Complete the common join and filter
+    #     query = query.join(
+    #         Privilege, RoleModule.privilege_id == Privilege.id
+    #     )
+
+    #     if role_id:
+    #         query = query.filter(RoleModule.role_id == role_id)
+
+    #     module_results = query.all()
+
+    #     # Query for RoleSubmodule (Submodule-level permissions)
+    #     from app.models.role_submodule import RoleSubmodule
+    #     from app.models.submodule import Submodule
+        
+    #     sub_query = db.query(
+    #         Module.id.label('module_id'),
+    #         Module.name.label('module_name'),
+    #         Module.label.label('module_label'),
+    #         Module.description.label('module_desc'),
+    #         Module.route.label('module_route'),
+    #         Module.icon.label('module_icon'),
+    #         Module.category.label('module_cat'),
+    #         Module.display_order.label('module_order'),
+    #         Module.color_from.label('module_color_from'),
+    #         Module.color_to.label('module_color_to'),
+    #         Submodule.id.label('submodule_id'),
+    #         Submodule.name.label('submodule_name'),
+    #         Submodule.label.label('submodule_label'),
+    #         Submodule.route_key.label('submodule_route_key'),
+    #         Submodule.display_order.label('submodule_order'),
+    #         Privilege.name.label('privilege_name')
+    #     ).join(
+    #         Submodule, Module.id == Submodule.module_id
+    #     ).join(
+    #         RoleSubmodule, Submodule.id == RoleSubmodule.submodule_id
+    #     )
+
+    #     if user:
+    #         sub_query = sub_query.join(
+    #             UserRole, RoleSubmodule.role_id == UserRole.role_id
+    #         ).filter(
+    #             UserRole.user_id == user.id
+    #         )
+    #     elif org:
+    #         sub_query = sub_query.join(
+    #             OrganisationRole, RoleSubmodule.role_id == OrganisationRole.role_id
+    #         ).filter(
+    #             OrganisationRole.organisation_id == org.id
+    #         )
+
+    #     # Complete the common join and filter for submodules
+    #     sub_query = sub_query.join(
+    #         Privilege, RoleSubmodule.privilege_id == Privilege.id
+    #     )
+
+    #     if role_id:
+    #         sub_query = sub_query.filter(RoleSubmodule.role_id == role_id)
+
+    #     sub_results = sub_query.all()
+        
+    #     modules_dict = {}
+        
+    #     # Process Module-Level Permissions
+    #     for result in module_results:
+    #         module_id = result.id
+    #         if module_id not in modules_dict:
+    #             modules_dict[module_id] = {
+    #                 'id': result.id,
+    #                 'name': result.name,
+    #                 'label': result.label,
+    #                 'description': result.description or '',
+    #                 'route': result.route,
+    #                 'icon': result.icon or '',
+    #                 'category': result.category,
+    #                 'display_order': result.display_order or 0,
+    #                 'color_from': result.color_from or '',
+    #                 'color_to': result.color_to or '',
+    #                 'privileges': [],
+    #                 'submodules': [] 
+    #             }
+    #         # Check if privilege is not already in list to avoid duplicates (though usually distinct)
+    #         if result.privilege_name and result.privilege_name not in modules_dict[module_id]['privileges']:
+    #             modules_dict[module_id]['privileges'].append(result.privilege_name)
+
+    #     # Process Submodule-Level Permissions
+    #     for result in sub_results:
+    #         module_id = result.module_id
+    #         if module_id not in modules_dict:
+    #              modules_dict[module_id] = {
+    #                 'id': result.module_id,
+    #                 'name': result.module_name,
+    #                 'label': result.module_label,
+    #                 'description': result.module_desc or '',
+    #                 'route': result.module_route,
+    #                 'icon': result.module_icon or '',
+    #                 'category': result.module_cat,
+    #                 'display_order': result.module_order or 0,
+    #                 'color_from': result.module_color_from or '',
+    #                 'color_to': result.module_color_to or '',
+    #                 'privileges': [], # Usually empty if only submodule access
+    #                 'submodules': []
+    #             }
+            
+    #         # Find or create submodule entry
+    #         submodule = next((s for s in modules_dict[module_id]['submodules'] if s['id'] == result.submodule_id), None)
+    #         if not submodule:
+    #             submodule = {
+    #                 'id': result.submodule_id,
+    #                 'name': result.submodule_name,
+    #                 'label': result.submodule_label,
+    #                 'route_key': result.submodule_route_key,
+    #                 'display_order': result.submodule_order or 0,
+    #                 'privileges': []
+    #             }
+    #             modules_dict[module_id]['submodules'].append(submodule)
+            
+    #         if result.privilege_name and result.privilege_name not in submodule['privileges']:
+    #             submodule['privileges'].append(result.privilege_name)
+        
+    #     modules_list = list(modules_dict.values())
+    #     modules_list.sort(key=lambda x: x['display_order'])
+    #     # Sort submodules
+    #     for m in modules_list:
+    #         m['submodules'].sort(key=lambda x: x['display_order'])
+    #         # Also populate 'all' submodules for modules that are fully accessible? 
+    #         # No, standard practice: if you have module level access, do you see all submodules? 
+    #         # Usually yes, or permissions might be strictly additive. 
+    #         # For now, let's assume if module-level access exists, we should probably fetch ALL submodules for that module just for display, 
+    #         # OR we rely on separate submodule permissions. 
+    #         # Let's stick to: If checking user modules, we show what they have explicit access to. 
+    #         # However, if I have 'READ' on 'User Management', I probably want to see the 'Users' tab.
+    #         # But we are moving to granular. 
+    #         # If I have 'READ' on the MODULE, does it imply READ on all submodules? 
+    #         # If so, I should fetch all submodules for that module. 
+    #         # But the current requirement is granular submodule "table for each module".
+    #         # So I will assume strict granular access or mixed.
+    #         pass
+
+    #     return modules_list
     @staticmethod
-    def get_user_modules(email: str, db: Session, role_id: str = None) -> List[Dict]:
+    def get_user_modules(email: str, db: Session, role_id: str = None, organisation_id: str = None) -> List[Dict]:
         user = db.query(User).filter(User.email == email).first()
         org = None
-        if not user:
+
+        # 🔴 if organisation context exists → treat as org session
+        if organisation_id:
+            org = db.query(Organisation).filter(Organisation.id == organisation_id).first()
+
+        # fallback if login was org account
+        if not user and not org:
             org = db.query(Organisation).filter(Organisation.email == email).first()
             if not org:
                 return []
-        
-        # Query for RoleModule (Module-level permissions)
+
+        # -------------------------------
+        # MODULE LEVEL QUERY
+        # -------------------------------
         query = db.query(
             Module.id,
             Module.name,
@@ -62,160 +249,152 @@ class ModuleService:
             Module.display_order,
             Module.color_from,
             Module.color_to,
-            Privilege.name.label('privilege_name')
+            Privilege.name.label("privilege_name"),
         ).join(
             RoleModule, Module.id == RoleModule.module_id
+        ).join(
+            Privilege, RoleModule.privilege_id == Privilege.id
         )
 
-        if user:
+        # 🔵 USER ROLE FLOW
+        if user and not organisation_id:
             query = query.join(
                 UserRole, RoleModule.role_id == UserRole.role_id
             ).filter(
                 UserRole.user_id == user.id
             )
-        elif org:
+
+        # 🔴 ORG ROLE FLOW (MOST IMPORTANT)
+        else:
             query = query.join(
-                 OrganisationRole, RoleModule.role_id == OrganisationRole.role_id
+                OrganisationRole, RoleModule.role_id == OrganisationRole.role_id
             ).filter(
                 OrganisationRole.organisation_id == org.id
             )
-
-        # Complete the common join and filter
-        query = query.join(
-            Privilege, RoleModule.privilege_id == Privilege.id
-        )
 
         if role_id:
             query = query.filter(RoleModule.role_id == role_id)
 
         module_results = query.all()
 
-        # Query for RoleSubmodule (Submodule-level permissions)
+        # -------------------------------
+        # SUBMODULE QUERY
+        # -------------------------------
         from app.models.role_submodule import RoleSubmodule
         from app.models.submodule import Submodule
-        
+
         sub_query = db.query(
-            Module.id.label('module_id'),
-            Module.name.label('module_name'),
-            Module.label.label('module_label'),
-            Module.description.label('module_desc'),
-            Module.route.label('module_route'),
-            Module.icon.label('module_icon'),
-            Module.category.label('module_cat'),
-            Module.display_order.label('module_order'),
-            Module.color_from.label('module_color_from'),
-            Module.color_to.label('module_color_to'),
-            Submodule.id.label('submodule_id'),
-            Submodule.name.label('submodule_name'),
-            Submodule.label.label('submodule_label'),
-            Submodule.route_key.label('submodule_route_key'),
-            Submodule.display_order.label('submodule_order'),
-            Privilege.name.label('privilege_name')
+            Module.id.label("module_id"),
+            Module.name.label("module_name"),
+            Module.label.label("module_label"),
+            Module.description.label("module_desc"),
+            Module.route.label("module_route"),
+            Module.icon.label("module_icon"),
+            Module.category.label("module_cat"),
+            Module.display_order.label("module_order"),
+            Module.color_from.label("module_color_from"),
+            Module.color_to.label("module_color_to"),
+            Submodule.id.label("submodule_id"),
+            Submodule.name.label("submodule_name"),
+            Submodule.label.label("submodule_label"),
+            Submodule.route_key.label("submodule_route_key"),
+            Submodule.display_order.label("submodule_order"),
+            Privilege.name.label("privilege_name"),
         ).join(
             Submodule, Module.id == Submodule.module_id
         ).join(
             RoleSubmodule, Submodule.id == RoleSubmodule.submodule_id
+        ).join(
+            Privilege, RoleSubmodule.privilege_id == Privilege.id
         )
 
-        if user:
+        if user and not organisation_id:
             sub_query = sub_query.join(
                 UserRole, RoleSubmodule.role_id == UserRole.role_id
             ).filter(
                 UserRole.user_id == user.id
             )
-        elif org:
+        else:
             sub_query = sub_query.join(
                 OrganisationRole, RoleSubmodule.role_id == OrganisationRole.role_id
             ).filter(
                 OrganisationRole.organisation_id == org.id
             )
 
-        # Complete the common join and filter for submodules
-        sub_query = sub_query.join(
-            Privilege, RoleSubmodule.privilege_id == Privilege.id
-        )
-
         if role_id:
             sub_query = sub_query.filter(RoleSubmodule.role_id == role_id)
 
         sub_results = sub_query.all()
-        
+
+        # -------------------------------
+        # BUILD RESPONSE
+        # -------------------------------
         modules_dict = {}
-        
-        # Process Module-Level Permissions
+
         for result in module_results:
             module_id = result.id
             if module_id not in modules_dict:
                 modules_dict[module_id] = {
-                    'id': result.id,
-                    'name': result.name,
-                    'label': result.label,
-                    'description': result.description or '',
-                    'route': result.route,
-                    'icon': result.icon or '',
-                    'category': result.category,
-                    'display_order': result.display_order or 0,
-                    'color_from': result.color_from or '',
-                    'color_to': result.color_to or '',
-                    'privileges': [],
-                    'submodules': [] 
+                    "id": result.id,
+                    "name": result.name,
+                    "label": result.label,
+                    "description": result.description or "",
+                    "route": result.route,
+                    "icon": result.icon or "",
+                    "category": result.category,
+                    "display_order": result.display_order or 0,
+                    "color_from": result.color_from or "",
+                    "color_to": result.color_to or "",
+                    "privileges": [],
+                    "submodules": [],
                 }
-            # Check if privilege is not already in list to avoid duplicates (though usually distinct)
-            if result.privilege_name and result.privilege_name not in modules_dict[module_id]['privileges']:
-                modules_dict[module_id]['privileges'].append(result.privilege_name)
 
-        # Process Submodule-Level Permissions
+            if result.privilege_name not in modules_dict[module_id]["privileges"]:
+                modules_dict[module_id]["privileges"].append(result.privilege_name)
+
         for result in sub_results:
             module_id = result.module_id
+
             if module_id not in modules_dict:
-                 modules_dict[module_id] = {
-                    'id': result.module_id,
-                    'name': result.module_name,
-                    'label': result.module_label,
-                    'description': result.module_desc or '',
-                    'route': result.module_route,
-                    'icon': result.module_icon or '',
-                    'category': result.module_cat,
-                    'display_order': result.module_order or 0,
-                    'color_from': result.module_color_from or '',
-                    'color_to': result.module_color_to or '',
-                    'privileges': [], # Usually empty if only submodule access
-                    'submodules': []
+                modules_dict[module_id] = {
+                    "id": result.module_id,
+                    "name": result.module_name,
+                    "label": result.module_label,
+                    "description": result.module_desc or "",
+                    "route": result.module_route,
+                    "icon": result.module_icon or "",
+                    "category": result.module_cat,
+                    "display_order": result.module_order or 0,
+                    "color_from": result.module_color_from or "",
+                    "color_to": result.module_color_to or "",
+                    "privileges": [],
+                    "submodules": [],
                 }
-            
-            # Find or create submodule entry
-            submodule = next((s for s in modules_dict[module_id]['submodules'] if s['id'] == result.submodule_id), None)
+
+            submodule = next(
+                (s for s in modules_dict[module_id]["submodules"] if s["id"] == result.submodule_id),
+                None,
+            )
+
             if not submodule:
                 submodule = {
-                    'id': result.submodule_id,
-                    'name': result.submodule_name,
-                    'label': result.submodule_label,
-                    'route_key': result.submodule_route_key,
-                    'display_order': result.submodule_order or 0,
-                    'privileges': []
+                    "id": result.submodule_id,
+                    "name": result.submodule_name,
+                    "label": result.submodule_label,
+                    "route_key": result.submodule_route_key,
+                    "display_order": result.submodule_order or 0,
+                    "privileges": [],
                 }
-                modules_dict[module_id]['submodules'].append(submodule)
-            
-            if result.privilege_name and result.privilege_name not in submodule['privileges']:
-                submodule['privileges'].append(result.privilege_name)
-        
+                modules_dict[module_id]["submodules"].append(submodule)
+
+            if result.privilege_name not in submodule["privileges"]:
+                submodule["privileges"].append(result.privilege_name)
+
         modules_list = list(modules_dict.values())
-        modules_list.sort(key=lambda x: x['display_order'])
-        # Sort submodules
+        modules_list.sort(key=lambda x: x["display_order"])
+
         for m in modules_list:
-            m['submodules'].sort(key=lambda x: x['display_order'])
-            # Also populate 'all' submodules for modules that are fully accessible? 
-            # No, standard practice: if you have module level access, do you see all submodules? 
-            # Usually yes, or permissions might be strictly additive. 
-            # For now, let's assume if module-level access exists, we should probably fetch ALL submodules for that module just for display, 
-            # OR we rely on separate submodule permissions. 
-            # Let's stick to: If checking user modules, we show what they have explicit access to. 
-            # However, if I have 'READ' on 'User Management', I probably want to see the 'Users' tab.
-            # But we are moving to granular. 
-            # If I have 'READ' on the MODULE, does it imply READ on all submodules? 
-            # If so, I should fetch all submodules for that module. 
-            # But the current requirement is granular submodule "table for each module".
-            # So I will assume strict granular access or mixed.
-            pass
+            m["submodules"].sort(key=lambda x: x["display_order"])
 
         return modules_list
+

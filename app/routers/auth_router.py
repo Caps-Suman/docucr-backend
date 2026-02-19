@@ -11,6 +11,7 @@ from app.models import user, OTP
 from app.services.auth_service import AuthService
 from app.services.activity_service import ActivityService
 from app.models.user import User
+from app.services.organisations_service import OrganisationService
 
 router = APIRouter()
 
@@ -36,45 +37,221 @@ class TwoFactorRequest(BaseModel):
     email: str
     otp: str
 
-@router.post("/login")
-async def login(request: LoginRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    user = AuthService.authenticate_user(request.email, request.password, db)
+# @router.post("/login")
+# async def login(
+#     request: LoginRequest, req: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+#     page: int = 1,
+#     page_size: int = 10,
+#     search: Optional[str] = None,
+#     status_id: Optional[str] = None,
+#     ):
+#     user = AuthService.authenticate_user(request.email, request.password, db)
     
+#     if not user:
+#         # Fallback: Try Organisation Login
+#         org = AuthService.authenticate_organisation(request.email, request.password, db)
+#         if not org:
+#             # Optional: Log failed login attempt
+#             ActivityService.log(
+#                 db, 
+#                 action="LOGIN_FAILED", 
+#                 entity_type="user", 
+#                 details={"email": request.email}, 
+#                 request=req,
+#                 background_tasks=background_tasks
+#             )
+#             raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+#         if not AuthService.check_organisation_active(org, db):
+#             raise HTTPException(status_code=403, detail="Account is inactive")
+        
+#         roles = AuthService.get_organisation_roles(org.id, db)
+#         if not roles:
+#             raise HTTPException(status_code=403, detail="No active roles assigned")
+
+#         ActivityService.log(
+#              db,
+#              action="LOGIN",
+#              entity_type="organisation",
+#              entity_id=org.id,
+#              request=req,
+#              background_tasks=background_tasks
+#         )
+
+#         # Organisation always has one role context usually, logic similar to single role user
+#         # Assuming organisations don't have client mapping logic for now or it's different
+        
+#         tokens = AuthService.generate_tokens(org.email, roles[0]["id"])
+#         permissions = AuthService.get_role_permissions(roles[0]["id"], db)
+
+#         return {
+#             **tokens,
+#             "user": {
+#                 "id": org.id,
+#                 "email": org.email,
+#                 "first_name": org.first_name,
+#                 "last_name": org.last_name,
+#                 "role": roles[0],
+#                 "is_client": False, # Organisations aren't clients in this context
+#                 "client_id": None,
+#                 "client_name": None,
+#                 "permissions": permissions,
+#                 "profile_image_url": getattr(org, 'profile_image_url', None)
+#             }
+#         }
+    
+#     if not AuthService.check_user_active(user, db):
+#         raise HTTPException(status_code=403, detail="Account is inactive")
+#     # SUPERADMIN FLOW
+#     if user.is_superuser:
+#         from app.core.security import create_access_token
+
+#         temp_token = create_access_token(
+#             data={
+#                 "sub": user.email,
+#                 "temp": True,
+#                 "superadmin": True
+#             },
+#             expires_delta=timedelta(minutes=15)
+#         )
+
+#         orgs, total = OrganisationService.get_organisations(page, page_size, search, status_id, db)
+
+#         return {
+#             "requires_org_selection": True,
+#             "temp_token": temp_token,
+#             "organisations": orgs,
+#             "total": total,
+#             "user": {
+#                 "id": user.id,
+#                 "email": user.email,
+#                 "first_name": user.first_name,
+#                 "last_name": user.last_name
+#             }
+#         }
+
+
+#     # Check for 2FA - Compulsory for all except Super Admins
+#     if not user.is_superuser:
+#         if AuthService.initiate_2fa(user.email, db):
+#             return {
+#                 "requires_2fa": True,
+#                 "message": "2FA code sent to your email",
+#                 "profile_image_url": user.profile_image_url
+#             }
+#         else:
+#             raise HTTPException(status_code=500, detail="Failed to send 2FA code")
+
+#     ActivityService.log(
+#         db,
+#         action="LOGIN",
+#         entity_type="user",
+#         entity_id=user.id,
+#         user_id=user.id,
+#         request=req,
+#         background_tasks=background_tasks
+#     )
+
+#     roles = AuthService.get_user_roles(user.id, db)
+    
+#     if not roles:
+#         raise HTTPException(status_code=403, detail="No active roles assigned")
+    
+#     if len(roles) == 1:
+#         tokens = AuthService.generate_tokens(user.email, roles[0]["id"])
+#         permissions = AuthService.get_role_permissions(roles[0]["id"], db)
+#         client = None
+#         client_name = None
+
+#         if user.is_client and user.client_id:
+#             client = AuthService.get_client_by_id(user.client_id, db)
+#             if client:
+#                 client_name = (
+#                     client.business_name
+#                     or f"{client.first_name} {client.last_name}".strip()
+#                 )
+
+#         return {
+#             **tokens,
+#             "user": {
+#                 "id": user.id,
+#                 "email": user.email,
+#                 "first_name": user.first_name,
+#                 "last_name": user.last_name,
+#                 "role": roles[0],
+#                 "is_client": user.is_client,
+#                 "client_id": user.client_id,
+#                 "client_name": client_name,
+#                 "permissions": permissions,
+#                 "profile_image_url": user.profile_image_url
+#             }
+#         }
+    
+#     from app.core.security import create_access_token
+#     temp_token = create_access_token(data={"sub": user.email, "temp": True}, expires_delta=timedelta(minutes=5))
+    
+#     return {
+#         "requires_role_selection": True,
+#         "temp_token": temp_token,
+#         "roles": roles,
+#         "user": {
+#             "id": user.id,
+#             "email": user.email,
+#             "first_name": user.first_name,
+#             "last_name": user.last_name
+#         }
+#     }
+
+@router.post("/login")
+async def login(
+    request: LoginRequest,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    # --------------------------------------------------
+    # 1️⃣ NORMAL USER LOGIN
+    # --------------------------------------------------
+    user = AuthService.authenticate_user(request.email, request.password, db)
+
     if not user:
-        # Fallback: Try Organisation Login
+        # --------------------------------------------------
+        # 2️⃣ ORGANISATION LOGIN
+        # --------------------------------------------------
         org = AuthService.authenticate_organisation(request.email, request.password, db)
         if not org:
-            # Optional: Log failed login attempt
             ActivityService.log(
-                db, 
-                action="LOGIN_FAILED", 
-                entity_type="user", 
-                details={"email": request.email}, 
+                db,
+                action="LOGIN_FAILED",
+                entity_type="user",
+                details={"email": request.email},
                 request=req,
                 background_tasks=background_tasks
             )
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        
+            raise HTTPException(401, "Invalid credentials")
+
         if not AuthService.check_organisation_active(org, db):
-            raise HTTPException(status_code=403, detail="Account is inactive")
-        
+            raise HTTPException(403, "Account is inactive")
+
         roles = AuthService.get_organisation_roles(org.id, db)
         if not roles:
-            raise HTTPException(status_code=403, detail="No active roles assigned")
+            raise HTTPException(403, "No active roles assigned")
 
         ActivityService.log(
-             db,
-             action="LOGIN",
-             entity_type="organisation",
-             entity_id=org.id,
-             request=req,
-             background_tasks=background_tasks
+            db,
+            action="LOGIN",
+            entity_type="organisation",
+            entity_id=org.id,
+            request=req,
+            background_tasks=background_tasks
         )
 
-        # Organisation always has one role context usually, logic similar to single role user
-        # Assuming organisations don't have client mapping logic for now or it's different
-        
-        tokens = AuthService.generate_tokens(org.email, roles[0]["id"])
+        tokens = AuthService.generate_tokens(
+            email=org.email,
+            role_id=roles[0]["id"],
+            organisation_id=str(org.id)
+        )
+
         permissions = AuthService.get_role_permissions(roles[0]["id"], db)
 
         return {
@@ -85,87 +262,68 @@ async def login(request: LoginRequest, req: Request, background_tasks: Backgroun
                 "first_name": org.first_name,
                 "last_name": org.last_name,
                 "role": roles[0],
-                "is_client": False, # Organisations aren't clients in this context
+                "permissions": permissions,
+                "is_client": False,
                 "client_id": None,
                 "client_name": None,
-                "permissions": permissions,
-                "profile_image_url": getattr(org, 'profile_image_url', None)
+                "profile_image_url": getattr(org, "profile_image_url", None)
             }
         }
-    
+
+    # --------------------------------------------------
+    # 3️⃣ USER EXISTS → CHECK ACTIVE
+    # --------------------------------------------------
     if not AuthService.check_user_active(user, db):
-        raise HTTPException(status_code=403, detail="Account is inactive")
-        
-    # Check for 2FA - Compulsory for all except Super Admins
-    if not user.is_superuser:
-        if AuthService.initiate_2fa(user.email, db):
-            return {
-                "requires_2fa": True,
-                "message": "2FA code sent to your email",
-                "profile_image_url": user.profile_image_url
-            }
-        else:
-            raise HTTPException(status_code=500, detail="Failed to send 2FA code")
+        raise HTTPException(403, "Account is inactive")
 
-    ActivityService.log(
-        db,
-        action="LOGIN",
-        entity_type="user",
-        entity_id=user.id,
-        user_id=user.id,
-        request=req,
-        background_tasks=background_tasks
-    )
+    # --------------------------------------------------
+    # 4️⃣ SUPERADMIN FLOW (IMPORTANT)
+    # --------------------------------------------------
+    if user.is_superuser:
+        from app.core.security import create_access_token
 
-    roles = AuthService.get_user_roles(user.id, db)
-    
-    if not roles:
-        raise HTTPException(status_code=403, detail="No active roles assigned")
-    
-    if len(roles) == 1:
-        tokens = AuthService.generate_tokens(user.email, roles[0]["id"])
-        permissions = AuthService.get_role_permissions(roles[0]["id"], db)
-        client = None
-        client_name = None
+        temp_token = create_access_token(
+            data={
+                "sub": user.email,
+                "temp": True,
+                "superadmin": True
+            },
+            expires_delta=timedelta(minutes=15)
+        )
 
-        if user.is_client and user.client_id:
-            client = AuthService.get_client_by_id(user.client_id, db)
-            if client:
-                client_name = (
-                    client.business_name
-                    or f"{client.first_name} {client.last_name}".strip()
-                )
+        # fetch org list
+        orgs, total = OrganisationService.get_organisations(
+            page=1,
+            page_size=100,
+            search=None,
+            status_id=None,
+            db=db
+        )
 
         return {
-            **tokens,
+            "requires_org_selection": True,
+            "temp_token": temp_token,
+            "organisations": orgs,
+            "total": total,
             "user": {
                 "id": user.id,
                 "email": user.email,
                 "first_name": user.first_name,
-                "last_name": user.last_name,
-                "role": roles[0],
-                "is_client": user.is_client,
-                "client_id": user.client_id,
-                "client_name": client_name,
-                "permissions": permissions,
-                "profile_image_url": user.profile_image_url
+                "last_name": user.last_name
             }
         }
-    
-    from app.core.security import create_access_token
-    temp_token = create_access_token(data={"sub": user.email, "temp": True}, expires_delta=timedelta(minutes=5))
-    
-    return {
-        "requires_role_selection": True,
-        "temp_token": temp_token,
-        "roles": roles,
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "first_name": user.first_name,
-            "last_name": user.last_name
+
+    # --------------------------------------------------
+    # 5️⃣ NORMAL USER → 2FA
+    # --------------------------------------------------
+    if AuthService.initiate_2fa(user.email, db):
+        return {
+            "requires_2fa": True,
+            "message": "2FA code sent to your email",
+            "profile_image_url": user.profile_image_url
         }
-    }
+
+    raise HTTPException(500, "Failed to send 2FA")
 
 @router.post("/select-role")
 async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

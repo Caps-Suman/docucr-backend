@@ -87,7 +87,10 @@ class UserService:
     @staticmethod
     def _is_supervisor(user: User) -> bool:
         return user.is_supervisor is True
-    
+    @staticmethod
+    def _get_context_org(current_user):
+        return getattr(current_user, "context_organisation_id", None)
+
     @staticmethod
     def get_users(
         page: int, 
@@ -123,13 +126,22 @@ class UserService:
 
         elif isinstance(current_user, User):
             role_names = [r.name for r in current_user.roles]
-            
-            if current_user.is_superuser or "SUPER_ADMIN" in role_names:
+            context_org = UserService._get_context_org(current_user)
+
+            # GLOBAL superadmin (no org selected)
+            if current_user.is_superuser and not context_org:
                 pass
-            
+
+            # SUPERADMIN inside selected org
+            elif current_user.is_superuser and context_org:
+                query = query.filter(User.organisation_id == str(context_org))
+
+            # ORG ROLE user
             elif "ORGANISATION_ROLE" in role_names:
-                 if current_user.organisation_id:
-                    query = query.filter(User.organisation_id == str(current_user.organisation_id))
+                org_id = context_org or current_user.organisation_id
+                if org_id:
+                    query = query.filter(User.organisation_id == str(org_id))
+
 
             elif "CLIENT_ADMIN" in role_names or getattr(current_user, 'is_client', False):
                  filters = []
@@ -649,8 +661,16 @@ class UserService:
     def can_manage_user(current_user, target_user: User) -> bool:
 
         # ---------- SUPER ADMIN ----------
-        if isinstance(current_user, User) and current_user.is_superuser:
+        context_org = getattr(current_user, "context_organisation_id", None)
+
+        # GLOBAL superadmin
+        if isinstance(current_user, User) and current_user.is_superuser and not context_org:
             return True
+
+        # superadmin inside org
+        if isinstance(current_user, User) and context_org:
+            return str(target_user.organisation_id) == str(context_org)
+
 
         # ---------- ORGANISATION LOGIN ----------
         if isinstance(current_user, Organisation):
@@ -714,8 +734,14 @@ class UserService:
         )
 
         # 🔥 SUPERADMIN
-        if isinstance(current_user, User) and current_user.is_superuser:
+        context_org = getattr(current_user, "context_organisation_id", None)
+
+        if isinstance(current_user, User) and current_user.is_superuser and not context_org:
             pass
+
+        elif isinstance(current_user, User) and context_org:
+            query = query.filter(User.organisation_id == str(context_org))
+
 
         # 🔥 CLIENT LOGIN (Client Instance)
         elif isinstance(current_user, Client):
@@ -890,7 +916,7 @@ class UserService:
 
         # Fetch Organisation Name
         organisation_name = None
-        org_id = getattr(user, 'organisation_id', None)
+        org_id = getattr(user, 'context_organisation_id', None)
         if org_id:
              org = db.query(Organisation).filter(Organisation.id == org_id).first()
              if org:
@@ -958,7 +984,7 @@ class UserService:
 
         # Fetch Organisation Name
         organisation_name = None
-        org_id = getattr(user, 'organisation_id', None)
+        org_id = getattr(user, 'context_organisation_id', None)
         if org_id:
              org = db.query(Organisation).filter(Organisation.id == org_id).first()
              if org:
@@ -994,7 +1020,7 @@ class UserService:
             "phone_number": user.phone_number,
             "status_id": user.status_id, # Integer
             "statusCode": status_code,   # String
-            "is_superuser": user.is_superuser,
+            "is_superuser": getattr(user, "context_is_superadmin", user.is_superuser),
             "roles": roles,
             "supervisor_id": supervisor_id,
             "assigned_client_count": client_count,

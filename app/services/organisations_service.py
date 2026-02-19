@@ -176,6 +176,21 @@ class OrganisationService:
             db.refresh(org)
             
         return OrganisationService._format_organisation(org, db)
+    @staticmethod
+    def activate_organisation(org_id: str, db: Session) -> Optional[Dict]:
+        org = db.query(Organisation).filter(Organisation.id == org_id).first()
+        if not org:
+            return None
+
+        active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+        if not active_status:
+            raise HTTPException(status_code=500, detail="ACTIVE status not found")
+
+        org.status_id = active_status.id
+        db.commit()
+        db.refresh(org)
+
+        return OrganisationService._format_organisation(org, db)
 
     @staticmethod
     def get_organisation_stats(db: Session) -> Dict:

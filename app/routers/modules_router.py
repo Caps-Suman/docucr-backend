@@ -49,11 +49,17 @@ async def get_all_modules(
     current_user: User = Depends(get_current_user),
     role_id: str = Depends(get_current_role_id)
 ):
-    if getattr(current_user, 'is_superuser', False):
+    if getattr(current_user, 'context_is_superadmin', False) and not getattr(current_user, "context_organisation_id", None):
         modules = ModuleService.get_all_modules(db)
     else:
-        modules = ModuleService.get_user_modules(current_user.email, db, role_id)
-    
+        modules = ModuleService.get_user_modules(
+            current_user.email,
+            db,
+            role_id,
+            getattr(current_user, "context_organisation_id", None)
+        )
+
+
     return ModulesResponse(modules=modules)
 
 @router.get("/user-modules", response_model=ModulesResponse)
@@ -64,7 +70,13 @@ async def get_current_user_modules(
     current_user: User = Depends(get_current_user),
     role_id: str = Depends(get_current_role_id)
 ):
-    modules = ModuleService.get_user_modules(email, db, role_id)
+    modules = ModuleService.get_user_modules(
+        email,
+        db,
+        None,
+        getattr(current_user, "context_organisation_id", None)
+    )
+
     if not modules:
         # It's possible to have no modules for a role, but if user not found logic remains
         # Actually ModuleService returns [] if user not found OR no modules. 
