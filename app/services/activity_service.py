@@ -8,7 +8,7 @@ from app.models.user_role import UserRole
 from app.models.role import Role
 from app.models.client import Client
 from app.models.user_client import UserClient
-from sqlalchemy import String, cast, desc, or_
+from sqlalchemy import String, cast, desc, or_, distinct
 
 from app.models.user import User
 
@@ -374,23 +374,98 @@ class ActivityService:
             elif log.organisation:
                 user_display = log.organisation.name
 
+            action_label = log.action.capitalize()
+
+            description = ActivityService._generate_description(
+                log,
+                user_display
+            )
+
             results.append({
                 "id": str(log.id),
                 "name": user_display,
                 "email": email,
                 "action": log.action,
+                "action_label": action_label,
+                "description": description,
                 "entity_type": log.entity_type,
                 "entity_id": log.entity_id,
-                "user_id": log.user_id,
-                "organisation_id": log.organisation_id,
                 "created_at": log.created_at.isoformat() if log.created_at else None,
                 "details": log.details
             })
 
+
         return {
             "items": results,
-            "total": total
+            "total": total,
+            "page": (offset // limit) + 1 if limit else 1,
+            "limit": limit,
+            "pages": (total // limit) + 1 if limit else 1
         }
+
+    @staticmethod
+    def get_entity_types(db: Session, current_user):
+        """
+        Returns only those entity_types visible to logged in user
+        """
+
+        query = db.query(distinct(ActivityLog.entity_type))
+
+        # --------------------------------------------------
+        # SUPER ADMIN → ALL
+        # --------------------------------------------------
+        if isinstance(current_user, User) and current_user.is_superuser:
+            pass
+
+        # --------------------------------------------------
+        # ORG LOGIN
+        # --------------------------------------------------
+        elif isinstance(current_user, Organisation):
+            query = query.filter(
+                ActivityLog.organisation_id == str(current_user.id)
+            )
+
+        # --------------------------------------------------
+        # USER LOGIN
+        # --------------------------------------------------
+        elif isinstance(current_user, User):
+
+            # CLIENT ADMIN
+            if current_user.is_client and getattr(current_user, "is_client_admin", False):
+
+                client_user_ids = db.query(User.id).filter(
+                    User.client_id == current_user.client_id
+                )
+
+                query = query.filter(
+                    or_(
+                        ActivityLog.user_id == str(current_user.id),
+                        ActivityLog.user_id.in_(client_user_ids)
+                    )
+                )
+
+            # ORG USER
+            elif not current_user.is_client:
+                query = query.filter(
+                    ActivityLog.user_id == str(current_user.id)
+                )
+
+            # CLIENT USER
+            else:
+                query = query.filter(
+                    ActivityLog.user_id == str(current_user.id)
+                )
+
+        results = query.all()
+
+        return [
+        {
+            "label": r[0].replace("_", " ").title(),
+            "value": r[0]
+        }
+        for r in results if r[0]
+    ]
+
     @staticmethod
     def _generate_description(log: ActivityLog, user_name: str) -> str:
         """

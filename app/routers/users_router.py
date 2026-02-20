@@ -134,12 +134,7 @@ async def get_users(
         client_id=client_id,
         created_by=created_by
     )
-    ActivityService.log(
-        db=db,
-        action="VIEW",
-        entity_type="user_list",
-        current_user=current_user,
-    )
+
 
     return UserListResponse(
         users=[UserResponse(**user) for user in users],
@@ -199,12 +194,6 @@ async def get_current_user_profile(
             "created_by_name": None,
             "organisation_name": current_user.username
         }
-    ActivityService.log(
-        db=db,
-        action="VIEW",
-        entity_type="profile",
-        current_user=current_user
-    )
 
     return UserService._format_user_response_for_me(current_user, db)
 @router.get("/by-organisation")
@@ -322,13 +311,6 @@ def get_share_users(
         )
 
     users = query.limit(50).all()
-    ActivityService.log(
-        db=db,
-        action="VIEW",
-        entity_type="share_users",
-        current_user=current_user,
-        details={"is_client": is_client}
-    )
 
     return {
         "users": [
@@ -376,12 +358,6 @@ async def get_user(
     user = UserService.get_user_by_id(user_id, db)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    ActivityService.log(
-        db=db,
-        action="VIEW",
-        entity_type="user",
-        entity_id=user_id,
-    )
 
     return UserResponse(**user)
 

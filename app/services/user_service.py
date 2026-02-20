@@ -819,7 +819,7 @@ class UserService:
         return query.first() is not None
 
     @staticmethod
-    def _format_user_response(user: User, db: Session) -> Dict:
+    def _format_user_response(user: str, db: Session) -> Dict:
         user_roles = db.query(UserRole, Role).join(Role, UserRole.role_id == Role.id).filter(UserRole.user_id == user.id).all()
         roles = [{"id": role.id, "name": role.name} for _, role in user_roles]
         # roles = []
@@ -854,14 +854,39 @@ class UserService:
 
 
         # Fetch Created By Name
+        # created_by_name = None
+        # created_by_id = getattr(user, 'created_by', None)
+        # if created_by_id:
+        #     creator = db.query(User).filter(User.id == created_by_id).first()
+        #     if creator:
+        #        created_by_name = f"{creator.first_name or ''} {creator.last_name or ''}".strip()
+        #        if not created_by_name:
+        #            created_by_name = creator.username
         created_by_name = None
-        created_by_id = getattr(user, 'created_by', None)
+
+        created_by_id = getattr(user, "created_by", None)  # obj = SOP/document/etc
+
         if created_by_id:
             creator = db.query(User).filter(User.id == created_by_id).first()
+
             if creator:
-               created_by_name = f"{creator.first_name or ''} {creator.last_name or ''}".strip()
-               if not created_by_name:
-                   created_by_name = creator.username
+
+                # 🔴 CASE 1: user belongs to organisation → show ORG name
+                if creator.organisation_id:
+                    org = db.query(Organisation).filter(
+                        Organisation.id == creator.organisation_id
+                    ).first()
+
+                    if org:
+                        created_by_name = org.name
+                    else:
+                        created_by_name = creator.username
+
+                # 🟢 CASE 2: internal user → show user name
+                else:
+                    created_by_name = f"{creator.first_name or ''} {creator.last_name or ''}".strip()
+                    if not created_by_name:
+                        created_by_name = creator.username
 
         # Fetch Organisation Name
         organisation_name = None

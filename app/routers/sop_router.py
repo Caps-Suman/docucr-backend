@@ -125,36 +125,64 @@ class AISOPExtractResponse(BaseModel):
 def create_sop(
     sop: SOPCreate, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("SOPS", "CREATE")),
+    client_id:str=None,
+    permission: bool = Depends(Permission("SOPs", "CREATE")),
     current_user = Depends(get_current_user),
     request: Request = None,
     background_tasks: BackgroundTasks = None,
 
 ):
     sop_data = sop.model_dump()
-    result = SOPService.create_sop(sop_data, db, current_user)
+    result = SOPService.create_sop(sop_data, db, current_user, client_id)
 
     ActivityService.log(
         db=db,
         action="CREATE",
         entity_type="sop",
-        entity_id=str(result["id"]),
+        entity_id=str(result.id),
+        details={"title": result.title},
         current_user=current_user,
-        details={"title": result["title"]},
         request=request,
         background_tasks=background_tasks
     )
     return result
     # return SOPService.create_sop(sop_data, db, current_user)
-
-@router.get("/check-client-sop/{client_id}")
-def check_client_sop(
+@router.post("/check-providers/{client_id}")
+def check_providers(
     client_id: str,
+    payload: dict,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("SOPS", "CREATE")),
+    permission: bool = Depends(Permission("SOPs", "CREATE")),
     current_user = Depends(get_current_user)
 ):
-    exists = SOPService.check_sop_exists(client_id, db)
+    provider_ids = payload.get("provider_ids", [])
+
+    blocked = SOPService.get_blocked_providers(
+        client_id=client_id,
+        provider_ids=provider_ids,
+        db=db
+    )
+
+    return {
+        "blocked_provider_ids": blocked
+    }
+
+@router.post("/check-client-sop/{client_id}")
+def check_client_sop(
+    client_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("SOPs", "CREATE")),
+    current_user = Depends(get_current_user)
+):
+    provider_ids = payload.get("provider_ids", [])
+
+    exists = SOPService.check_sop_exists(
+        client_id=client_id,
+        provider_ids=provider_ids,
+        db=db
+    )
+
     return {"exists": exists}
 
 @router.get("/stats", response_model=SOPStatsResponse)
@@ -259,7 +287,7 @@ def update_sop(
     sop_id: str, 
     sop: SOPUpdate, 
     db: Session = Depends(get_db),
-    current_user: User = Depends(Permission("SOPS", "UPDATE")),
+    current_user: User = Depends(Permission("SOPs", "UPDATE")),
     request: Request = None,
     background_tasks: BackgroundTasks = None,
 ):
@@ -300,7 +328,7 @@ def update_sop_status(
     db: Session = Depends(get_db),
     request:Request=None,
     background_tasks:BackgroundTasks=None,
-    current_user: User = Depends(Permission("SOPS", "UPDATE"))
+    current_user: User = Depends(Permission("SOPs", "UPDATE"))
 ):
     updated_sop = SOPService.update_sop(sop_id, status_update.model_dump(), db)
     if not updated_sop:
@@ -324,7 +352,7 @@ def delete_sop(
     db: Session = Depends(get_db),
     request:Request=None,
     background_tasks:BackgroundTasks=None,
-    current_user: User = Depends(Permission("SOPS", "DELETE"))
+    current_user: User = Depends(Permission("SOPs", "DELETE"))
 ):
     success = SOPService.delete_sop(sop_id, db)
     if not success:
@@ -347,7 +375,7 @@ def download_sop_pdf(
     db: Session = Depends(get_db),
     request:Request=None,
     background_tasks:BackgroundTasks=None,
-    current_user: User = Depends(Permission("SOPS", "EXPORT"))
+    current_user: User = Depends(Permission("SOPs", "EXPORT"))
 ):
     sop = SOPService.get_sop_by_id(sop_id, db)
     if not sop:

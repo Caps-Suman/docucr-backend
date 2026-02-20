@@ -14,10 +14,13 @@ class ExternalShare(Base):
     email = Column(String, nullable=False)
     password_hash = Column(String, nullable=False)
     token = Column(String, unique=True, nullable=False, index=True)
-    shared_by = Column(String, ForeignKey('docucr.user.id'), nullable=False)
+    shared_by_user_id = Column(String, ForeignKey('docucr.user.id'), nullable=True)
+    shared_by_org_id = Column(String, ForeignKey('docucr.organisation.id'), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relationships
     document = relationship("Document")
-    shared_by_user = relationship("User", foreign_keys=[shared_by])
+    shared_by_user = relationship("User", foreign_keys=[shared_by_user_id])
+    shared_by_org = relationship("Organisation")
+
