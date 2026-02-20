@@ -36,6 +36,6 @@ __all__ = [
     'UserRoleModule', 'UserSupervisor', 'DocumentType', 'Template', 'Document',
     'DocumentFormData', 'ExtractedDocument', 'UnverifiedDocument', 'Form', 'FormField', 'Status',
     'DocumentListConfig', 'Printer', 'ActivityLog', 'SOP', 'OTP', 'Webhook',
-    'DocumentShare', 'ExternalShare', 'UserClient', 'UserRole', 'UserRoleModule', 'Organisation', 'OrganisationRole',
+    'DocumentShare', 'ExternalShare', 'UserClient', 'UserRole', 'UserRoleModule', 'Organisation',
     'SopProviderMapping'
 ]
