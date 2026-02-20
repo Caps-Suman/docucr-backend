@@ -7,7 +7,6 @@ from app.models.privilege import Privilege
 from app.models.role_module import RoleModule
 from app.models.user_role import UserRole
 from app.models.organisation import Organisation
-from app.models.organisation_role import OrganisationRole
 
 
 class ModuleService:
@@ -221,23 +220,25 @@ class ModuleService:
 
     #     return modules_list
     @staticmethod
-    def get_user_modules(email: str, db: Session, role_id: str = None, organisation_id: str = None) -> List[Dict]:
+    def get_user_modules(email: str, db: Session, role_id: str, organisation_id: str):
+
         user = db.query(User).filter(User.email == email).first()
-        org = None
+        if not user:
+            return []
 
-        # 🔴 if organisation context exists → treat as org session
-        if organisation_id:
-            org = db.query(Organisation).filter(Organisation.id == organisation_id).first()
+        # ensure user belongs to selected org
+        if str(user.organisation_id) != str(organisation_id):
+            return []
 
-        # fallback if login was org account
-        if not user and not org:
-            org = db.query(Organisation).filter(Organisation.email == email).first()
-            if not org:
-                return []
+        # ensure user has role
+        role_check = db.query(UserRole).filter(
+            UserRole.user_id == user.id,
+            UserRole.role_id == role_id
+        ).first()
 
-        # -------------------------------
-        # MODULE LEVEL QUERY
-        # -------------------------------
+        if not role_check:
+            return []
+
         query = db.query(
             Module.id,
             Module.name,
@@ -254,147 +255,35 @@ class ModuleService:
             RoleModule, Module.id == RoleModule.module_id
         ).join(
             Privilege, RoleModule.privilege_id == Privilege.id
+        ).filter(
+            RoleModule.role_id == role_id
         )
 
-        # 🔵 USER ROLE FLOW
-        if user and not organisation_id:
-            query = query.join(
-                UserRole, RoleModule.role_id == UserRole.role_id
-            ).filter(
-                UserRole.user_id == user.id
-            )
+        results = query.all()
 
-        # 🔴 ORG ROLE FLOW (MOST IMPORTANT)
-        else:
-            query = query.join(
-                OrganisationRole, RoleModule.role_id == OrganisationRole.role_id
-            ).filter(
-                OrganisationRole.organisation_id == org.id
-            )
 
-        if role_id:
-            query = query.filter(RoleModule.role_id == role_id)
-
-        module_results = query.all()
-
-        # -------------------------------
-        # SUBMODULE QUERY
-        # -------------------------------
-        from app.models.role_submodule import RoleSubmodule
-        from app.models.submodule import Submodule
-
-        sub_query = db.query(
-            Module.id.label("module_id"),
-            Module.name.label("module_name"),
-            Module.label.label("module_label"),
-            Module.description.label("module_desc"),
-            Module.route.label("module_route"),
-            Module.icon.label("module_icon"),
-            Module.category.label("module_cat"),
-            Module.display_order.label("module_order"),
-            Module.color_from.label("module_color_from"),
-            Module.color_to.label("module_color_to"),
-            Submodule.id.label("submodule_id"),
-            Submodule.name.label("submodule_name"),
-            Submodule.label.label("submodule_label"),
-            Submodule.route_key.label("submodule_route_key"),
-            Submodule.display_order.label("submodule_order"),
-            Privilege.name.label("privilege_name"),
-        ).join(
-            Submodule, Module.id == Submodule.module_id
-        ).join(
-            RoleSubmodule, Submodule.id == RoleSubmodule.submodule_id
-        ).join(
-            Privilege, RoleSubmodule.privilege_id == Privilege.id
-        )
-
-        if user and not organisation_id:
-            sub_query = sub_query.join(
-                UserRole, RoleSubmodule.role_id == UserRole.role_id
-            ).filter(
-                UserRole.user_id == user.id
-            )
-        else:
-            sub_query = sub_query.join(
-                OrganisationRole, RoleSubmodule.role_id == OrganisationRole.role_id
-            ).filter(
-                OrganisationRole.organisation_id == org.id
-            )
-
-        if role_id:
-            sub_query = sub_query.filter(RoleSubmodule.role_id == role_id)
-
-        sub_results = sub_query.all()
-
-        # -------------------------------
-        # BUILD RESPONSE
-        # -------------------------------
         modules_dict = {}
 
-        for result in module_results:
-            module_id = result.id
-            if module_id not in modules_dict:
-                modules_dict[module_id] = {
-                    "id": result.id,
-                    "name": result.name,
-                    "label": result.label,
-                    "description": result.description or "",
-                    "route": result.route,
-                    "icon": result.icon or "",
-                    "category": result.category,
-                    "display_order": result.display_order or 0,
-                    "color_from": result.color_from or "",
-                    "color_to": result.color_to or "",
+        for r in results:
+            if r.id not in modules_dict:
+                modules_dict[r.id] = {
+                    "id": r.id,
+                    "name": r.name,
+                    "label": r.label,
+                    "description": r.description or "",
+                    "route": r.route,
+                    "icon": r.icon or "",
+                    "category": r.category,
+                    "display_order": r.display_order or 0,
+                    "color_from": r.color_from or "",
+                    "color_to": r.color_to or "",
                     "privileges": [],
                     "submodules": [],
                 }
 
-            if result.privilege_name not in modules_dict[module_id]["privileges"]:
-                modules_dict[module_id]["privileges"].append(result.privilege_name)
+            if r.privilege_name not in modules_dict[r.id]["privileges"]:
+                modules_dict[r.id]["privileges"].append(r.privilege_name)
 
-        for result in sub_results:
-            module_id = result.module_id
+        return list(modules_dict.values())
 
-            if module_id not in modules_dict:
-                modules_dict[module_id] = {
-                    "id": result.module_id,
-                    "name": result.module_name,
-                    "label": result.module_label,
-                    "description": result.module_desc or "",
-                    "route": result.module_route,
-                    "icon": result.module_icon or "",
-                    "category": result.module_cat,
-                    "display_order": result.module_order or 0,
-                    "color_from": result.module_color_from or "",
-                    "color_to": result.module_color_to or "",
-                    "privileges": [],
-                    "submodules": [],
-                }
-
-            submodule = next(
-                (s for s in modules_dict[module_id]["submodules"] if s["id"] == result.submodule_id),
-                None,
-            )
-
-            if not submodule:
-                submodule = {
-                    "id": result.submodule_id,
-                    "name": result.submodule_name,
-                    "label": result.submodule_label,
-                    "route_key": result.submodule_route_key,
-                    "display_order": result.submodule_order or 0,
-                    "privileges": [],
-                }
-                modules_dict[module_id]["submodules"].append(submodule)
-
-            if result.privilege_name not in submodule["privileges"]:
-                submodule["privileges"].append(result.privilege_name)
-
-        modules_list = list(modules_dict.values())
-        modules_list.sort(key=lambda x: x["display_order"])
-
-        for m in modules_list:
-            m["submodules"].sort(key=lambda x: x["display_order"])
-
-        return modules_list
 

@@ -209,76 +209,23 @@ async def login(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    # --------------------------------------------------
-    # 1️⃣ NORMAL USER LOGIN
-    # --------------------------------------------------
     user = AuthService.authenticate_user(request.email, request.password, db)
 
     if not user:
-        # --------------------------------------------------
-        # 2️⃣ ORGANISATION LOGIN
-        # --------------------------------------------------
-        org = AuthService.authenticate_organisation(request.email, request.password, db)
-        if not org:
-            ActivityService.log(
-                db,
-                action="LOGIN_FAILED",
-                entity_type="user",
-                details={"email": request.email},
-                request=req,
-                background_tasks=background_tasks
-            )
-            raise HTTPException(401, "Invalid credentials")
-
-        if not AuthService.check_organisation_active(org, db):
-            raise HTTPException(403, "Account is inactive")
-
-        roles = AuthService.get_organisation_roles(org.id, db)
-        if not roles:
-            raise HTTPException(403, "No active roles assigned")
-
         ActivityService.log(
             db,
-            action="LOGIN",
-            entity_type="organisation",
-            entity_id=org.id,
+            action="LOGIN_FAILED",
+            entity_type="user",
+            details={"email": request.email},
             request=req,
             background_tasks=background_tasks
         )
+        raise HTTPException(401, "Invalid credentials")
 
-        tokens = AuthService.generate_tokens(
-            email=org.email,
-            role_id=roles[0]["id"],
-            organisation_id=str(org.id)
-        )
-
-        permissions = AuthService.get_role_permissions(roles[0]["id"], db)
-
-        return {
-            **tokens,
-            "user": {
-                "id": org.id,
-                "email": org.email,
-                "first_name": org.first_name,
-                "last_name": org.last_name,
-                "role": roles[0],
-                "permissions": permissions,
-                "is_client": False,
-                "client_id": None,
-                "client_name": None,
-                "profile_image_url": getattr(org, "profile_image_url", None)
-            }
-        }
-
-    # --------------------------------------------------
-    # 3️⃣ USER EXISTS → CHECK ACTIVE
-    # --------------------------------------------------
     if not AuthService.check_user_active(user, db):
         raise HTTPException(403, "Account is inactive")
 
-    # --------------------------------------------------
-    # 4️⃣ SUPERADMIN FLOW (IMPORTANT)
-    # --------------------------------------------------
+    # 🔥 SUPERADMIN FLOW (global)
     if user.is_superuser:
         from app.core.security import create_access_token
 
@@ -291,20 +238,9 @@ async def login(
             expires_delta=timedelta(minutes=15)
         )
 
-        # fetch org list
-        orgs, total = OrganisationService.get_organisations(
-            page=1,
-            page_size=100,
-            search=None,
-            status_id=None,
-            db=db
-        )
-
         return {
             "requires_org_selection": True,
             "temp_token": temp_token,
-            "organisations": orgs,
-            "total": total,
             "user": {
                 "id": user.id,
                 "email": user.email,
@@ -313,17 +249,16 @@ async def login(
             }
         }
 
-    # --------------------------------------------------
-    # 5️⃣ NORMAL USER → 2FA
-    # --------------------------------------------------
+    # 🔥 2FA FLOW
     if AuthService.initiate_2fa(user.email, db):
         return {
             "requires_2fa": True,
-            "message": "2FA code sent to your email",
+            "message": "2FA code sent",
             "profile_image_url": user.profile_image_url
         }
 
     raise HTTPException(500, "Failed to send 2FA")
+
 
 @router.post("/select-role")
 async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -336,7 +271,7 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
     role = AuthService.verify_user_role(current_user.id, request.role_id, db)
     if not role:
         raise HTTPException(status_code=403, detail="User does not have this role")
-    
+
     tokens = AuthService.generate_tokens(current_user.email, request.role_id)
     permissions = AuthService.get_role_permissions(role.id, db)
 
@@ -436,7 +371,11 @@ async def verify_2fa(request: TwoFactorRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="No active roles assigned")
     
     if len(roles) == 1:
-        tokens = AuthService.generate_tokens(user.email, roles[0]["id"])
+        tokens = AuthService.generate_tokens(
+            email=user.email,
+            role_id=roles[0]["id"],
+            organisation_id=user.organisation_id
+        )
         permissions = AuthService.get_role_permissions(roles[0]["id"], db)
         
         client = None

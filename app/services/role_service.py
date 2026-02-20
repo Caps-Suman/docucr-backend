@@ -7,7 +7,6 @@ import uuid
 from app.models.role import Role
 from app.models.user import User
 from app.models.organisation import Organisation
-from app.models.organisation_role import OrganisationRole
 from app.models.user_role import UserRole
 from app.models.role_module import RoleModule
 from app.models.role_submodule import RoleSubmodule

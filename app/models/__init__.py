@@ -29,7 +29,6 @@ from .user_client import UserClient
 from .user_role import UserRole
 from .user_role_module import UserRoleModule
 from .organisation import Organisation
-from .organisation_role import OrganisationRole
 from .sop_provider_mapping import SopProviderMapping
 
 __all__ = [

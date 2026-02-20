@@ -10,12 +10,15 @@ import re
 
 from app.core.database import get_db
 from app.models.organisation import Organisation
+from app.models.role import Role
+from app.models.user_role import UserRole
 from app.services.auth_service import AuthService
 from app.services.organisations_service import OrganisationService
 from app.services.activity_service import ActivityService
 from app.core.permissions import Permission
 from app.core.security import allow_temp_superadmin, decode_token, get_current_user
 from app.models.user import User
+from app.services.user_service import UserService
 
 router = APIRouter()
 
@@ -72,18 +75,10 @@ class OrganisationUpdate(BaseModel):
 
 class OrganisationResponse(BaseModel):
     id: str
-    email: str
-    username: str
-    first_name: Optional[str]
-    middle_name: Optional[str]
-    last_name: Optional[str]
-    phone_country_code: Optional[str]
-    phone_number: Optional[str]
+    name: str
     status_id: Optional[int]
     statusCode: Optional[str]
     created_at: Optional[str]
-    updated_at: Optional[str]
-    name: str
 
     class Config:
         from_attributes = True
@@ -130,11 +125,12 @@ def get_organisations(
     if payload.get("temp") and payload.get("superadmin"):
         orgs, total = OrganisationService.get_organisations(page, page_size, search, status_id, db)
         return OrganisationListResponse(
-            organisations=[OrganisationResponse.model_validate(o, from_attributes=True) for o in orgs],
+            organisations=[OrganisationResponse(**o) for o in orgs],
             total=total,
             page=page,
             page_size=page_size
         )
+
 
     # 🔵 NORMAL FLOW
     current_user = get_current_user(credentials, db)
@@ -142,11 +138,12 @@ def get_organisations(
 
     orgs, total = OrganisationService.get_organisations(page, page_size, search, status_id, db)
     return OrganisationListResponse(
-        organisations=[OrganisationResponse.model_validate(o, from_attributes=True) for o in orgs],
+        organisations=[OrganisationResponse(**o) for o in orgs],
         total=total,
         page=page,
         page_size=page_size
     )
+
 
 from app.core.security import allow_temp_superadmin
 
@@ -156,31 +153,38 @@ def select_organisation(
     db: Session = Depends(get_db),
     payload=Depends(allow_temp_superadmin)
 ):
-    """
-    Called after superadmin selects an organisation.
-    Uses TEMP token and returns FINAL token with org context.
-    """
-
     org = db.query(Organisation).filter(Organisation.id == org_id).first()
     if not org:
         raise HTTPException(404, "Organisation not found")
 
-    # SUPERADMIN ROLE ID (your actual role id)
-    SUPERADMIN_ROLE_ID = "0830931c-b77d-4b6f-91bf-d9ae4e173b0f"
+    user = db.query(User).filter(User.email == payload["sub"]).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    # 🔥 GET ROLE FOR THIS ORG ONLY
+    user_role = db.query(UserRole).filter(
+        UserRole.user_id == user.id,
+        UserRole.organisation_id == org_id
+    ).first()
+
+    if not user_role:
+        raise HTTPException(403, "User has no role in this organisation")
 
     tokens = AuthService.generate_tokens(
-        email=payload["sub"],
-        role_id=SUPERADMIN_ROLE_ID,
+        email=user.email,
+        role_id=user_role.role_id,   # <-- THIS will now be org role
         organisation_id=str(org_id)
     )
 
     return {
         **tokens,
         "organisation": {
-            "id": str(org.id),
+            "id": org.id,
             "name": org.name
         }
     }
+
+
 
 
 @router.post("", response_model=OrganisationResponse)
@@ -201,9 +205,9 @@ def create_organisation(
     else:
         current_user = None
 
-    if OrganisationService.check_email_exists(org.email, None, db):
+    if UserService.check_email_exists(org.email, None, db):
         raise HTTPException(status_code=400, detail="Email already exists")
-    if OrganisationService.check_username_exists(org.username, None, db):
+    if UserService.check_username_exists(org.username, None, db):
         raise HTTPException(status_code=400, detail="Username already exists")
 
     org_data = org.model_dump()
@@ -240,9 +244,9 @@ def update_organisation(
     else:
         current_user = None
 
-    if org.email and OrganisationService.check_email_exists(org.email, org_id, db):
+    if org.email and UserService.check_email_exists(org.email, org_id, db):
         raise HTTPException(status_code=400, detail="Email already exists")
-    if org.username and OrganisationService.check_username_exists(org.username, org_id, db):
+    if org.username and UserService.check_username_exists(org.username, org_id, db):
         raise HTTPException(status_code=400, detail="Username already exists")
 
     org_data = org.model_dump(exclude_unset=True)

@@ -31,10 +31,3 @@ class Role(Base):
         back_populates="roles",
         overlaps="user_roles,role_users,user,role"
     )
-
-    organisations = relationship(
-        "Organisation",
-        secondary="docucr.organisation_role",
-        back_populates="roles",
-        overlaps="organisation_roles,role_organisations,organisation,role"
-    )

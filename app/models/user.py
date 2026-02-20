@@ -30,7 +30,8 @@ class User(Base):
 
     creator = relationship("User", remote_side=[id], backref="created_users")
 
-    
+    organisation = relationship("Organisation", back_populates="users")
+
     documents_created  = relationship(
         "Document",
         foreign_keys="Document.created_by",

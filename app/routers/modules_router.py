@@ -65,25 +65,18 @@ async def get_all_modules(
 @router.get("/user-modules", response_model=ModulesResponse)
 @router.get("/user-modules/", response_model=ModulesResponse)
 async def get_current_user_modules(
-    email: str = Query(..., description="User email"),
+    email: str = Query(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     role_id: str = Depends(get_current_role_id)
 ):
+    org_id = getattr(current_user, "context_organisation_id", None)
+
     modules = ModuleService.get_user_modules(
-        email,
-        db,
-        None,
-        getattr(current_user, "context_organisation_id", None)
+        email=email,
+        db=db,
+        role_id=role_id,
+        organisation_id=org_id
     )
 
-    if not modules:
-        # It's possible to have no modules for a role, but if user not found logic remains
-        # Actually ModuleService returns [] if user not found OR no modules. 
-        # But we should only 404 if user truly doesn't exist? 
-        # Service logic: check user existence first.
-        pass
-    
-    # We might want to check if modules is empty and if that's expected. 
-    # For now, just return what service returns.
     return ModulesResponse(modules=modules)

@@ -67,7 +67,7 @@ def get_current_user(
         user.is_org = False
 
         # 🔥 attach runtime context (DO NOT mutate DB fields)
-        user.context_organisation_id = organisation_id
+        user.context_organisation_id = payload.get("organisation_id")
         user.context_is_superadmin = user.is_superuser and not organisation_id
 
         return user
