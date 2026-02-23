@@ -551,7 +551,7 @@ def get_client_by_id(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    client = ClientService.get_client_by_id(client_id, db)
+    client = ClientService.get_client_by_id(client_id, db, current_user)
 
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")

@@ -239,235 +239,423 @@ class AISOPService:
 
     @staticmethod
     async def extract_narrative_and_rules(text: str) -> dict:
-        prompt = f"""
-    You are a medical SOP data extraction engine.
+        prompt = """
+        You are extracting a medical SOP.
 
-    You are NOT summarizing.
-    You are NOT interpreting.
-    You are extracting EXACT structured data.
+        You are NOT summarizing.
+        You are extracting EXACT TEXT.
 
-    Return ONLY valid JSON.
-    Do not include markdown.
-    Do not include explanations.
+        --------------------------------
+        BILLING GUIDELINES (VERY IMPORTANT)
+        --------------------------------
 
-    ====================================================
-    OUTPUT JSON STRUCTURE (STRICT)
-    ====================================================
+        Billing guidelines MUST be GROUPED.
 
-    {{
-    "basic_information": {{
-        "sop_title": "",
-        "category": ""
-    }},
+        A "group" represents a FAMILY of rules such as:
+        - CPT Code Replacements
+        - Modifier Usage
+        - ICD Code Restrictions
+        - Telehealth Billing
+        - Admin Code Usage
+        - Insurance-Specific Rules
+        - Any other logical heading found in the document
 
-    "provider_information": {{
-        "billing_provider_name": "",
-        "billing_provider_npi": "",
-        "provider_tax_id": "",
-        "billing_address": "",
-        "software": "",
-        "clearinghouse": ""
-    }},
+        Rules:
+        - You MUST infer the category name from surrounding headings or repeated phrases
+        - Each group MUST have:
+        - category (string)
+        - rules (array of objects)
+        - Each rule MUST preserve original wording
+        - Do NOT mix unrelated rules in the same group
+        - Do NOT create empty groups
 
-    "workflow_process": {{
-        "description": "",
-        "eligibility_portals": []
-    }},
+        --------------------------------
+        PAYER GUIDELINES (CRITICAL)
+        --------------------------------
+        Payer guidelines include:
+        - Rules that apply ONLY to a specific insurance payer
+        - Mentions of payer names such as Medicare, Medicaid, Aetna, BCBS, UnitedHealthcare, Cigna, etc.
+        - Statements like:
+        "For Medicare only..."
+        "BCBS requires..."
+        "Do not bill X to Aetna"
+        "Medicaid does not allow..."
 
+        Rules:
+        - EACH payer guideline must be a separate object
+        - payer_name MUST be extracted explicitly from the text
+        - description MUST preserve original wording
+        - If payer-specific rules exist, payer_guidelines MUST NOT be empty
+        - DO NOT mix payer rules into billing_guidelines
+        
+        
+        “If the code matches ICD-10 format (letters + numbers like M16.0, Z79.899), place it in coding_rules_icd.
+        If numeric CPT/HCPCS format, place it in coding_rules_cpt.
+        NEVER mix.”
+        
+        --------------------------------
+        CODING RULES (CRITICAL)
+        --------------------------------
+
+        There are TWO distinct coding sections.
+
+        1. CPT CODING RULES
+        - Includes ONLY CPT / HCPCS codes
+        - CPT codes are numeric (e.g., 99213, J0129, 73502)
+        - Includes drug CPTs, infusion CPTs, X-ray CPTs
+        - Includes NDC, units, modifiers, charges
+
+        2. ICD CODING RULES
+        - Includes ONLY ICD-10 diagnosis codes
+        - ICD codes start with a LETTER (e.g., M17.0, Z00.00)
+        - Includes diagnosis restrictions, combinations, exclusions
+        - MUST NOT include CPTs or NDCs
+        # ====================================================
+        # CPT CODING RULES
+        # ====================================================
+
+        # Extract CPT / HCPCS rules ONLY.
+
+        # CPT codes:
+        # Numeric format
+        # Examples:
+        # 99213
+        # 73502
+        # J0129
+
+        # Include:
+        # - replacement rules
+        # - NDC mappings
+        # - units
+        # - modifiers
+        # - charge rules
+        # - tables
+
+        # Each row = one object.
+
+        # ====================================================
+        # ICD CODING RULES (CRITICAL)
+        # ====================================================
+
+        # ICD rules are often written inside sentences.
+
+        # You MUST extract ICD rules even when embedded in text.
+
+        # ICD pattern:
+        # Letter + numbers + optional decimal  
+        # Examples:
+        # M17.0  
+        # M54.50  
+        # L93.0  
+
+        # Extract from:
+        # • replacement rules  
+        # • “do not bill together”  
+        # • exclusions  
+        # • pairing restrictions  
+        # • bilateral rules  
+        # • “use instead”  
+        # • “only when”  
+
+        # Even if multiple ICD codes appear in one sentence:
+        # create separate objects.
+
+        # NEVER omit ICD rules.
+        STRICT RULES:
+        - CPT codes MUST go ONLY into coding_rules_cpt
+        - ICD codes MUST go ONLY into coding_rules_icd
+        - DO NOT mix CPT and ICD in the same array
+        - If unsure, OMIT the rule
+        - Do NOT guess
+        --------------------------------
+        OUTPUT FORMAT (STRICT)
+        --------------------------------
+
+        {
+        "basic_information": {
+            "sop_title": "",
+            "category": ""
+        },
+        "provider_information": {
+            "billing_provider_name": "",
+            "billing_provider_npi": "",
+            "provider_tax_id": "",
+            "billing_address": "",
+            "software": "",
+            "clearinghouse": ""
+        },
+        "workflow_process": {
+            "workflow_description": "",
+            "eligibility_verification_portals": [],
+            "posting_charges_rules": ""
+        },
     "billing_guidelines": [
-        {{
-        "category": "",
-        "rules": [
-            {{ "description": "" }}
+        {
+            "category": "",
+            "rules": [
+            { "description": "" }
+            ]
+        }
         ]
-        }}
-    ],
-
-    "payer_guidelines": [
-        {{
+        "payer_guidelines": [
+        {
         "payer_name": "",
         "description": ""
-        }}
+        }
     ],
+        {
+        "coding_rules_cpt": [
+            {
+            "cptCode": "",
+            "description": "",
+            "ndcCode": "",
+            "units": "",
+            "chargePerUnit": "",
+            "modifier": "",
+            "replacementCPT": ""
+            }
+        ],
+        "coding_rules_icd": [
+            {
+            "icdCode": "",
+            "description": "",
+            "notes": ""
+            }
+        ]
+        }
+        }
 
-    "coding_rules_cpt": [
-        {{
-        "cptCode": "",
-        "description": "",
-        "ndcCode": "",
-        "units": "",
-        "chargePerUnit": "",
-        "modifier": "",
-        "replacementCPT": ""
-        }}
-    ],
+        DOCUMENT:
+    """+ text
+    #     prompt = f"""
+    # You are a medical SOP data extraction engine.
 
-    "coding_rules_icd": [
-        {{
-        "icdCode": "",
-        "description": "",
-        "ndcCode": "",
-        "units": "",
-        "chargePerUnit": "",
-        "modifier": "",
-        "replacementCPT": ""
-        }}
-    ]
-    }}
+    # You are NOT summarizing.
+    # You are NOT interpreting.
+    # You are extracting EXACT structured data.
 
-    ====================================================
-    GENERAL EXTRACTION RULES
-    ====================================================
+    # Return ONLY valid JSON.
+    # Do not include markdown.
+    # Do not include explanations.
 
-    • Extract only what exists in the document  
-    • Preserve wording  
-    • Do NOT invent data  
-    • If a section is missing → return empty array  
-    • Do NOT merge CPT and ICD  
-    • Do NOT drop rules  
-    ====================================================
-    WORKFLOW PROCESS EXTRACTION (STRICT SPLIT RULES)
-    ====================================================
+    # ====================================================
+    # OUTPUT JSON STRUCTURE (STRICT)
+    # ====================================================
 
-    The workflow section often contains TWO different things:
+    # {{
+    # "basic_information": {{
+    #     "sop_title": "",
+    #     "category": ""
+    # }},
 
-    1. Workflow narrative
-    2. Eligibility portals list
+    # "provider_information": {{
+    #     "billing_provider_name": "",
+    #     "billing_provider_npi": "",
+    #     "provider_tax_id": "",
+    #     "billing_address": "",
+    #     "software": "",
+    #     "clearinghouse": ""
+    # }},
 
-    These MUST be separated.
+    # "workflow_process": {{
+    #     "description": "",
+    #     "eligibility_portals": []
+    # }},
 
-    --------------------------------
-    WORKFLOW DESCRIPTION
-    --------------------------------
+    # "billing_guidelines": [
+    #     {{
+    #     "category": "",
+    #     "rules": [
+    #         {{ "description": "" }}
+    #     ]
+    #     }}
+    # ],
 
-    The workflow description must contain ONLY operational steps such as:
-    - how superbills arrive
-    - how charges are posted
-    - provider grouping rules
-    - internal workflow instructions
+    # "payer_guidelines": [
+    #     {{
+    #     "payer_name": "",
+    #     "description": ""
+    #     }}
+    # ],
 
-    Include ALL workflow text unless a clear eligibility portal section exists.
+    # "coding_rules_cpt": [
+    #     {{
+    #     "cptCode": "",
+    #     "description": "",
+    #     "ndcCode": "",
+    #     "units": "",
+    #     "chargePerUnit": "",
+    #     "modifier": "",
+    #     "replacementCPT": ""
+    #     }}
+    # ],
 
-    DO NOT remove text from description unless a line explicitly lists portals.
+    # "coding_rules_icd": [
+    #     {{
+    #     "icdCode": "",
+    #     "description": "",
+    #     "ndcCode": "",
+    #     "units": "",
+    #     "chargePerUnit": "",
+    #     "modifier": "",
+    #     "replacementCPT": ""
+    #     }}
+    # ]
+    # }}
 
-    --------------------------------
-    ELIGIBILITY PORTALS
-    --------------------------------
+    # ====================================================
+    # GENERAL EXTRACTION RULES
+    # ====================================================
 
-    Extract portals ONLY if the document clearly contains a portal section.
+    # • Extract only what exists in the document  
+    # • Preserve wording  
+    # • Do NOT invent data  
+    # • If a section is missing → return empty array  
+    # • Do NOT merge CPT and ICD  
+    # • Do NOT drop rules  
+    # ====================================================
+    # WORKFLOW PROCESS EXTRACTION (STRICT SPLIT RULES)
+    # ====================================================
 
-    Examples of portal lines:
-    "Eligibility portals:"
-    "Check eligibility in:"
-    "Use Availity / UHC portal"
+    # The workflow section often contains TWO different things:
 
-    If no portal section exists:
-    → return empty array
-    → keep full workflow text inside description
+    # 1. Workflow narrative
+    # 2. Eligibility portals list
 
-    DO NOT guess portals.
-    DO NOT move workflow text into portals.
+    # These MUST be separated.
+
+    # --------------------------------
+    # WORKFLOW DESCRIPTION
+    # --------------------------------
+
+    # The workflow description must contain ONLY operational steps such as:
+    # - how superbills arrive
+    # - how charges are posted
+    # - provider grouping rules
+    # - internal workflow instructions
+
+    # Include ALL workflow text unless a clear eligibility portal section exists.
+
+    # DO NOT remove text from description unless a line explicitly lists portals.
+
+    # --------------------------------
+    # ELIGIBILITY PORTALS
+    # --------------------------------
+
+    # Extract portals ONLY if the document clearly contains a portal section.
+
+    # Examples of portal lines:
+    # "Eligibility portals:"
+    # "Check eligibility in:"
+    # "Use Availity / UHC portal"
+
+    # If no portal section exists:
+    # → return empty array
+    # → keep full workflow text inside description
+
+    # DO NOT guess portals.
+    # DO NOT move workflow text into portals.
 
 
-    ====================================================
-    BILLING GUIDELINES
-    ====================================================
+    # ====================================================
+    # BILLING GUIDELINES
+    # ====================================================
 
-    Billing guidelines must be grouped by category.
+    # Billing guidelines must be grouped by category.
 
-    Each group:
-    - category name inferred from heading or context
-    - rules array with original wording
+    # Each group:
+    # - category name inferred from heading or context
+    # - rules array with original wording
 
-    Examples of categories:
-    - CPT Replacement Rules
-    - Modifier Rules
-    - Telehealth Billing
-    - Insurance Restrictions
-    - Drug Billing
-    - X-ray Billing
+    # Examples of categories:
+    # - CPT Replacement Rules
+    # - Modifier Rules
+    # - Telehealth Billing
+    # - Insurance Restrictions
+    # - Drug Billing
+    # - X-ray Billing
 
-    Never create empty categories.
+    # Never create empty categories.
 
-    ====================================================
-    PAYER GUIDELINES
-    ====================================================
+    # ====================================================
+    # PAYER GUIDELINES
+    # ====================================================
 
-    Extract rules that apply to a specific payer:
-    Medicare, Medicaid, Aetna, BCBS, UHC, etc.
+    # Extract rules that apply to a specific payer:
+    # Medicare, Medicaid, Aetna, BCBS, UHC, etc.
 
-    Each payer rule must be separate:
-    payer_name + description
+    # Each payer rule must be separate:
+    # payer_name + description
 
-    Never mix payer rules into billing_guidelines.
+    # Never mix payer rules into billing_guidelines.
 
-    ====================================================
-    CPT CODING RULES
-    ====================================================
+    # ====================================================
+    # CPT CODING RULES
+    # ====================================================
 
-    Extract CPT / HCPCS rules ONLY.
+    # Extract CPT / HCPCS rules ONLY.
 
-    CPT codes:
-    Numeric format
-    Examples:
-    99213
-    73502
-    J0129
+    # CPT codes:
+    # Numeric format
+    # Examples:
+    # 99213
+    # 73502
+    # J0129
 
-    Include:
-    - replacement rules
-    - NDC mappings
-    - units
-    - modifiers
-    - charge rules
-    - tables
+    # Include:
+    # - replacement rules
+    # - NDC mappings
+    # - units
+    # - modifiers
+    # - charge rules
+    # - tables
 
-    Each row = one object.
+    # Each row = one object.
 
-    ====================================================
-    ICD CODING RULES (CRITICAL)
-    ====================================================
+    # ====================================================
+    # ICD CODING RULES (CRITICAL)
+    # ====================================================
 
-    ICD rules are often written inside sentences.
+    # ICD rules are often written inside sentences.
 
-    You MUST extract ICD rules even when embedded in text.
+    # You MUST extract ICD rules even when embedded in text.
 
-    ICD pattern:
-    Letter + numbers + optional decimal  
-    Examples:
-    M17.0  
-    M54.50  
-    L93.0  
+    # ICD pattern:
+    # Letter + numbers + optional decimal  
+    # Examples:
+    # M17.0  
+    # M54.50  
+    # L93.0  
 
-    Extract from:
-    • replacement rules  
-    • “do not bill together”  
-    • exclusions  
-    • pairing restrictions  
-    • bilateral rules  
-    • “use instead”  
-    • “only when”  
+    # Extract from:
+    # • replacement rules  
+    # • “do not bill together”  
+    # • exclusions  
+    # • pairing restrictions  
+    # • bilateral rules  
+    # • “use instead”  
+    # • “only when”  
 
-    Even if multiple ICD codes appear in one sentence:
-    create separate objects.
+    # Even if multiple ICD codes appear in one sentence:
+    # create separate objects.
 
-    NEVER omit ICD rules.
+    # NEVER omit ICD rules.
 
-    ====================================================
-    STRICT SEPARATION RULE
-    ====================================================
+    # ====================================================
+    # STRICT SEPARATION RULE
+    # ====================================================
 
-    If numeric → CPT  
-    If starts with letter → ICD  
+    # If numeric → CPT  
+    # If starts with letter → ICD  
 
-    Never mix.
+    # Never mix.
 
-    ====================================================
-    DOCUMENT
-    ====================================================
+    # ====================================================
+    # DOCUMENT
+    # ====================================================
 
-    {text}
-    """
+    # {text}
+    # """
 
 
         return await AISOPService._call_ai(prompt)

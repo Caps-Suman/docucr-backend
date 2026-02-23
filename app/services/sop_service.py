@@ -22,8 +22,12 @@ class SOPService:
     @staticmethod
     def _get_org_id(current_user):
         org_id = getattr(current_user, "context_organisation_id", None)
-        if not org_id:
+        is_super = getattr(current_user, "context_is_superadmin", False)
+
+        # normal user must have org
+        if not org_id and not is_super:
             raise HTTPException(403, "No organisation selected")
+
         return org_id
     @staticmethod
     def _base_visible_sops_query(db: Session):
@@ -121,36 +125,6 @@ class SOPService:
             defer(SOP.coding_rules_cpt),
             defer(SOP.coding_rules_icd),
         )
-
-        # Apply visibility filtering
-        # role_names = [r.name for r in current_user.roles] if not isinstance(current_user, Organisation) else []
-
-        # # 1. SUPER_ADMIN
-        # if current_user.is_superuser or "SUPER_ADMIN" in role_names:
-        #     # Full access, no client join needed for filtering unless searching
-        #     pass
-        
-        # # 2. ORG_ADMIN / Organisation entity
-        # elif isinstance(current_user, Organisation) or "ORGANISATION_ROLE" in role_names:
-        #     org_id = str(current_user.id) if isinstance(current_user, Organisation) else str(getattr(current_user, 'organisation_id', ''))
-        #     if org_id:
-        #         query = query.filter(SOP.organisation_id == org_id)
-        #     else:
-        #         return [], 0
-        
-        # # 3. Other Roles (Client Admin, etc.)
-        # else:
-        #     # Fetch assigned client_ids for logged-in user
-        #     assigned_client_ids = db.query(UserClient.client_id).filter(
-        #         UserClient.user_id == str(current_user.id)
-        #     )
-
-        #     query = query.filter(
-        #         or_(
-        #             SOP.created_by == str(current_user.id),
-        #             SOP.client_id.in_(assigned_client_ids)
-        #         )
-        #     )
         org_id = SOPService._get_org_id(current_user)
 
         query = query.filter(SOP.organisation_id == org_id)
@@ -224,30 +198,6 @@ class SOPService:
             .join(Status, Status.id == SOP.status_id)
             .filter(Status.type == "GENERAL")
         )
-
-        # Apply visibility filtering
-        # role_names = [r.name for r in current_user.roles] if not isinstance(current_user, Organisation) else []
-
-        # if current_user.is_superuser or "SUPER_ADMIN" in role_names:
-        #     pass
-        # elif isinstance(current_user, Organisation) or "ORGANISATION_ROLE" in role_names:
-        #     org_id = str(current_user.id) if isinstance(current_user, Organisation) else str(getattr(current_user, 'organisation_id', ''))
-        #     if org_id:
-        #         q = q.filter(SOP.organisation_id == org_id)
-        #     else:
-        #         return {"total": 0, "active": 0, "inactive": 0}
-        # else:
-        #     # Fetch assigned client_ids for logged-in user
-        #     assigned_client_ids = db.query(UserClient.client_id).filter(
-        #         UserClient.user_id == str(current_user.id)
-        #     )
-
-        #     q = q.filter(
-        #         or_(
-        #             SOP.created_by == str(current_user.id),
-        #             SOP.client_id.in_(assigned_client_ids)
-        #         )
-        #     )
         org_id = SOPService._get_org_id(current_user)
 
         q = q.filter(SOP.organisation_id == org_id)
@@ -294,18 +244,24 @@ class SOPService:
         # Organisation Name
         data["organisation_name"] = sop.organisation.name if sop.organisation else None
 
-        # Client Name
+        # CLIENT NAME (single source of truth)
         if sop.client:
             data["client_npi"] = sop.client.npi
+
             if sop.client.business_name:
                 data["client_name"] = sop.client.business_name
+
             else:
-                names = [sop.client.first_name, sop.client.middle_name, sop.client.last_name]
+                names = [
+                    sop.client.first_name,
+                    sop.client.middle_name,
+                    sop.client.last_name
+                ]
                 data["client_name"] = " ".join([n for n in names if n]).strip()
+
         else:
             data["client_name"] = None
             data["client_npi"] = None
-
         # Created By Name
         if sop.creator:
             names = [sop.creator.first_name, sop.creator.middle_name, sop.creator.last_name]
@@ -316,25 +272,32 @@ class SOPService:
 
         else:
             data["created_by_name"] = None
+        # provider summary for list view
+        data["provider_name"] = None
 
+        if sop.provider_info:
+            data["provider_name"] = sop.provider_info.get("providerName")
         return data
     @staticmethod
-    def get_sop_by_id(sop_id: str, db: Session, current_user: User = None) -> Optional[Dict]:
+    def get_sop_by_id(sop_id: str, db: Session, current_user: User = None):
         org_id = SOPService._get_org_id(current_user)
 
-        sop = db.query(SOP).filter(
-            SOP.id == sop_id,
-            SOP.organisation_id == org_id
-        ).first()
-        sop = db.query(SOP).filter(SOP.id == sop_id).options(
+        query = db.query(SOP).filter(SOP.id == sop_id)
+
+        # if org context exists → lock to org
+        if org_id:
+            query = query.filter(SOP.organisation_id == org_id)
+
+        sop = query.options(
             joinedload(SOP.creator),
             joinedload(SOP.organisation),
             joinedload(SOP.client),
             joinedload(SOP.lifecycle_status)
         ).first()
-        
+
         if not sop:
             return None
+
 
         # 🔥 BACKWARD COMPAT FIX
         if sop.billing_guidelines:
@@ -343,14 +306,6 @@ class SOPService:
                 sop.billing_guidelines = SOPService.upgrade_flat_billing_guidelines(
                     sop.billing_guidelines
                 )
-
-        # Fetch linked providers
-        # Assuming SopProviderMapping is available and we can join or query separately.
-        # Since SOP model might not have direct relationship set up for 'providers' via secondary table,
-        # we can manual query.
-        
-        # NOTE: If SOP model has `providers` relationship, we can use that.
-        # Let's check imports. `Provider` model needed.
         from app.models.provider import Provider
         from app.models.sop_provider_mapping import SopProviderMapping
 
@@ -562,7 +517,7 @@ class SOPService:
         db.commit()
         
         # Re-fetch full object to include updated providers
-        return SOPService.get_sop_by_id(sop_id, db)
+        return SOPService.get_sop_by_id(sop_id, db, current_user)
 
     @staticmethod
     def delete_sop(sop_id: str, db: Session, current_user: User = None) -> bool:

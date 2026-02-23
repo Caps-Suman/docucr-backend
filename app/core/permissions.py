@@ -37,8 +37,9 @@ class Permission:
         db: Session = Depends(get_db),
     ):
 
-        if user.is_superuser:
+        if getattr(user, "is_superuser", False):
             return user
+
 
         # MODULE level
         module_perm = (
