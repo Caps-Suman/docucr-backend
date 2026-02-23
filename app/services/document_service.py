@@ -52,66 +52,84 @@ class DocumentService:
             "is_staff": not user.is_client
         }
     @staticmethod
-    def _document_access_query(db: Session, actor):
+    def _document_access_query(db: Session, actor: User):
         base = db.query(Document)
 
-        # =========================
-        # SUPER ADMIN
-        # =========================
-        if isinstance(actor, User) and actor.is_superuser:
-            return base
+        # =========================================
+        # TEMP SUPERADMIN (before org selection)
+        # should never see documents
+        # =========================================
+        if getattr(actor, "context_temp", False):
+            return base.filter(text("1=0"))
 
-        # =========================
-        # ORGANISATION LOGIN
-        # =========================
-        if isinstance(actor, Organisation):
-            return base.filter(Document.organisation_id == actor.id)
+        # =========================================
+        # ORG CONTEXT
+        # =========================================
+        org_id = getattr(actor, "context_organisation_id", None)
 
-        # =========================
-        # CLIENT USER / CLIENT ADMIN
-        # =========================
-        if isinstance(actor, User) and actor.client_id:
+        # If no org selected → block
+        if not org_id:
+            return base.filter(text("1=0"))
 
+        # =========================================
+        # SUPERADMIN AFTER SELECTING ORG
+        # =========================================
+        if getattr(actor, "is_superuser", False):
+            return base.filter(Document.organisation_id == org_id)
+
+        # =========================================
+        # CLIENT USER
+        # =========================================
+        if actor.is_client:
             client_docs = base.filter(
-                or_(
-                    Document.created_by == actor.id,
-                    Document.client_id == actor.client_id
+                and_(
+                    Document.organisation_id == org_id,
+                    or_(
+                        Document.created_by == actor.id,
+                        Document.client_id == actor.client_id
+                    )
                 )
             )
 
             shared_docs = (
                 db.query(Document)
                 .join(DocumentShare, DocumentShare.document_id == Document.id)
-                .filter(DocumentShare.user_id == actor.id)
+                .filter(
+                    DocumentShare.user_id == actor.id,
+                    Document.organisation_id == org_id
+                )
             )
 
             return client_docs.union(shared_docs)
 
-        # =========================
-        # INTERNAL STAFF
-        # =========================
-        if isinstance(actor, User) and actor.organisation_id:
+        # =========================================
+        # INTERNAL STAFF (ORG USER)
+        # =========================================
+        assigned_clients = (
+            db.query(UserClient.client_id)
+            .filter(UserClient.user_id == actor.id)
+        )
 
-            assigned_clients = (
-                db.query(UserClient.client_id)
-                .filter(UserClient.user_id == actor.id)
-            )
-
-            staff_docs = base.filter(
+        staff_docs = base.filter(
+            and_(
+                Document.organisation_id == org_id,
                 or_(
                     Document.created_by == actor.id,
                     Document.client_id.in_(assigned_clients)
                 )
             )
+        )
 
-            shared_docs = (
-                db.query(Document)
-                .join(DocumentShare, DocumentShare.document_id == Document.id)
-                .filter(DocumentShare.user_id == actor.id)
+        shared_docs = (
+            db.query(Document)
+            .join(DocumentShare, DocumentShare.document_id == Document.id)
+            .filter(
+                DocumentShare.user_id == actor.id,
+                Document.organisation_id == org_id
             )
+        )
 
-            return staff_docs.union(shared_docs)
-
+        return staff_docs.union(shared_docs)
         # fallback
         return base.filter(Document.created_by == actor.id)
 
@@ -271,13 +289,15 @@ class DocumentService:
         status_id = DocumentService.get_status_id_by_code(db, "QUEUED")
 
         # determine org correctly
-        if hasattr(user, "organisation_id") and user.organisation_id:
-            org_id = user.organisation_id
-        elif user.__class__.__name__ == "Organisation":
-            org_id = user.id
-        else:
-            org_id = None
-
+        # if hasattr(user, "organisation_id") and user.organisation_id:
+        #     org_id = getattr(user, "context_organisation_id", None)
+        # elif user.__class__.__name__ == "Organisation":
+        #     org_id = user.id
+        # else:
+        #     org_id = None
+        if isinstance(user, User):
+            created_by = user.id
+            org_id = getattr(user, "context_organisation_id", None)
         document = Document(
             filename=file.filename,
             original_filename=file.filename,
@@ -433,7 +453,7 @@ class DocumentService:
 
             elif isinstance(user, User):
                 created_by = user.id
-                org_id = user.organisation_id
+                org_id = getattr(user, "context_organisation_id", None)
                 client_id_value = parsed_form_data.get("client_id") or user.client_id
 
             else:
@@ -890,8 +910,9 @@ class DocumentService:
         # =====================================================
         # OPTIONAL FILTERS
         # =====================================================
-        if organisation_id:
-            query = query.filter(Document.organisation_id == organisation_id)
+        org_id = getattr(current_user, "context_organisation_id", None)
+        if org_id:
+            query = query.filter(Document.organisation_id == org_id)
 
         if uploaded_by:
             query = query.filter(Document.created_by == uploaded_by)

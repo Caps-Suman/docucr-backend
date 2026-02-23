@@ -14,39 +14,29 @@ class FormService:
         if not current_user:
             return None
 
-        # superadmin handled separately
-        if getattr(current_user, "is_superuser", False):
+        # temp superadmin → no org yet
+        if getattr(current_user, "context_temp", False):
             return None
 
-        if isinstance(current_user, Organisation):
-            return str(current_user.id)
-
-        if isinstance(current_user, User):
-            return str(current_user.organisation_id) if current_user.organisation_id else None
-
-        return None
-
+        # org selected context
+        return getattr(current_user, "context_organisation_id", None)
     @staticmethod
     def _apply_access_filter(query, current_user):
 
-        # SUPERADMIN → unrestricted
-        if getattr(current_user, "is_superuser", False):
-            return query
+        # block temp superadmin
+        if getattr(current_user, "context_temp", False):
+            return query.filter(False)
 
         org_id = FormService._resolve_org_id(current_user)
 
-        # no org → no access (client / random user)
+        # no org selected → no access
         if not org_id:
             return query.filter(False)
 
         return query.filter(Form.organisation_id == org_id)
-
     @staticmethod
-    def get_form_stats(db: Session, current_user) -> Dict[str, int]:
+    def get_form_stats(db: Session, current_user):
 
-        # --------------------------
-        # CLIENT → no forms
-        # --------------------------
         if getattr(current_user, "is_client", False):
             return {
                 "total_forms": 0,
@@ -54,37 +44,14 @@ class FormService:
                 "inactive_forms": 0
             }
 
-        # --------------------------
-        # SUPERADMIN → ALL FORMS
-        # --------------------------
-        if getattr(current_user, "is_superuser", False):
-            total_forms = db.query(func.count(Form.id)).scalar() or 0
-
-            active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
-            active_forms = 0
-
-            if active_status:
-                active_forms = db.query(func.count(Form.id))\
-                    .filter(Form.status_id == active_status.id)\
-                    .scalar() or 0
-
+        if getattr(current_user, "context_temp", False):
             return {
-                "total_forms": total_forms,
-                "active_forms": active_forms,
-                "inactive_forms": total_forms - active_forms
+                "total_forms": 0,
+                "active_forms": 0,
+                "inactive_forms": 0
             }
 
-        # --------------------------
-        # ORG / ORG USER
-        # --------------------------
-        org_id = None
-
-        if isinstance(current_user, Organisation):
-            org_id = str(current_user.id)
-
-        elif hasattr(current_user, "organisation_id"):
-            org_id = str(current_user.organisation_id)
-
+        org_id = FormService._resolve_org_id(current_user)
         if not org_id:
             return {
                 "total_forms": 0,

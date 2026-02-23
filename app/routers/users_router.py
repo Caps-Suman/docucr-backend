@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from fastapi import Query
 import re
-
+from app.core.permissions import Permission
 from app.core.database import get_db
 from app.services.user_service import UserService
 from app.core.permissions import Permission
@@ -120,6 +120,7 @@ async def get_users(
     client_id: Optional[List[str]] = Query(None),
     created_by: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
+    _: User = Depends(Permission("user_module", "READ")),   # 🔥 FIX
     current_user: User = Depends(get_current_user)
 ):
     users, total = UserService.get_users(
@@ -365,7 +366,7 @@ async def get_user(
 async def create_user(
     user: UserCreate, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("user_module", "CREATE")),
+    permission: bool = Depends(Permission("users", "CREATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
     current_user: User = Depends(get_current_user)
@@ -544,7 +545,7 @@ async def change_user_password(
     user_id: str, 
     password_request: ChangePasswordRequest, 
     db: Session = Depends(get_db),
-    # permission: bool = Depends(Permission("user_module", "ADMIN")),
+    permission: bool = Depends(Permission("user_module", "ADMIN")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
     current_user = Depends(get_current_user)

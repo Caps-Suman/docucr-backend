@@ -23,6 +23,7 @@ class LoginRequest(BaseModel):
 class RoleSelectionRequest(BaseModel):
     email: str
     role_id: str
+    organisation_id: str
     remember_me: bool = False
 
 class ForgotPasswordRequest(BaseModel):
@@ -272,7 +273,7 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
     if not role:
         raise HTTPException(status_code=403, detail="User does not have this role")
 
-    tokens = AuthService.generate_tokens(current_user.email, request.role_id)
+    tokens = AuthService.generate_tokens(current_user.email, request.role_id,request.organisation_id)
     permissions = AuthService.get_role_permissions(role.id, db)
 
     client_id = None
@@ -458,9 +459,26 @@ async def refresh_token(request: Request, db: Session = Depends(get_db)):
     
     if not AuthService.check_user_active(user, db):
         raise HTTPException(status_code=403, detail="Account is inactive")
-    
-    new_access_token = create_access_token(data={"sub": email, "role_id": role_id})
-    new_refresh_token = create_refresh_token(data={"sub": email, "role_id": role_id})
+
+    if not role_id or not organisation_id:
+        raise HTTPException(401, "Invalid refresh context")
+
+    role_id = payload.get("role_id")
+    organisation_id = payload.get("organisation_id")
+
+    new_access_token = create_access_token({
+        "sub": email,
+        "role_id": role_id,
+        "organisation_id": organisation_id
+    })
+
+    new_refresh_token = create_refresh_token(
+        data={
+            "sub": email,
+            "role_id": role_id,
+            "organisation_id": organisation_id
+        }
+    )
     
     return {
         "access_token": new_access_token,

@@ -90,6 +90,18 @@ class UserService:
     @staticmethod
     def _get_context_org(current_user):
         return getattr(current_user, "context_organisation_id", None)
+    
+    @staticmethod
+    def _ctx_org(user):
+        return getattr(user, "context_organisation_id", None)
+
+    @staticmethod
+    def _ctx_role(user):
+        return getattr(user, "context_role_id", None)
+
+    @staticmethod
+    def _ctx_is_super(user):
+        return getattr(user, "context_is_superadmin", False)
 
     @staticmethod
     def get_users(
@@ -126,38 +138,47 @@ class UserService:
 
         elif isinstance(current_user, User):
             role_names = [r.name for r in current_user.roles]
-            context_org = UserService._get_context_org(current_user)
 
-            # GLOBAL superadmin (no org selected)
-            if current_user.is_superuser and not context_org:
+            context_org = UserService._ctx_org(current_user)
+            is_super = UserService._ctx_is_super(current_user)
+
+            # -----------------------------
+            # GLOBAL SUPERADMIN (no org)
+            # -----------------------------
+            if is_super and not context_org:
                 pass
 
-            # SUPERADMIN inside selected org
-            elif current_user.is_superuser and context_org:
+            # -----------------------------
+            # SUPERADMIN inside org
+            # -----------------------------
+            elif is_super and context_org:
                 query = query.filter(User.organisation_id == str(context_org))
 
-            # ORG ROLE user
+            # -----------------------------
+            # ORG ROLE USER
+            # -----------------------------
             elif "ORGANISATION_ROLE" in role_names:
-                org_id = context_org or current_user.organisation_id
-                if org_id:
-                    query = query.filter(User.organisation_id == str(org_id))
+                if context_org:
+                    query = query.filter(User.organisation_id == str(context_org))
 
+            # -----------------------------
+            # CLIENT ADMIN
+            # -----------------------------
+            elif "CLIENT_ADMIN" in role_names or getattr(current_user, "is_client", False):
+                filters = []
 
-            elif "CLIENT_ADMIN" in role_names or getattr(current_user, 'is_client', False):
-                 filters = []
-                 if current_user.client_id:
-                     filters.append(User.client_id == str(current_user.client_id))
-                 
-                 # Always include created_by as fallback/legacy support
-                 filters.append(User.created_by == str(current_user.id))
-                 
-                 query = query.filter(or_(*filters))
-                 # Exclude self
-                 query = query.filter(User.id != str(current_user.id))
+                if current_user.client_id:
+                    filters.append(User.client_id == str(current_user.client_id))
 
+                filters.append(User.created_by == str(current_user.id))
+                query = query.filter(or_(*filters))
+                query = query.filter(User.id != str(current_user.id))
+
+            # -----------------------------
+            # STANDARD USER
+            # -----------------------------
             else:
-                 # Standard User -> Only users created by them
-                 query = query.filter(User.created_by == str(current_user.id))
+                query = query.filter(User.created_by == str(current_user.id))
 
         if status_id:
             query = query.join(User.status_relation).filter(Status.code == status_id)
@@ -336,82 +357,55 @@ class UserService:
         
         status_id_val = active_status.id if active_status else None
 
-        # organisation_id_val = user_data.get('organisation_id')
-        # created_by_val = None
-
-        # if isinstance(current_user, Organisation):
-        #     created_by_val = None
-        #     organisation_id_val = str(current_user.id)
-        # elif isinstance(current_user, User):
-        #     if not current_user.is_superuser:
-        #         created_by_val = str(current_user.id)
-        #         if current_user.id:
-        #             organisation_id_val = str(current_user.id)
-        #     else:
-        #         created_by_val = None
-
         created_by_val = None
         organisation_id_val = None
 
-        role_names = {r.name for r in current_user.roles}
+        context_org = UserService._ctx_org(current_user)
+        context_role = UserService._ctx_role(current_user)
+        is_super = UserService._ctx_is_super(current_user)
 
-        # --------------------------------------------------
-        # 1. SUPER ADMIN
-        # --------------------------------------------------
-        if "SUPER_ADMIN" in role_names:
+        created_by_val = None
+        organisation_id_val = None
+        client_id_val = None
+
+        # SUPERADMIN inside org
+        if is_super and context_org:
+            created_by_val = str(current_user.id)
+            organisation_id_val = str(context_org)
+
+        # GLOBAL SUPERADMIN
+        elif is_super and not context_org:
             created_by_val = None
             organisation_id_val = None
 
-        # --------------------------------------------------
-        # 2. ORGANISATION ROLE
-        # --------------------------------------------------
-        elif "ORGANISATION_ROLE" in role_names:
-            created_by_val = None
-            organisation_id_val = str(current_user.id)
+        # ROLE-BASED USER
+        elif context_role:
+            role = db.query(Role).filter(Role.id == context_role).first()
 
-            if not organisation_id_val:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Organisation role user is not linked to any organisation"
-                )
+            if role and role.name == "ORGANISATION_ROLE":
+                if not context_org:
+                    raise HTTPException(400, "No organisation context")
 
-        # --------------------------------------------------
-        # 3. CLIENT ROLE
-        # --------------------------------------------------
-        elif "CLIENT_ADMIN" in role_names:
-            client_id = getattr(current_user, 'client_id', None)
-            if not client_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Client admin user is not linked to any client"
-                )
+                created_by_val = str(current_user.id)
+                organisation_id_val = str(context_org)
 
-            client = (
-                db.query(Client)
-                .filter(Client.id == client_id)
-                .first()
-            )
+            elif role and role.name == "CLIENT_ADMIN":
+                client_id = getattr(current_user, "client_id", None)
 
-            if not client or not client.organisation_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Client user is not linked to any organisation"
-                )
+                if not client_id:
+                    raise HTTPException(400, "Client admin not linked")
 
-            created_by_val = str(current_user.id)
-            organisation_id_val = str(client.organisation_id)
+                client = db.query(Client).filter(Client.id == client_id).first()
 
-            # Auto-assign client_id to new user
-            client_id_val = client.id
+                if not client or not client.organisation_id:
+                    raise HTTPException(400, "Client missing org")
 
-        # --------------------------------------------------
-        # 4. FALLBACK (OPTIONAL)
-        # --------------------------------------------------
+                created_by_val = str(current_user.id)
+                organisation_id_val = str(client.organisation_id)
+                client_id_val = client.id
+
         else:
-            raise HTTPException(
-                status_code=403,
-                detail="User role is not permitted to create users"
-            )
+            raise HTTPException(403, "User not permitted")
 
 
         user = User(
@@ -659,41 +653,33 @@ class UserService:
 
     @staticmethod
     def can_manage_user(current_user, target_user: User) -> bool:
+        context_org = UserService._ctx_org(current_user)
+        is_super = UserService._ctx_is_super(current_user)
 
-        # ---------- SUPER ADMIN ----------
-        context_org = getattr(current_user, "context_organisation_id", None)
-
-        # GLOBAL superadmin
-        if isinstance(current_user, User) and current_user.is_superuser and not context_org:
+        # GLOBAL SUPERADMIN
+        if is_super and not context_org:
             return True
 
-        # superadmin inside org
-        if isinstance(current_user, User) and context_org:
+        # SUPERADMIN inside org
+        if is_super and context_org:
             return str(target_user.organisation_id) == str(context_org)
 
-
-        # ---------- ORGANISATION LOGIN ----------
+        # ORG LOGIN
         if isinstance(current_user, Organisation):
             return str(target_user.organisation_id) == str(current_user.id)
 
-        # ---------- USER LOGIN ----------
+        # USER LOGIN
         if isinstance(current_user, User):
-
             role_names = [r.name for r in current_user.roles]
 
-            # org admin user
             if "ORGANISATION_ROLE" in role_names:
-                return str(target_user.organisation_id) == str(current_user.organisation_id)
+                if context_org:
+                    return str(target_user.organisation_id) == str(context_org)
 
-            # client admin
             if "CLIENT_ADMIN" in role_names:
                 return str(target_user.created_by) == str(current_user.id)
 
-            # fallback → cannot manage
-            return False
-
         return False
-
 
 
     @staticmethod
@@ -734,41 +720,27 @@ class UserService:
         )
 
         # 🔥 SUPERADMIN
-        context_org = getattr(current_user, "context_organisation_id", None)
+        context_org = UserService._ctx_org(current_user)
+        is_super = UserService._ctx_is_super(current_user)
 
-        if isinstance(current_user, User) and current_user.is_superuser and not context_org:
+        if is_super and not context_org:
             pass
 
-        elif isinstance(current_user, User) and context_org:
+        elif is_super and context_org:
             query = query.filter(User.organisation_id == str(context_org))
 
-
-        # 🔥 CLIENT LOGIN (Client Instance)
-        elif isinstance(current_user, Client):
-             query = query.filter(User.client_id == str(current_user.id))
-        
-        # 🔥 CLIENT USER (User with is_client=True)
-        elif isinstance(current_user, User) and getattr(current_user, 'is_client', False):
-            # Client Admin: See created users ONLY (exclude self)
-            query = query.filter(User.created_by == str(current_user.id))
-
-        # 🔥 ORG LOGIN
         elif isinstance(current_user, Organisation):
             query = query.filter(User.organisation_id == str(current_user.id))
 
-        # 🔥 ORG USER (Check Roles)
         elif isinstance(current_user, User):
             role_names = [r.name for r in current_user.roles]
-            
+
             if "ORGANISATION_ROLE" in role_names:
-                if current_user.organisation_id:
-                    query = query.filter(User.organisation_id == str(current_user.organisation_id))
-                else:
-                    query = query.filter(User.id == str(current_user.id))
-            
+                if context_org:
+                    query = query.filter(User.organisation_id == str(context_org))
+
             elif "CLIENT_ADMIN" in role_names:
-                # Should be handled by is_client check, but fallback here
-                 query = query.filter(User.created_by == str(current_user.id))
+                query = query.filter(User.created_by == str(current_user.id))
             
             elif "SUPER_ADMIN" in role_names:
                 pass
@@ -916,7 +888,7 @@ class UserService:
 
         # Fetch Organisation Name
         organisation_name = None
-        org_id = getattr(user, 'context_organisation_id', None)
+        org_id = user.organisation_id
         if org_id:
              org = db.query(Organisation).filter(Organisation.id == org_id).first()
              if org:
@@ -955,26 +927,31 @@ class UserService:
         }
 
     @staticmethod
-    def _format_user_response_for_me(user: User, db: Session) -> Dict:
-        user_roles = db.query(UserRole, Role).join(Role, UserRole.role_id == Role.id).filter(UserRole.user_id == user.id).all()
-        roles = [{"id": role.id, "name": role.name} for _, role in user_roles]
-        # roles = []
+    def _format_user_response_for_me(current_user: User, db: Session) -> Dict:
+        context_role_id = getattr(current_user, "context_role_id", None)
+
+        roles = []
+        if context_role_id:
+            role = db.query(Role).filter(Role.id == context_role_id).first()
+            if role:
+                roles = [{"id": role.id, "name": role.name}]
+                # roles = []
         
-        supervisor = db.query(UserSupervisor).filter(UserSupervisor.user_id == user.id).first()
+        supervisor = db.query(UserSupervisor).filter(UserSupervisor.user_id == current_user.id).first()
         supervisor_id = supervisor.supervisor_id if supervisor else None
         
         status_code = None
-        if user.status_id:
-             status_obj = db.query(Status).filter(Status.id == user.status_id).first()
+        if current_user.status_id:
+             status_obj = db.query(Status).filter(Status.id == current_user.status_id).first()
              if status_obj:
                  status_code = status_obj.code
         client_count = (
-            db.query(UserClient).filter(UserClient.user_id == user.id).count()
+            db.query(UserClient).filter(UserClient.user_id == current_user.id).count()
         )
 
         # Fetch Created By Name
         created_by_name = None
-        created_by_id = getattr(user, 'created_by', None)
+        created_by_id = getattr(current_user, 'created_by', None)
         if created_by_id:
             creator = db.query(User).filter(User.id == created_by_id).first()
             if creator:
@@ -984,43 +961,43 @@ class UserService:
 
         # Fetch Organisation Name
         organisation_name = None
-        org_id = getattr(user, 'context_organisation_id', None)
+        org_id = getattr(current_user, 'context_organisation_id', None)
         if org_id:
              org = db.query(Organisation).filter(Organisation.id == org_id).first()
              if org:
                  # Organisation doesn't have business_name, using first/last or username
                  organisation_name = f"{org.name}".strip()
                  if not organisation_name:
-                     organisation_name = org.username
+                     organisation_name = org.name
 
-        role_names = [r.name for r in user.roles]
+        role_id = getattr(current_user, "context_role_id", None)
+        role = db.query(Role).filter(Role.id == role_id).first()
+        role_name = role.name if role else ""
+
         client_id = None
         client_name = None
 
-        # 1. If 'Me' is CLIENT_ADMIN
-        if "CLIENT_ADMIN" in role_names:
-            if user.client_id:
-                client = db.query(Client).filter(Client.id == user.client_id).first()
+        if role_name == "CLIENT_ADMIN":
+            if current_user.client_id:
+                client = db.query(Client).filter(Client.id == current_user.client_id).first()
                 if client:
                     client_id = str(client.id)
-        
-        # 2. If 'Me' is NOT CLIENT_ADMIN (Sub-User)
         else:
-             if user.created_by:
-                 client_id = str(user.created_by)
+            if current_user.created_by:
+                client_id = str(current_user.created_by)
 
         return {
-            "id": user.id,
-            "email": user.email,
-            "username": user.username,
-            "first_name": user.first_name,
-            "middle_name": user.middle_name,
-            "last_name": user.last_name,
-            "phone_country_code": user.phone_country_code,
-            "phone_number": user.phone_number,
-            "status_id": user.status_id, # Integer
+            "id": current_user.id,
+            "email": current_user.email,
+            "username": current_user.username,
+            "first_name": current_user.first_name,
+            "middle_name": current_user.middle_name,
+            "last_name": current_user.last_name,
+            "phone_country_code": current_user.phone_country_code,
+            "phone_number": current_user.phone_number,
+            "status_id": current_user.status_id, # Integer
             "statusCode": status_code,   # String
-            "is_superuser": getattr(user, "context_is_superadmin", user.is_superuser),
+            "is_superuser": getattr(current_user, "context_is_superadmin", current_user.is_superuser),
             "roles": roles,
             "supervisor_id": supervisor_id,
             "assigned_client_count": client_count,
@@ -1028,7 +1005,7 @@ class UserService:
             "created_by_name": created_by_name,
             "organisation_name": organisation_name,
             "client_id": client_id,
-            "profile_image_url": user.profile_image_url
+            "profile_image_url": current_user.profile_image_url
         }
 
     @staticmethod

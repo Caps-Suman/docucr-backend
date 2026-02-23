@@ -1,3 +1,4 @@
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, select
 from typing import Optional, List, Dict, Tuple
@@ -25,64 +26,24 @@ class ClientService:
 
     @staticmethod
     def get_visible_clients(db: Session, current_user):
-        # Fetch active status
+        org_id = getattr(current_user, "context_organisation_id", None)
+        if not org_id:
+            raise HTTPException(403, "No organisation selected")
+
         active_status = db.query(Status.id).filter(
             Status.code == "ACTIVE"
         ).scalar()
 
-        # Get role names
-        role_names = [
-            r[0] for r in db.query(Role.name)
-            .join(UserRole)
-            .filter(UserRole.user_id == current_user.id)
-            .all()
-        ]
-
-        is_admin = any(r in ["ADMIN", "SUPER_ADMIN"] for r in role_names)
-        is_supervisor = "SUPERVISOR" in role_names
-
-        # --- ADMIN: ALL CLIENTS ---
-        if is_admin:
-            clients = db.query(Client).filter(
-                Client.status_id == active_status
-            ).order_by(Client.business_name).all()
-            return [ClientService._format_client(c, db) for c in clients]
-
-        # --- SUPERVISOR ---
-        if is_supervisor:
-            # Clients directly assigned to supervisor
-            direct_clients = select(UserClient.client_id).where(
-                UserClient.user_id == current_user.id
-            )
-
-            # Users under supervisor
-            subordinate_users = select(UserClient.user_id).where(
-                UserClient.supervisor_id == current_user.id
-            )
-
-            subordinate_clients = select(UserClient.client_id).where(
-                UserClient.user_id.in_(subordinate_users)
-            )
-
-            clients = db.query(Client).filter(
+        clients = (
+            db.query(Client)
+            .filter(
                 Client.status_id == active_status,
-                Client.id.in_(direct_clients.union(subordinate_clients))
-            ).order_by(Client.business_name).all()
-            return [ClientService._format_client(c, db) for c in clients]
-
-        # --- REGULAR USER / CLIENT ---
-        assigned_clients = select(UserClient.client_id).where(
-            UserClient.user_id == current_user.id
-        )
-
-        clients = db.query(Client).filter(
-            Client.status_id == active_status,
-            or_(
-                Client.id.in_(assigned_clients),
-                Client.created_by == current_user.id  # OWNER ACCESS
+                Client.organisation_id == org_id,
+                Client.deleted_at.is_(None)
             )
-        ).order_by(Client.business_name).all()
-
+            .order_by(Client.business_name)
+            .all()
+        )
 
         return [ClientService._format_client(c, db) for c in clients]
     @staticmethod
@@ -110,31 +71,16 @@ class ClientService:
         db.commit()
  
     @staticmethod
-    def get_client_stats(db: Session, current_user) -> Dict:
+    def get_client_stats(db: Session, current_user):
 
-        base_query = db.query(Client).filter(Client.deleted_at.is_(None))
+        org_id = getattr(current_user, "context_organisation_id", None)
+        if not org_id:
+            raise HTTPException(403, "No organisation selected")
 
-        # 🔥 SUPERADMIN
-        if isinstance(current_user, User) and current_user.is_superuser:
-            pass
-
-        # 🔥 CLIENT USER
-        elif isinstance(current_user, User) and current_user.is_client:
-            base_query = base_query.filter(
-                Client.created_by == str(current_user.id)
-            )
-
-        # 🔥 ORG LOGIN
-        elif isinstance(current_user, Organisation):
-            base_query = base_query.filter(
-                Client.organisation_id == str(current_user.id)
-            )
-
-        # 🔥 ORG USER
-        elif isinstance(current_user, User):
-            base_query = base_query.filter(
-                Client.organisation_id == str(current_user.id)
-            )
+        base_query = db.query(Client).filter(
+            Client.deleted_at.is_(None),
+            Client.organisation_id == org_id
+        )
 
         total_clients = base_query.count()
 
@@ -184,14 +130,11 @@ class ClientService:
         
         query = db.query(Client, provider_count).filter(Client.deleted_at.is_(None))
         
-        if organisation_ids:
-            org_list = organisation_ids.split(',')
-            query = query.filter(Client.organisation_id.in_(org_list))
-        elif current_user and not current_user.is_superuser:
-            if getattr(current_user, 'is_client', False):
-                query = query.filter(Client.created_by == str(current_user.id))
-            else:
-                 query = query.filter(Client.organisation_id == str(current_user.id))
+        org_id = getattr(current_user, "context_organisation_id", None)
+        if not org_id:
+            raise HTTPException(403, "No organisation selected")
+
+        query = query.filter(Client.organisation_id == org_id)
         
         if status_id:
             status_codes = status_id.split(',')
@@ -244,17 +187,12 @@ class ClientService:
             organisation_id_val = None
 
             if current_user:
-                if isinstance(current_user, Organisation):
-                    organisation_id_val = str(current_user.id)
+                org_id = getattr(current_user, "context_organisation_id", None)
+                if not org_id:
+                    raise HTTPException(403, "No organisation selected")
 
-                elif isinstance(current_user, User):
-                    if not current_user.is_superuser:
-                        created_by_val = str(current_user.id)
-                        organisation_id_val = (
-                            str(current_user.organisation_id)
-                            if current_user.organisation_id
-                            else None
-                        )
+                organisation_id_val = org_id
+                created_by_val = str(current_user.id) if hasattr(current_user, "id") else None
 
             # ---------------- CLEAN CLIENT PAYLOAD ----------------
             client_payload = client_data.copy()
@@ -558,10 +496,15 @@ class ClientService:
         UserService.link_client_owner(db, user_id, client.id)
 
     @staticmethod
-    def update_client(client_id: str, client_data: Dict, db: Session) -> Optional[Dict]:
+    def update_client(client_id: str, client_data: Dict, db: Session, current_user: User) -> Optional[Dict]:
+
+        org_id = getattr(current_user, "context_organisation_id", None)
+        if not org_id:
+            raise HTTPException(403, "No organisation selected")
 
         client = db.query(Client).filter(
             Client.id == client_id,
+            Client.organisation_id == org_id,
             Client.deleted_at.is_(None)
         ).first()
 
@@ -965,10 +908,18 @@ class ClientService:
         ).scalar()
 
     @staticmethod
-    def get_client_by_id(client_id: str, db: Session) -> Optional[Dict]:
+    def get_client_by_id(client_id: str, db: Session, current_user):
+        org_id = getattr(current_user, "context_organisation_id", None)
+        if not org_id:
+            raise HTTPException(403, "No organisation selected")
+
         client = (
             db.query(Client)
-            .filter(Client.id == client_id, Client.deleted_at.is_(None))
+            .filter(
+                Client.id == client_id,
+                Client.organisation_id == org_id,
+                Client.deleted_at.is_(None)
+            )
             .first()
         )
         if not client:
@@ -1183,29 +1134,33 @@ class ClientService:
         role_names = [r.name for r in current_user.roles]
 
         # 1. SUPER_ADMIN
-        if current_user.is_superuser or "SUPER_ADMIN" in role_names:
-            # Fetch all active clients
-            pass
+        # if current_user.is_superuser or "SUPER_ADMIN" in role_names:
+        #     # Fetch all active clients
+        #     pass
         
-        # 2. ORG_ADMIN
-        elif "ORGANISATION_ROLE" in role_names:
-            if current_user.id:
-                query = query.filter(Client.organisation_id == str(current_user.id))
-            else:
-                return []
+        # # 2. ORG_ADMIN
+        # elif "ORGANISATION_ROLE" in role_names:
+        #     if current_user.id:
+        #         query = query.filter(Client.organisation_id == str(current_user.id))
+        #     else:
+        #         return []
         
-        # 3. Other Roles
-        else:
-            query = query.filter(
-                or_(
-                    Client.created_by == str(current_user.id),
-                    Client.id.in_(
-                        # Subquery for assigned clients
-                        db.query(UserClient.client_id).filter(UserClient.user_id == str(current_user.id))
-                    )
-                )
-            )
+        # # 3. Other Roles
+        # else:
+        #     query = query.filter(
+        #         or_(
+        #             Client.created_by == str(current_user.id),
+        #             Client.id.in_(
+        #                 # Subquery for assigned clients
+        #                 db.query(UserClient.client_id).filter(UserClient.user_id == str(current_user.id))
+        #             )
+        #         )
+        #     )
+        org_id = getattr(current_user, "context_organisation_id", None)
+        if not org_id:
+            raise HTTPException(403, "No organisation selected")
 
+        query = query.filter(Client.organisation_id == org_id)
         results = query.order_by(Client.business_name).all()
         
         # Map to simple response

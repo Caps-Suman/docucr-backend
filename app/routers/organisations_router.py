@@ -1,5 +1,6 @@
 from datetime import timedelta
 from uuid import UUID
+import uuid
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from app.core.security import security
 from fastapi.security import HTTPAuthorizationCredentials
@@ -146,34 +147,56 @@ def get_organisations(
 
 
 from app.core.security import allow_temp_superadmin
+# @router.post("/select-organisation/{org_id}")
+# def select_organisation(
+#     org_id: str,
+#     db: Session = Depends(get_db),
+#     payload=Depends(allow_temp_superadmin)
+# ):
+#     user = db.query(User).filter(User.email == payload["sub"]).first()
+#     org = db.query(Organisation).filter(Organisation.id == org_id).first()
 
+#     if not org:
+#         raise HTTPException(404, "Organisation not found")
+
+#     superadmin_role = db.query(Role).filter(Role.name == "SUPER_ADMIN").first()
+#     if not superadmin_role:
+#         raise HTTPException(500, "SUPER_ADMIN role missing")
+
+#     tokens = AuthService.generate_tokens(
+#         email=user.email,
+#         role_id=str(superadmin_role.id),
+#         organisation_id=org_id
+#     )
+
+#     return {
+#         **tokens,
+#         "organisation": {
+#             "id": org.id,
+#             "name": org.name
+#         }
+#     }
 @router.post("/select-organisation/{org_id}")
 def select_organisation(
     org_id: str,
     db: Session = Depends(get_db),
-    payload=Depends(allow_temp_superadmin)
+    current_user = Depends(get_current_user)
 ):
+    if not current_user.is_superuser:
+        raise HTTPException(403, "Only superadmin")
+
+    user = db.query(User).filter(User.email == current_user.email).first()
     org = db.query(Organisation).filter(Organisation.id == org_id).first()
+
     if not org:
         raise HTTPException(404, "Organisation not found")
 
-    user = db.query(User).filter(User.email == payload["sub"]).first()
-    if not user:
-        raise HTTPException(404, "User not found")
-
-    # 🔥 GET ROLE FOR THIS ORG ONLY
-    user_role = db.query(UserRole).filter(
-        UserRole.user_id == user.id,
-        UserRole.organisation_id == org_id
-    ).first()
-
-    if not user_role:
-        raise HTTPException(403, "User has no role in this organisation")
+    superadmin_role = db.query(Role).filter(Role.name == "SUPER_ADMIN").first()
 
     tokens = AuthService.generate_tokens(
         email=user.email,
-        role_id=user_role.role_id,   # <-- THIS will now be org role
-        organisation_id=str(org_id)
+        role_id=str(superadmin_role.id),
+        organisation_id=org_id
     )
 
     return {
@@ -182,9 +205,34 @@ def select_organisation(
             "id": org.id,
             "name": org.name
         }
-    }
+    }    
+@router.post("/clear-organisation")
+def clear_org_context(
+    current_user = Depends(get_current_user)
+):
+    if not current_user.is_superuser:
+        raise HTTPException(403, "Only superadmin")
 
+    tokens = AuthService.generate_tokens(
+        email=current_user.email,
+        role_id=current_user.context_role_id,
+        organisation_id=None
+    )
 
+    return tokens
+
+@router.post("/exit-organisation")
+def exit_org(payload=Depends(get_current_user)):
+    if not payload.context_is_superadmin:
+        raise HTTPException(403)
+
+    tokens = AuthService.generate_tokens(
+        email=payload.email,
+        role_id=None,
+        organisation_id=None
+    )
+
+    return tokens
 
 
 @router.post("", response_model=OrganisationResponse)

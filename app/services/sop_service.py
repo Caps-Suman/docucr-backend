@@ -20,6 +20,12 @@ from io import BytesIO
 class SOPService:
 
     @staticmethod
+    def _get_org_id(current_user):
+        org_id = getattr(current_user, "context_organisation_id", None)
+        if not org_id:
+            raise HTTPException(403, "No organisation selected")
+        return org_id
+    @staticmethod
     def _base_visible_sops_query(db: Session):
         active = db.query(Status).filter(
             Status.code == "ACTIVE",
@@ -117,35 +123,37 @@ class SOPService:
         )
 
         # Apply visibility filtering
-        role_names = [r.name for r in current_user.roles] if not isinstance(current_user, Organisation) else []
+        # role_names = [r.name for r in current_user.roles] if not isinstance(current_user, Organisation) else []
 
-        # 1. SUPER_ADMIN
-        if current_user.is_superuser or "SUPER_ADMIN" in role_names:
-            # Full access, no client join needed for filtering unless searching
-            pass
+        # # 1. SUPER_ADMIN
+        # if current_user.is_superuser or "SUPER_ADMIN" in role_names:
+        #     # Full access, no client join needed for filtering unless searching
+        #     pass
         
-        # 2. ORG_ADMIN / Organisation entity
-        elif isinstance(current_user, Organisation) or "ORGANISATION_ROLE" in role_names:
-            org_id = str(current_user.id) if isinstance(current_user, Organisation) else str(getattr(current_user, 'organisation_id', ''))
-            if org_id:
-                query = query.filter(SOP.organisation_id == org_id)
-            else:
-                return [], 0
+        # # 2. ORG_ADMIN / Organisation entity
+        # elif isinstance(current_user, Organisation) or "ORGANISATION_ROLE" in role_names:
+        #     org_id = str(current_user.id) if isinstance(current_user, Organisation) else str(getattr(current_user, 'organisation_id', ''))
+        #     if org_id:
+        #         query = query.filter(SOP.organisation_id == org_id)
+        #     else:
+        #         return [], 0
         
-        # 3. Other Roles (Client Admin, etc.)
-        else:
-            # Fetch assigned client_ids for logged-in user
-            assigned_client_ids = db.query(UserClient.client_id).filter(
-                UserClient.user_id == str(current_user.id)
-            )
+        # # 3. Other Roles (Client Admin, etc.)
+        # else:
+        #     # Fetch assigned client_ids for logged-in user
+        #     assigned_client_ids = db.query(UserClient.client_id).filter(
+        #         UserClient.user_id == str(current_user.id)
+        #     )
 
-            query = query.filter(
-                or_(
-                    SOP.created_by == str(current_user.id),
-                    SOP.client_id.in_(assigned_client_ids)
-                )
-            )
+        #     query = query.filter(
+        #         or_(
+        #             SOP.created_by == str(current_user.id),
+        #             SOP.client_id.in_(assigned_client_ids)
+        #         )
+        #     )
+        org_id = SOPService._get_org_id(current_user)
 
+        query = query.filter(SOP.organisation_id == org_id)
         # --- Additional Filters ---
         if status_code:
             status = db.query(Status).filter(
@@ -218,29 +226,31 @@ class SOPService:
         )
 
         # Apply visibility filtering
-        role_names = [r.name for r in current_user.roles] if not isinstance(current_user, Organisation) else []
+        # role_names = [r.name for r in current_user.roles] if not isinstance(current_user, Organisation) else []
 
-        if current_user.is_superuser or "SUPER_ADMIN" in role_names:
-            pass
-        elif isinstance(current_user, Organisation) or "ORGANISATION_ROLE" in role_names:
-            org_id = str(current_user.id) if isinstance(current_user, Organisation) else str(getattr(current_user, 'organisation_id', ''))
-            if org_id:
-                q = q.filter(SOP.organisation_id == org_id)
-            else:
-                return {"total": 0, "active": 0, "inactive": 0}
-        else:
-            # Fetch assigned client_ids for logged-in user
-            assigned_client_ids = db.query(UserClient.client_id).filter(
-                UserClient.user_id == str(current_user.id)
-            )
+        # if current_user.is_superuser or "SUPER_ADMIN" in role_names:
+        #     pass
+        # elif isinstance(current_user, Organisation) or "ORGANISATION_ROLE" in role_names:
+        #     org_id = str(current_user.id) if isinstance(current_user, Organisation) else str(getattr(current_user, 'organisation_id', ''))
+        #     if org_id:
+        #         q = q.filter(SOP.organisation_id == org_id)
+        #     else:
+        #         return {"total": 0, "active": 0, "inactive": 0}
+        # else:
+        #     # Fetch assigned client_ids for logged-in user
+        #     assigned_client_ids = db.query(UserClient.client_id).filter(
+        #         UserClient.user_id == str(current_user.id)
+        #     )
 
-            q = q.filter(
-                or_(
-                    SOP.created_by == str(current_user.id),
-                    SOP.client_id.in_(assigned_client_ids)
-                )
-            )
+        #     q = q.filter(
+        #         or_(
+        #             SOP.created_by == str(current_user.id),
+        #             SOP.client_id.in_(assigned_client_ids)
+        #         )
+        #     )
+        org_id = SOPService._get_org_id(current_user)
 
+        q = q.filter(SOP.organisation_id == org_id)
         row = q.one()
 
         return {
@@ -309,7 +319,13 @@ class SOPService:
 
         return data
     @staticmethod
-    def get_sop_by_id(sop_id: str, db: Session) -> Optional[Dict]:
+    def get_sop_by_id(sop_id: str, db: Session, current_user: User = None) -> Optional[Dict]:
+        org_id = SOPService._get_org_id(current_user)
+
+        sop = db.query(SOP).filter(
+            SOP.id == sop_id,
+            SOP.organisation_id == org_id
+        ).first()
         sop = db.query(SOP).filter(SOP.id == sop_id).options(
             joinedload(SOP.creator),
             joinedload(SOP.organisation),
@@ -439,19 +455,21 @@ class SOPService:
         organisation_id_val = None
         created_by_val = None
 
-        if isinstance(current_user, Organisation):
-            created_by_val = None
-            organisation_id_val = str(current_user.id)
-        elif isinstance(current_user, User):
-            if not current_user.is_superuser:
-                created_by_val = str(current_user.id)
-                if current_user.id:
-                    organisation_id_val = str(current_user.organisation_id) if current_user.organisation_id else None
-            else:
-                created_by_val = None
+        # if isinstance(current_user, Organisation):
+        #     created_by_val = None
+        #     organisation_id_val = str(current_user.id)
+        # elif isinstance(current_user, User):
+        #     if not current_user.is_superuser:
+        #         created_by_val = str(current_user.id)
+        #         if current_user.id:
+        #             organisation_id_val = str(current_user.organisation_id) if current_user.organisation_id else None
+        #     else:
+        #         created_by_val = None
         
-        sop_data['created_by'] = created_by_val
-        sop_data['organisation_id'] = organisation_id_val
+        org_id = SOPService._get_org_id(current_user)
+
+        sop_data["organisation_id"] = org_id
+        sop_data["created_by"] = str(current_user.id) if hasattr(current_user, "id") else None
 
         # Set default status if missing
         if 'status_id' not in sop_data or sop_data['status_id'] is None:
@@ -489,9 +507,13 @@ class SOPService:
         return db_sop
 
     @staticmethod
-    def update_sop(sop_id: str, sop_data: Dict, db: Session) -> Optional[SOP]:
+    def update_sop(sop_id: str, sop_data: Dict, db: Session, current_user: User = None) -> Optional[SOP]:
         # db_sop = SOPService.get_sop_by_id(sop_id, db)
-        db_sop = db.query(SOP).filter(SOP.id == sop_id).first()
+        org_id = SOPService._get_org_id(current_user)
+        db_sop = db.query(SOP).filter(
+            SOP.id == sop_id,
+            SOP.organisation_id == org_id
+        ).first()
 
         if not db_sop:
             return None
@@ -530,7 +552,6 @@ class SOPService:
                     for pid in to_add
                 ]
                 db.add_all(new_objs)
-
         # Update other fields
         for key, value in sop_data.items():
             if key == 'client_id' and not value:
@@ -544,8 +565,14 @@ class SOPService:
         return SOPService.get_sop_by_id(sop_id, db)
 
     @staticmethod
-    def delete_sop(sop_id: str, db: Session) -> bool:
-        db_sop = SOPService.get_sop_by_id(sop_id, db)
+    def delete_sop(sop_id: str, db: Session, current_user: User = None) -> bool:
+        
+        org_id = SOPService._get_org_id(current_user)
+
+        db_sop = db.query(SOP).filter(
+            SOP.id == sop_id,
+            SOP.organisation_id == org_id
+        ).first()
         if not db_sop:
             return False
         

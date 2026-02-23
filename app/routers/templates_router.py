@@ -91,7 +91,7 @@ def create_template(
     background_tasks: BackgroundTasks,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
-    # permission: bool = Depends(Permission("templates_list", "CREATE"))
+    permission: bool = Depends(Permission("templates_list", "CREATE"))
 ):
     """Create a new template"""
     service = TemplateService(db, current_user)
@@ -135,7 +135,7 @@ def update_template(
     background_tasks: BackgroundTasks,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
-    # permission: bool = Depends(Permission("templates_list", "UPDATE"))
+    permission: bool = Depends(Permission("templates_list", "UPDATE"))
 ):
     """Update a template"""
     service = TemplateService(db, current_user)
@@ -199,7 +199,7 @@ def delete_template(
     background_tasks: BackgroundTasks,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
-    # permission: bool = Depends(Permission("templates_list", "DELETE"))
+    permission: bool = Depends(Permission("templates_list", "DELETE"))
 ):
     """Delete a template"""
     service = TemplateService(db, current_user)
@@ -224,7 +224,7 @@ def activate_template(
     background_tasks: BackgroundTasks,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
-    # permission: bool = Depends(Permission("templates_list", "UPDATE"))
+    permission: bool = Depends(Permission("templates_list", "UPDATE"))
 ):
     """Activate a template"""
     service = TemplateService(db, current_user)
@@ -248,7 +248,7 @@ def deactivate_template(
     background_tasks: BackgroundTasks,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
-    # permission: bool = Depends(Permission("templates_list", "UPDATE"))
+    permission: bool = Depends(Permission("templates_list", "UPDATE"))
 ):
     """Deactivate a template"""
     service = TemplateService(db, current_user)

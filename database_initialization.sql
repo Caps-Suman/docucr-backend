@@ -522,7 +522,43 @@ CREATE TABLE docucr.unverified_documents (
 	PRIMARY KEY (id), 
 	FOREIGN KEY(document_id) REFERENCES docucr.documents (id)
 );
+CREATE TABLE docucr.client_location (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    client_id UUID NOT NULL,
+    created_by VARCHAR,
+    address_line_1 VARCHAR NOT NULL,
+    address_line_2 VARCHAR,
+    city VARCHAR NOT NULL,
+    state_code VARCHAR NOT NULL,
+    state_name VARCHAR,
+    country VARCHAR DEFAULT 'United States',
+    zip_code VARCHAR NOT NULL,
+    is_primary BOOLEAN DEFAULT FALSE,
 
+    -- Foreign Key Constraint
+    CONSTRAINT fk_client
+        FOREIGN KEY (client_id) REFERENCES docucr.client(id)
+        ON DELETE CASCADE
+);
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE docucr.provider_client_mapping (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    provider_id UUID NOT NULL,
+    client_id UUID NOT NULL,
+    location_id UUID,
+    created_by VARCHAR,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign Key Constraints
+    CONSTRAINT fk_provider 
+        FOREIGN KEY (provider_id) REFERENCES docucr.provider(id),
+    CONSTRAINT fk_client 
+        FOREIGN KEY (client_id) REFERENCES docucr.client(id),
+    CONSTRAINT fk_location 
+        FOREIGN KEY (location_id) REFERENCES docucr.client_location(id)
+);
 -- Defer Circular Foreign Keys
 ALTER TABLE docucr.client ADD CONSTRAINT fk_client_created_by FOREIGN KEY(created_by) REFERENCES docucr."user" (id);
 ALTER TABLE docucr.client ADD CONSTRAINT fk_client_organisation_id FOREIGN KEY(organisation_id) REFERENCES docucr.organisation (id);
