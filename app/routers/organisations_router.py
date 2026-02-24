@@ -77,6 +77,13 @@ class OrganisationUpdate(BaseModel):
 class OrganisationResponse(BaseModel):
     id: str
     name: str
+    email: Optional[str] = None
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone_country_code: Optional[str] = None
+    phone_number: Optional[str] = None
     status_id: Optional[int]
     statusCode: Optional[str]
     created_at: Optional[str]
