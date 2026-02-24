@@ -122,7 +122,7 @@ def get_organisations(
 ):
     payload = decode_token(credentials.credentials)
 
-    # 🔴 TEMP SUPERADMIN FLOW
+    # TEMP SUPERADMIN FLOW
     if payload.get("temp") and payload.get("superadmin"):
         orgs, total = OrganisationService.get_organisations(page, page_size, search, status_id, db)
         return OrganisationListResponse(
@@ -196,7 +196,8 @@ def select_organisation(
     tokens = AuthService.generate_tokens(
         email=user.email,
         role_id=str(superadmin_role.id),
-        organisation_id=org_id
+        organisation_id=org_id,
+        is_superadmin=True
     )
 
     return {
@@ -234,13 +235,30 @@ def exit_org(payload=Depends(get_current_user)):
     if not payload.context_is_superadmin:
         raise HTTPException(403)
 
-    tokens = AuthService.generate_tokens(
-        email=payload.email,
-        role_id=None,
-        organisation_id=None
+    from app.core.security import create_access_token
+    from datetime import timedelta
+
+    temp_token = create_access_token(
+        data={
+            "sub": payload.email,
+            "temp": True,
+            "superadmin": True
+        },
+        expires_delta=timedelta(minutes=30)
     )
 
-    return tokens
+    return {
+        "access_token": temp_token,
+        "token_type": "bearer",
+        "user": {
+            "id": payload.id,
+            "email": payload.email,
+            "first_name": payload.first_name,
+            "last_name": payload.last_name,
+            "is_superuser": True,
+            "profile_image_url": payload.profile_image_url
+        }
+    }
 
 
 @router.post("", response_model=OrganisationResponse)
@@ -254,7 +272,7 @@ def create_organisation(
 ):
     payload = decode_token(credentials.credentials)
 
-    # 🔴 TEMP SUPERADMIN FLOW
+    # TEMP SUPERADMIN FLOW
     if not (payload.get("temp") and payload.get("superadmin")):
         current_user = get_current_user(credentials, db)
         Permission("users", "CREATE")(current_user)
@@ -407,7 +425,7 @@ def activate_organisation(
 ):
     payload = decode_token(credentials.credentials)
 
-    # 🔴 TEMP SUPERADMIN FLOW (before org selection)
+    # TEMP SUPERADMIN FLOW (before org selection)
     if not (payload.get("temp") and payload.get("superadmin")):
         current_user = get_current_user(credentials, db)
         Permission("users", "UPDATE")(current_user)

@@ -465,20 +465,18 @@ async def refresh_token(request: Request, db: Session = Depends(get_db)):
 
     role_id = payload.get("role_id")
     organisation_id = payload.get("organisation_id")
+    is_superadmin = payload.get("superadmin", False)
 
-    new_access_token = create_access_token({
+    data = {
         "sub": email,
         "role_id": role_id,
         "organisation_id": organisation_id
-    })
+    }
+    if is_superadmin:
+        data["superadmin"] = True
 
-    new_refresh_token = create_refresh_token(
-        data={
-            "sub": email,
-            "role_id": role_id,
-            "organisation_id": organisation_id
-        }
-    )
+    new_access_token = create_access_token(data)
+    new_refresh_token = create_refresh_token(data=data)
     
     return {
         "access_token": new_access_token,

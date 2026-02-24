@@ -101,9 +101,13 @@ class AuthService:
         return [{"id": role.id, "name": role.name} for _, role in user_roles]
 
     @staticmethod
-    def generate_tokens(email: str, role_id: str, organisation_id: str) -> Dict:
-        access_token = create_access_token(data={"sub": email, "role_id": role_id, "organisation_id":organisation_id})
-        refresh_token = create_refresh_token(data={"sub": email, "role_id": role_id, "organisation_id":organisation_id})
+    def generate_tokens(email: str, role_id: str, organisation_id: str, is_superadmin: bool = False) -> Dict:
+        data = {"sub": email, "role_id": role_id, "organisation_id": organisation_id}
+        if is_superadmin:
+            data["superadmin"] = True
+            
+        access_token = create_access_token(data=data)
+        refresh_token = create_refresh_token(data=data)
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
