@@ -8,7 +8,23 @@ from app.core.security import get_password_hash, verify_password
 
 class ProfileService:
     @staticmethod
-    def get_profile(user: str) -> Dict:
+    def get_profile(user: User, db: Session) -> Dict:
+        # Fetch active role details
+        role_data = None
+        if hasattr(user, 'context_role_id') and user.context_role_id:
+            from app.models.role import Role
+            role = db.query(Role).filter(Role.id == user.context_role_id).first()
+            if role:
+                role_data = {"id": role.id, "name": role.name}
+
+        # Fetch active organisation name
+        organisation_name = None
+        if hasattr(user, 'context_organisation_id') and user.context_organisation_id:
+            from app.models.organisation import Organisation
+            org = db.query(Organisation).filter(Organisation.id == user.context_organisation_id).first()
+            if org:
+                organisation_name = org.name
+
         if isinstance(user, Organisation):
             return {
             "id": user.id,
@@ -33,8 +49,13 @@ class ProfileService:
             "phone_country_code": user.phone_country_code,
             "phone_number": user.phone_number,
             "is_superuser": user.is_superuser,
+            "is_supervisor": user.is_supervisor,
+            "is_client": user.is_client,
             "created_at": user.created_at,
-            "profile_image_url": user.profile_image_url 
+            "profile_image_url": user.profile_image_url,
+            "role": role_data,
+            "organisation_id": getattr(user, 'context_organisation_id', None),
+            "organisation_name": organisation_name
         }
 
     @staticmethod
