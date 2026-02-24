@@ -206,6 +206,14 @@ def select_organisation(
             "name": org.name
         }
     }    
+
+@router.get("/{org_id}")
+def get_org(org_id: str, db: Session = Depends(get_db)):
+    org = OrganisationService.get_organisation_by_id(org_id, db)
+    if not org:
+        raise HTTPException(404, "Organisation not found")
+    return org
+
 @router.post("/clear-organisation")
 def clear_org_context(
     current_user = Depends(get_current_user)
@@ -292,10 +300,10 @@ def update_organisation(
     else:
         current_user = None
 
-    if org.email and UserService.check_email_exists(org.email, org_id, db):
-        raise HTTPException(status_code=400, detail="Email already exists")
-    if org.username and UserService.check_username_exists(org.username, org_id, db):
-        raise HTTPException(status_code=400, detail="Username already exists")
+    # if org.email and UserService.check_email_exists(org.email, org_id, db):
+    #     raise HTTPException(status_code=400, detail="Email already exists")
+    # if org.username and UserService.check_username_exists(org.username, org_id, db):
+    #     raise HTTPException(status_code=400, detail="Username already exists")
 
     org_data = org.model_dump(exclude_unset=True)
     updated_org = OrganisationService.update_organisation(org_id, org_data, db)

@@ -385,9 +385,9 @@ class AISOPService:
             "clearinghouse": ""
         },
         "workflow_process": {
-            "workflow_description": "",
+            "workflow_description": ",
             "eligibility_verification_portals": [],
-            "posting_charges_rules": ""
+            "posting_charges_rules": []
         },
     "billing_guidelines": [
         {

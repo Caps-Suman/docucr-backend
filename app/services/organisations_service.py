@@ -246,7 +246,7 @@
 #         db.commit()
 #         return True
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import Optional, List, Dict, Tuple
 import uuid
 
@@ -288,7 +288,7 @@ class OrganisationService:
             .all()
         )
 
-        return [OrganisationService._format_organisation(o) for o in organisations], total
+        return [OrganisationService._format_organisation(o, db) for o in organisations], total
 
     # -------------------------------------------------
     # CREATE
@@ -342,7 +342,7 @@ class OrganisationService:
         db.commit()
         db.refresh(org)
 
-        return OrganisationService._format_organisation(org)
+        return OrganisationService._format_organisation(org, db)
 
 
     # -------------------------------------------------
@@ -355,13 +355,40 @@ class OrganisationService:
         if not org:
             return None
 
+        # Update organisation name
         if "name" in org_data:
             org.name = org_data["name"]
+
+        # Fetch org admin user
+        DEFAULT_ORG_ADMIN_ROLE_ID = "f7129eb0-7305-4279-8994-ee9256f91447"
+
+        org_user = (
+            db.query(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .filter(
+                User.organisation_id == org.id,
+                UserRole.role_id == DEFAULT_ORG_ADMIN_ROLE_ID
+            )
+            .first()
+        )
+
+        if org_user:
+            for field in [
+                "email",
+                "username",
+                "first_name",
+                "middle_name",
+                "last_name",
+                "phone_country_code",
+                "phone_number",
+            ]:
+                if field in org_data:
+                    setattr(org_user, field, org_data[field])
 
         db.commit()
         db.refresh(org)
 
-        return OrganisationService._format_organisation(org)
+        return OrganisationService._format_organisation(org, db)
 
     # -------------------------------------------------
     # ACTIVATE / DEACTIVATE
@@ -377,7 +404,7 @@ class OrganisationService:
         db.commit()
         db.refresh(org)
 
-        return OrganisationService._format_organisation(org)
+        return OrganisationService._format_organisation(org,db)
 
     @staticmethod
     def deactivate_organisation(org_id: str, db: Session):
@@ -390,7 +417,7 @@ class OrganisationService:
         db.commit()
         db.refresh(org)
 
-        return OrganisationService._format_organisation(org)
+        return OrganisationService._format_organisation(org,db)
 
     # -------------------------------------------------
     # STATS
@@ -425,17 +452,52 @@ class OrganisationService:
         org.hashed_password = get_password_hash(new_password)
         db.commit()
         return True
+    
+    @staticmethod
+    def get_organisation_by_id(org_id: str, db: Session):
+
+        org = (
+            db.query(Organisation)
+            .filter(Organisation.id == org_id)
+            .first()
+        )
+
+        if not org:
+            return None
+
+        return OrganisationService._format_organisation(org, db)
     # -------------------------------------------------
     # FORMAT
     # -------------------------------------------------
     @staticmethod
-    def _format_organisation(org: Organisation) -> Dict:
+    def _format_organisation(org: Organisation, db: Session) -> Dict:
 
         status_code = org.status_relation.code if org.status_relation else None
+
+        DEFAULT_ORG_ADMIN_ROLE_ID = "f7129eb0-7305-4279-8994-ee9256f91447"
+
+        org_user = (
+            db.query(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .filter(
+                User.organisation_id == org.id,
+                UserRole.role_id == DEFAULT_ORG_ADMIN_ROLE_ID
+            )
+            .first()
+        )
 
         return {
             "id": org.id,
             "name": org.name,
+
+            "email": org_user.email if org_user else None,
+            "username": org_user.username if org_user else None,
+            "first_name": org_user.first_name if org_user else None,
+            "middle_name": org_user.middle_name if org_user else None,
+            "last_name": org_user.last_name if org_user else None,
+            "phone_country_code": org_user.phone_country_code if org_user else None,
+            "phone_number": org_user.phone_number if org_user else None,
+
             "status_id": org.status_id,
             "statusCode": status_code,
             "created_at": org.created_at.isoformat() if org.created_at else None,
