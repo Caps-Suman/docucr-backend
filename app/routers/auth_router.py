@@ -246,7 +246,8 @@ async def login(
                 "id": user.id,
                 "email": user.email,
                 "first_name": user.first_name,
-                "last_name": user.last_name
+                "last_name": user.last_name,
+                "is_superuser": True
             }
         }
 
@@ -273,7 +274,7 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
     if not role:
         raise HTTPException(status_code=403, detail="User does not have this role")
 
-    tokens = AuthService.generate_tokens(current_user.email, request.role_id,request.organisation_id)
+    tokens = AuthService.generate_tokens(current_user.email, request.role_id, request.organisation_id, is_superadmin=current_user.is_superuser)
     permissions = AuthService.get_role_permissions(role.id, db)
 
     client_id = None
@@ -296,6 +297,7 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
             "first_name": current_user.first_name,
             "last_name": current_user.last_name,
             "role": {"id": role.id, "name": role.name},
+            "is_superuser": current_user.is_superuser,
             "is_client": current_user.is_client,
             "client_id": current_user.client_id,
             "client_name": client_name,
@@ -397,6 +399,7 @@ async def verify_2fa(request: TwoFactorRequest, db: Session = Depends(get_db)):
                 "first_name": user.first_name,
                 "last_name": user.last_name,
                 "role": roles[0],
+                "is_superuser": user.is_superuser,
                 "is_client": user.is_client,
                 "client_id": user.client_id,
                 "client_name": client_name,
@@ -416,7 +419,8 @@ async def verify_2fa(request: TwoFactorRequest, db: Session = Depends(get_db)):
             "id": user.id,
             "email": user.email,
             "first_name": user.first_name,
-            "last_name": user.last_name
+            "last_name": user.last_name,
+            "is_superuser": user.is_superuser
         }
     }
 
@@ -460,12 +464,11 @@ async def refresh_token(request: Request, db: Session = Depends(get_db)):
     if not AuthService.check_user_active(user, db):
         raise HTTPException(status_code=403, detail="Account is inactive")
 
-    if not role_id or not organisation_id:
-        raise HTTPException(401, "Invalid refresh context")
-
-    role_id = payload.get("role_id")
     organisation_id = payload.get("organisation_id")
     is_superadmin = payload.get("superadmin", False)
+
+    if not role_id or not organisation_id:
+        raise HTTPException(401, "Invalid refresh context")
 
     data = {
         "sub": email,
