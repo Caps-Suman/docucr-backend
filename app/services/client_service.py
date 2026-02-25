@@ -26,24 +26,25 @@ class ClientService:
 
     @staticmethod
     def get_visible_clients(db: Session, current_user):
-        org_id = getattr(current_user, "context_organisation_id", None)
-        if not org_id:
+        org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+        is_super = getattr(current_user, "context_is_superadmin", getattr(current_user, "is_superuser", False))
+
+        if not is_super and not org_id:
             raise HTTPException(403, "No organisation selected")
 
         active_status = db.query(Status.id).filter(
             Status.code == "ACTIVE"
         ).scalar()
 
-        clients = (
-            db.query(Client)
-            .filter(
-                Client.status_id == active_status,
-                Client.organisation_id == org_id,
-                Client.deleted_at.is_(None)
-            )
-            .order_by(Client.business_name)
-            .all()
+        query = db.query(Client).filter(
+            Client.status_id == active_status,
+            Client.deleted_at.is_(None)
         )
+        
+        if org_id:
+            query = query.filter(Client.organisation_id == org_id)
+
+        clients = query.order_by(Client.business_name).all()
 
         return [ClientService._format_client(c, db) for c in clients]
     @staticmethod
@@ -71,16 +72,21 @@ class ClientService:
         db.commit()
  
     @staticmethod
-    def get_client_stats(db: Session, current_user):
+    def get_client_stats(db: Session, current_user: User):
 
-        org_id = getattr(current_user, "context_organisation_id", None)
-        if not org_id:
-            raise HTTPException(403, "No organisation selected")
+        org_id = getattr(current_user, "context_organisation_id", None) or current_user.organisation_id
+        is_super = getattr(current_user, "context_is_superadmin", current_user.is_superuser)
 
         base_query = db.query(Client).filter(
-            Client.deleted_at.is_(None),
-            Client.organisation_id == org_id
+            Client.deleted_at.is_(None)
         )
+
+        if not is_super:
+            if not org_id:
+                raise HTTPException(403, "No organisation selected")
+            base_query = base_query.filter(Client.organisation_id == org_id)
+        elif org_id:
+            base_query = base_query.filter(Client.organisation_id == org_id)
 
         total_clients = base_query.count()
 
@@ -130,11 +136,15 @@ class ClientService:
         
         query = db.query(Client, provider_count).filter(Client.deleted_at.is_(None))
         
-        org_id = getattr(current_user, "context_organisation_id", None)
-        if not org_id:
-            raise HTTPException(403, "No organisation selected")
+        org_id = getattr(current_user, "context_organisation_id", None) or current_user.organisation_id
+        is_super = getattr(current_user, "context_is_superadmin", current_user.is_superuser)
 
-        query = query.filter(Client.organisation_id == org_id)
+        if not is_super:
+            if not org_id:
+                raise HTTPException(403, "No organisation selected")
+            query = query.filter(Client.organisation_id == org_id)
+        elif org_id:
+            query = query.filter(Client.organisation_id == org_id)
         
         if status_id:
             status_codes = status_id.split(',')
@@ -187,8 +197,10 @@ class ClientService:
             organisation_id_val = None
 
             if current_user:
-                org_id = getattr(current_user, "context_organisation_id", None)
-                if not org_id:
+                org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+                is_super = getattr(current_user, "context_is_superadmin", getattr(current_user, "is_superuser", False))
+
+                if not is_super and not org_id:
                     raise HTTPException(403, "No organisation selected")
 
                 organisation_id_val = org_id
@@ -498,15 +510,20 @@ class ClientService:
     @staticmethod
     def update_client(client_id: str, client_data: Dict, db: Session, current_user: User) -> Optional[Dict]:
 
-        org_id = getattr(current_user, "context_organisation_id", None)
-        if not org_id:
+        org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+        is_super = getattr(current_user, "context_is_superadmin", getattr(current_user, "is_superuser", False))
+
+        if not is_super and not org_id:
             raise HTTPException(403, "No organisation selected")
 
-        client = db.query(Client).filter(
+        query = db.query(Client).filter(
             Client.id == client_id,
-            Client.organisation_id == org_id,
             Client.deleted_at.is_(None)
-        ).first()
+        )
+        if org_id:
+            query = query.filter(Client.organisation_id == org_id)
+            
+        client = query.first()
 
         if not client:
             return None

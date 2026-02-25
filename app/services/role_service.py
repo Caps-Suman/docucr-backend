@@ -20,12 +20,19 @@ class RoleService:
 
     @staticmethod
     def _apply_org_scope(query, current_user):
-        context_org_id = getattr(current_user, "context_organisation_id", None)
+        context_org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+        is_super = getattr(current_user, "context_is_superadmin", getattr(current_user, "is_superuser", False))
 
-        # if user selected an organisation → lock to that org
-        if context_org_id:
+        if not is_super:
+            if getattr(current_user, "is_client", False):
+                return query.filter(Role.created_by == str(current_user.id))
+            elif context_org_id:
+                return query.filter(Role.organisation_id == str(context_org_id))
+            else:
+                return query.filter(Role.created_by == str(current_user.id))
+        elif context_org_id:
             return query.filter(Role.organisation_id == str(context_org_id))
-
+            
         return query
     @staticmethod
     def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session, current_user, search: Optional[str] = None, organisation_id: Optional[List[str]] = None):
@@ -173,11 +180,7 @@ class RoleService:
         # ---------------------------------------------------------
         # 1. Handle ORGANISATION/CLIENT Login (Instance Checks)
         # ---------------------------------------------------------
-        if isinstance(current_user, Organisation):
-             # STRICT: Only roles FOR this organisation
-             query = query.filter(Role.organisation_id == str(current_user.id))
-
-        elif isinstance(current_user, Client):
+        if isinstance(current_user, Client):
              # STRICT: Only roles Created By this Client
              query = query.filter(Role.created_by == str(current_user.id))
 
@@ -197,8 +200,8 @@ class RoleService:
         #             (Role.organisation_id.is_(None) & Role.created_by.is_(None))
         #         )
         elif isinstance(current_user, User):
-            context_org_id = getattr(current_user, "context_organisation_id", None)
-            is_super = getattr(current_user, "context_is_superadmin", False)
+            context_org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+            is_super = getattr(current_user, "context_is_superadmin", getattr(current_user, "is_superuser", False))
 
             if not is_super:
                 if getattr(current_user, "is_client", False):
@@ -207,6 +210,8 @@ class RoleService:
                     query = query.filter(Role.organisation_id == str(context_org_id))
                 else:
                     query = query.filter(Role.created_by == str(current_user.id))
+            elif context_org_id:
+                query = query.filter(Role.organisation_id == str(context_org_id))
         # Additional Filters from Arguments
         if organisation_id:
              if isinstance(organisation_id, list):
@@ -319,9 +324,6 @@ class RoleService:
         organisation_id_val = None
         created_by_val = None
 
-        if isinstance(current_user, Organisation):
-            created_by_val = None
-            organisation_id_val = str(current_user.id)
         organisation_id_val = None
         created_by_val = None
 
@@ -389,12 +391,7 @@ class RoleService:
             return None
 
         # 1. Scope Permission Check
-        if isinstance(current_user, Organisation):
-            if str(role.organisation_id) != str(current_user.id):
-                 # Assuming returning None or raising specific error? Service usually returns None or raises.
-                 # Given request context, let's treat as 'Not Found' or invalid.
-                 return None 
-        elif isinstance(current_user, User):
+        if isinstance(current_user, User):
             context_org_id = getattr(current_user, "context_organisation_id", None)
             is_super = getattr(current_user, "context_is_superadmin", False)
 

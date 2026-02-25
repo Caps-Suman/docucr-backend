@@ -25,20 +25,7 @@ class ProfileService:
             if org:
                 organisation_name = org.name
 
-        if isinstance(user, Organisation):
-            return {
-            "id": user.id,
-            "email": user.email,
-            "username": user.username,
-            "first_name": user.first_name,
-            "middle_name": user.middle_name,
-            "last_name": user.last_name,
-            "phone_country_code": user.phone_country_code,
-            "phone_number": user.phone_number,
-            "is_superuser": user.is_superuser,
-            "created_at": user.created_at,
-            "profile_image_url":  None
-        }
+
         return {
             "id": user.id,
             "email": user.email,

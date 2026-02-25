@@ -44,26 +44,15 @@ class ExternalShareService:
                     continue
                 
                 token = self._generate_token()
-                if isinstance(current_user, Organisation):
-                    share = ExternalShare(
-                        document_id=doc_id,
-                        email=email,
-                        password_hash=password_hash,
-                        token=token,
-                        shared_by_org_id=current_user.id,
-                        shared_by_user_id=None,
-                        expires_at=expires_at
-                    )
-                else:
-                    share = ExternalShare(
-                        document_id=doc_id,
-                        email=email,
-                        password_hash=password_hash,
-                        token=token,
-                        shared_by_user_id=current_user.id,
-                        shared_by_org_id=None,
-                        expires_at=expires_at
-                    )
+                share = ExternalShare(
+                    document_id=doc_id,
+                    email=email,
+                    password_hash=password_hash,
+                    token=token,
+                    shared_by_user_id=current_user.id,
+                    shared_by_org_id=None,
+                    expires_at=expires_at
+                )
 
 
 
@@ -86,15 +75,12 @@ class ExternalShareService:
                 self.db.refresh(s)
             
             # Send single consolidated email
-            if isinstance(current_user, Organisation):
-                sender_name = current_user.name
-            else:
-                user = self.db.query(User).filter(User.id == current_user.id).first()
-                sender_name = (
-                    f"{user.first_name or ''} {user.last_name or ''}".strip()
-                    or user.username
-                    if user else "User"
-                )
+            user = self.db.query(User).filter(User.id == current_user.id).first()
+            sender_name = (
+                f"{user.first_name or ''} {user.last_name or ''}".strip()
+                or user.username
+                if user else "User"
+            )
 
 
             send_external_share_email(

@@ -93,7 +93,7 @@ class UserService:
     
     @staticmethod
     def _ctx_org(user):
-        return getattr(user, "context_organisation_id", None)
+        return getattr(user, "context_organisation_id", None) or getattr(user, "organisation_id", None)
 
     @staticmethod
     def _ctx_role(user):
@@ -127,13 +127,23 @@ class UserService:
             ).exists()
         )
 
+        is_super = False
+        if isinstance(current_user, User):
+            is_super = UserService._ctx_is_super(current_user)
+
+        # Exclude users with ORGANISATION_ROLE unless the current user is a SUPER_ADMIN
+        if not is_super:
+            query = query.filter(
+                ~db.query(UserRole).join(Role).filter(
+                    UserRole.user_id == User.id,
+                    Role.name == 'ORGANISATION_ROLE'
+                ).exists()
+            )
+
         # ---------------------------------------------------------
         # Handle ORGANISATION/CLIENT Login (Instance Checks)
         # ---------------------------------------------------------
-        if isinstance(current_user, Organisation):
-            query = query.filter(User.organisation_id == str(current_user.id))
-        
-        elif isinstance(current_user, Client):
+        if isinstance(current_user, Client):
             query = query.filter(User.client_id == str(current_user.id))
 
         elif isinstance(current_user, User):
@@ -247,11 +257,7 @@ class UserService:
         """
         query = db.query(User)
         
-        if isinstance(current_user, Organisation):
-            # Enforce Organisation Isolation for Org Admins
-            query = query.filter(User.organisation_id == str(current_user.id))
-        
-        elif isinstance(current_user, Client):
+        if isinstance(current_user, Client):
             # Enforce Client Isolation
             query = query.filter(User.client_id == str(current_user.id))
 
@@ -664,10 +670,6 @@ class UserService:
         if is_super and context_org:
             return str(target_user.organisation_id) == str(context_org)
 
-        # ORG LOGIN
-        if isinstance(current_user, Organisation):
-            return str(target_user.organisation_id) == str(current_user.id)
-
         # USER LOGIN
         if isinstance(current_user, User):
             role_names = [r.name for r in current_user.roles]
@@ -719,6 +721,19 @@ class UserService:
             .exists()
         )
 
+        is_super = False
+        if isinstance(current_user, User):
+            is_super = UserService._ctx_is_super(current_user)
+
+        # Exclude users with ORGANISATION_ROLE unless the current user is a SUPER_ADMIN
+        if not is_super:
+            query = query.filter(
+                ~db.query(UserRole).join(Role).filter(
+                    UserRole.user_id == User.id,
+                    Role.name == 'ORGANISATION_ROLE'
+                ).exists()
+            )
+
         # 🔥 SUPERADMIN
         context_org = UserService._ctx_org(current_user)
         is_super = UserService._ctx_is_super(current_user)
@@ -728,9 +743,6 @@ class UserService:
 
         elif is_super and context_org:
             query = query.filter(User.organisation_id == str(context_org))
-
-        elif isinstance(current_user, Organisation):
-            query = query.filter(User.organisation_id == str(current_user.id))
 
         elif isinstance(current_user, User):
             role_names = [r.name for r in current_user.roles]
@@ -915,7 +927,7 @@ class UserService:
             "phone_number": user.phone_number,
             "status_id": user.status_id, # Integer
             "statusCode": status_code,   # String
-            "is_superuser": user.is_superuser,
+            "is_superuser": user.is_superuser or False,
             "roles": roles,
             "supervisor_id": supervisor_id,
             "assigned_client_count": client_count,
@@ -1057,8 +1069,6 @@ class UserService:
         db.commit()
     @staticmethod
     def resolve_org_id(current_user):
-        if isinstance(current_user, Organisation):
-            return str(current_user.id)
         if isinstance(current_user, User):
             return str(current_user.id) if current_user.id else None
         return None

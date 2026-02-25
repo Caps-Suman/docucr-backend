@@ -18,7 +18,7 @@ class DocumentTypeService:
     def _get_org_id(self):
         if not self.current_user:
             return None
-        return getattr(self.current_user, "context_organisation_id", None)
+        return getattr(self.current_user, "context_organisation_id", None) or getattr(self.current_user, "organisation_id", None)
 
     # --------------------------------------------------
     # DUPLICATE CHECK
