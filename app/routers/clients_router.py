@@ -436,9 +436,9 @@ async def get_client_users(client_id: str, db: Session = Depends(get_db)):
 @router.post("/", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "CREATE"))])
 async def create_client(
     client: ClientCreate, 
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db), 
-    request: Request = None,
-    background_tasks: BackgroundTasks = None,
     current_user: User = Depends(get_current_user)
 ):
     if client.npi and ClientService.check_npi_exists(client.npi, None, db):
@@ -549,9 +549,9 @@ def get_client_by_id(
 async def update_client(
     client_id: str, 
     client: ClientUpdate, 
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db), 
-    request: Request = None,
-    background_tasks: BackgroundTasks = None,
     current_user: User = Depends(get_current_user)
 ):
     if client.npi and ClientService.check_npi_exists(client.npi, client_id, db):
@@ -561,7 +561,7 @@ async def update_client(
 
     # Capture changes
     changes = {}
-    existing_client = ClientService.get_client_by_id(client_id, db)
+    existing_client = ClientService.get_client_by_id(client_id, db, current_user)
     if existing_client:
         # Normalize status_id to statusCode for readable logs
         if 'status_id' in client_data and existing_client.get('statusCode'):
@@ -573,7 +573,7 @@ async def update_client(
         if 'status_id' in changes:
             changes['Status'] = changes.pop('status_id')
 
-    updated_client = ClientService.update_client(client_id, client_data, db)
+    updated_client = ClientService.update_client(client_id, client_data, db, current_user)
     if not updated_client:
         raise HTTPException(status_code=404, detail="Client not found")
         
@@ -596,9 +596,9 @@ async def update_client(
 @router.post("/{client_id}/activate", response_model=ClientResponse)
 async def activate_client(
     client_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    request: Request = None,
-    background_tasks: BackgroundTasks = None,
     current_user = Depends(get_current_user)
 ):
     client = db.query(Client).filter(Client.id == client_id).first()
@@ -640,9 +640,9 @@ async def activate_client(
 @router.post("/{client_id}/deactivate", response_model=ClientResponse)
 async def deactivate_client(
     client_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    request: Request = None,
-    background_tasks: BackgroundTasks = None,
     current_user = Depends(get_current_user)
 ):
     client = db.query(Client).filter(Client.id == client_id).first()

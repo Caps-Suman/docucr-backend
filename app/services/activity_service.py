@@ -127,6 +127,16 @@ class ActivityService:
 
             from app.models.activity_log import ActivityLog
 
+            # Resolve IP from proxy headers first, then fallback to request.client.host
+            ip_address = None
+            user_agent = None
+            if request:
+                ip_address = request.headers.get("x-forwarded-for", request.client.host if request.client else None)
+                # X-Forwarded-For can contain a list of IPs, we usually want the first one (original client)
+                if ip_address and ',' in ip_address:
+                    ip_address = ip_address.split(',')[0].strip()
+                user_agent = request.headers.get("user-agent")
+
             log = ActivityLog(
                 user_id=resolved_user_id,
                 organisation_id=resolved_org_id,
@@ -134,8 +144,8 @@ class ActivityService:
                 entity_type=entity_type,
                 entity_id=entity_id,
                 details=details or {},
-                ip_address=request.client.host if request else None,
-                user_agent=request.headers.get("user-agent") if request else None,
+                ip_address=ip_address,
+                user_agent=user_agent,
             )
 
             db.add(log)
