@@ -518,7 +518,26 @@ class ModuleService:
             module_id = r.module_id
 
             if module_id not in modules_dict:
-                continue
+                # User has submodule access but lacks parent module access explicitly.
+                # Auto-grant access to the parent module for navigation.
+                parent_module = db.query(Module).filter(Module.id == module_id).first()
+                if parent_module:
+                    modules_dict[module_id] = {
+                        "id": parent_module.id,
+                        "name": parent_module.name,
+                        "label": parent_module.label,
+                        "description": parent_module.description or "",
+                        "route": parent_module.route,
+                        "icon": parent_module.icon or "",
+                        "category": parent_module.category,
+                        "display_order": parent_module.display_order or 0,
+                        "color_from": parent_module.color_from or "",
+                        "color_to": parent_module.color_to or "",
+                        "privileges": [], # Parent gets empty privileges, they only access submodules
+                        "submodules": []
+                    }
+                else:
+                    continue
 
             sub_list = modules_dict[module_id]["submodules"]
 
@@ -537,6 +556,17 @@ class ModuleService:
 
             if r.privilege_name not in sub["privileges"]:
                 sub["privileges"].append(r.privilege_name)
+
+        # Expand ADMIN privilege
+        all_privileges = [p.name for p in db.query(Privilege).all()]
+        for mod in modules_dict.values():
+            if "ADMIN" in mod["privileges"]:
+                # If they have ADMIN, they theoretically possess all privileges to grant.
+                mod["privileges"] = list(set(mod["privileges"] + all_privileges))
+            
+            for sub in mod["submodules"]:
+                if "ADMIN" in sub["privileges"]:
+                    sub["privileges"] = list(set(sub["privileges"] + all_privileges))
 
         # sort
         modules = list(modules_dict.values())

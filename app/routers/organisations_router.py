@@ -100,7 +100,7 @@ class OrganisationListResponse(BaseModel):
 # --- Endpoints ---
 
 @router.get("/stats")
-def get_organisation_stats(
+async def get_organisation_stats(
     db: Session = Depends(get_db),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
@@ -112,14 +112,14 @@ def get_organisation_stats(
 
     # NORMAL USERS
     current_user = get_current_user(credentials, db)
-    Permission("users", "READ")(current_user)
+    await Permission("users", "READ")(current_user)
 
     return OrganisationService.get_organisation_stats(db)
 
 
 @router.get("", response_model=OrganisationListResponse)
 @router.get("/", response_model=OrganisationListResponse)
-def get_organisations(
+async def get_organisations(
     page: int = 1,
     page_size: int = 10,
     search: Optional[str] = None,
@@ -140,9 +140,9 @@ def get_organisations(
         )
 
 
-    # 🔵 NORMAL FLOW
+    # NORMAL FLOW
     current_user = get_current_user(credentials, db)
-    Permission("users", "READ")(current_user)
+    await Permission("users", "READ")(current_user)
 
     orgs, total = OrganisationService.get_organisations(page, page_size, search, status_id, db)
     return OrganisationListResponse(
@@ -270,7 +270,7 @@ def exit_org(payload=Depends(get_current_user)):
 
 @router.post("", response_model=OrganisationResponse)
 @router.post("/", response_model=OrganisationResponse)
-def create_organisation(
+async def create_organisation(
     org: OrganisationCreate,
     request: Request,
     background_tasks: BackgroundTasks,
@@ -282,7 +282,7 @@ def create_organisation(
     # TEMP SUPERADMIN FLOW
     if not (payload.get("temp") and payload.get("superadmin")):
         current_user = get_current_user(credentials, db)
-        Permission("users", "CREATE")(current_user)
+        await Permission("users", "CREATE")(current_user)
     else:
         current_user = None
 
@@ -309,7 +309,7 @@ def create_organisation(
 
 
 @router.put("/{org_id}", response_model=OrganisationResponse)
-def update_organisation(
+async def update_organisation(
     org_id: str,
     org: OrganisationUpdate,
     request: Request,
@@ -321,7 +321,7 @@ def update_organisation(
 
     if not (payload.get("temp") and payload.get("superadmin")):
         current_user = get_current_user(credentials, db)
-        Permission("users", "UPDATE")(current_user)
+        await Permission("users", "UPDATE")(current_user)
     else:
         current_user = None
 
@@ -351,7 +351,7 @@ def update_organisation(
 
 
 @router.post("/{org_id}/deactivate", response_model=OrganisationResponse)
-def deactivate_organisation(
+async def deactivate_organisation(
     org_id: str,
     request: Request,
     background_tasks: BackgroundTasks,
@@ -362,7 +362,7 @@ def deactivate_organisation(
 
     if not (payload.get("temp") and payload.get("superadmin")):
         current_user = get_current_user(credentials, db)
-        Permission("users", "DELETE")(current_user)
+        await Permission("users", "DELETE")(current_user)
     else:
         current_user = None
 
@@ -401,7 +401,7 @@ async def change_organisation_password(
 
     if not (payload.get("temp") and payload.get("superadmin")):
         current_user = get_current_user(credentials, db)
-        Permission("users", "UPDATE")(current_user)
+        await Permission("users", "UPDATE")(current_user)
     else:
         current_user = None
 
@@ -423,7 +423,7 @@ async def change_organisation_password(
     return {"message": "Password changed successfully"}
 
 @router.post("/{org_id}/activate", response_model=OrganisationResponse)
-def activate_organisation(
+async def activate_organisation(
     org_id: str,
     request: Request,
     background_tasks: BackgroundTasks,
@@ -435,7 +435,7 @@ def activate_organisation(
     # TEMP SUPERADMIN FLOW (before org selection)
     if not (payload.get("temp") and payload.get("superadmin")):
         current_user = get_current_user(credentials, db)
-        Permission("users", "UPDATE")(current_user)
+        await Permission("users", "UPDATE")(current_user)
     else:
         current_user = None
 

@@ -561,22 +561,41 @@ class RoleService:
 
     @staticmethod
     def _assign_modules(role_id: str, modules: List[Dict], db: Session):
+        added_module_privs = set()
         for module_perm in modules:
-            if module_perm.get('privilege_id'):
-                if module_perm.get('submodule_id'):
+            privilege_id = module_perm.get('privilege_id')
+            if privilege_id:
+                submodule_id = module_perm.get('submodule_id')
+                module_id = module_perm.get('module_id')
+
+                if submodule_id:
                     role_submodule = RoleSubmodule(
                         id=str(uuid.uuid4()),
                         role_id=role_id,
-                        submodule_id=module_perm['submodule_id'],
-                        privilege_id=module_perm['privilege_id']
+                        submodule_id=submodule_id,
+                        privilege_id=privilege_id
                     )
                     db.add(role_submodule)
-                elif module_perm.get('module_id'):
-                    role_module = RoleModule(
-                        id=str(uuid.uuid4()),
-                        role_id=role_id,
-                        module_id=module_perm['module_id'],
-                        privilege_id=module_perm['privilege_id']
-                    )
-                    db.add(role_module)
+
+                    # Inject parent module permission automatically
+                    if module_id and (module_id, privilege_id) not in added_module_privs:
+                        role_module = RoleModule(
+                            id=str(uuid.uuid4()),
+                            role_id=role_id,
+                            module_id=module_id,
+                            privilege_id=privilege_id
+                        )
+                        db.add(role_module)
+                        added_module_privs.add((module_id, privilege_id))
+
+                elif module_id:
+                    if (module_id, privilege_id) not in added_module_privs:
+                        role_module = RoleModule(
+                            id=str(uuid.uuid4()),
+                            role_id=role_id,
+                            module_id=module_id,
+                            privilege_id=privilege_id
+                        )
+                        db.add(role_module)
+                        added_module_privs.add((module_id, privilege_id))
         db.commit()

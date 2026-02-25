@@ -111,7 +111,6 @@ class ActivityService:
             # CASE 2: user_id manually passed
             # ---------------------------------------
             elif user_id:
-                from app.models.user import User
                 user = db.query(User).filter(User.id == user_id).first()
 
                 if user:
