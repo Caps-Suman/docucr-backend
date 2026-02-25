@@ -27,10 +27,6 @@ class ActivityService:
         if not current_user:
             return None
 
-        # logged in as organisation model
-        if isinstance(current_user, Organisation):
-            return str(current_user.id)
-
         # logged in as user under organisation
         if isinstance(current_user, User):
             return str(current_user.organisation_id)
@@ -104,12 +100,8 @@ class ActivityService:
             # ---------------------------------------
             if current_user:
 
-                # Organisation login
-                if current_user.__class__.__name__ == "Organisation":
-                    resolved_org_id = str(current_user.id)
-
                 # User login
-                else:
+                if isinstance(current_user, User):
                     resolved_user_id = str(current_user.id)
 
                     if getattr(current_user, "organisation_id", None):
@@ -282,12 +274,6 @@ class ActivityService:
         if isinstance(current_user, User) and current_user.is_superuser:
             pass
 
-        # -------- ORG LOGIN --------
-        elif isinstance(current_user, Organisation):
-            query = query.filter(
-                ActivityLog.organisation_id == str(current_user.id)
-            )
-
         # -------- USER LOGIN --------
         elif isinstance(current_user, User):
 
@@ -416,14 +402,6 @@ class ActivityService:
         # --------------------------------------------------
         if isinstance(current_user, User) and current_user.is_superuser:
             pass
-
-        # --------------------------------------------------
-        # ORG LOGIN
-        # --------------------------------------------------
-        elif isinstance(current_user, Organisation):
-            query = query.filter(
-                ActivityLog.organisation_id == str(current_user.id)
-            )
 
         # --------------------------------------------------
         # USER LOGIN

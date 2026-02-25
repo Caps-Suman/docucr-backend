@@ -89,7 +89,7 @@ class UserResponse(BaseModel):
     phone_number: Optional[str]
     status_id: Optional[int]
     statusCode: Optional[str]
-    is_superuser: bool
+    is_superuser: Optional[bool] = False
     roles: List[dict]
     supervisor_id: Optional[str]
     client_count: int = 0
@@ -176,25 +176,6 @@ async def get_current_user_profile(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if isinstance(current_user, Organisation):
-        return {
-            "id": current_user.id,
-            "email": current_user.email,
-            "username": current_user.username,
-            "first_name": current_user.first_name,
-            "middle_name": current_user.middle_name,
-            "last_name": current_user.last_name,
-            "phone_country_code": current_user.phone_country_code,
-            "phone_number": current_user.phone_number,
-            "status_id": current_user.status_id,
-            "statusCode": None,
-            "is_superuser": False,
-            "roles": [],
-            "supervisor_id": None,
-            "client_count": 0,
-            "created_by_name": None,
-            "organisation_name": current_user.username
-        }
 
     return UserService._format_user_response_for_me(current_user, db)
 @router.get("/by-organisation")

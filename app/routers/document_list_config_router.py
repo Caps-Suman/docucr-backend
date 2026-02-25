@@ -34,13 +34,9 @@ async def get_config(
     """Get user's document list configuration"""
     try:
         # Determine organisation ID
-        org_id = None
-        if hasattr(current_user, "organisation_id"):
-            org_id = current_user.organisation_id
-        elif hasattr(current_user, "id"):
+        org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+        if not org_id and hasattr(current_user, "id") and not hasattr(current_user, "organisation_id"):
              # Fallback for Organisation object which is its own org
-             # Verify it's an organisation by checking table name or just assuming?
-             # Given the context, if it doesn't have organisation_id but has id, it's likely the Organisation itself.
              org_id = current_user.id
         
         if not org_id:
@@ -88,10 +84,8 @@ async def get_my_config(
     """Get user's document list configuration without strict permissions"""
     try:
         # Determine organisation ID
-        org_id = None
-        if hasattr(current_user, "organisation_id"):
-            org_id = current_user.organisation_id
-        elif hasattr(current_user, "id"):
+        org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+        if not org_id and hasattr(current_user, "id") and not hasattr(current_user, "organisation_id"):
              org_id = current_user.id
 
         if not org_id:
@@ -164,10 +158,8 @@ async def update_config(
             })
 
         # Determine organisation ID
-        org_id = None
-        if hasattr(current_user, "organisation_id"):
-            org_id = current_user.organisation_id
-        elif hasattr(current_user, "id"):
+        org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+        if not org_id and hasattr(current_user, "id") and not hasattr(current_user, "organisation_id"):
              org_id = current_user.id
 
         if not org_id:
@@ -211,10 +203,8 @@ async def delete_config(
     """Delete user's document list configuration (reset to default)"""
     try:
         # Determine organisation ID
-        org_id = None
-        if hasattr(current_user, "organisation_id"):
-            org_id = current_user.organisation_id
-        elif hasattr(current_user, "id"):
+        org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+        if not org_id and hasattr(current_user, "id") and not hasattr(current_user, "organisation_id"):
              org_id = current_user.id
 
         if not org_id:

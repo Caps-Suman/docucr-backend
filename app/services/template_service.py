@@ -26,7 +26,7 @@ class TemplateService:
         if getattr(self.current_user, "context_temp", False):
             return None
 
-        return getattr(self.current_user, "context_organisation_id", None)
+        return getattr(self.current_user, "context_organisation_id", None) or getattr(self.current_user, "organisation_id", None)
 
     def get_all(self) -> List[Dict]:
 
@@ -120,8 +120,10 @@ class TemplateService:
             raise HTTPException(401, "Authentication required")
 
         # 🔒 org context from token
-        org_id = getattr(self.current_user, "context_organisation_id", None)
-        if not org_id:
+        org_id = getattr(self.current_user, "context_organisation_id", None) or getattr(self.current_user, "organisation_id", None)
+        is_super = getattr(self.current_user, "context_is_superadmin", getattr(self.current_user, "is_superuser", False))
+
+        if not is_super and not org_id:
             raise HTTPException(403, "No organisation selected")
 
         # -----------------------------

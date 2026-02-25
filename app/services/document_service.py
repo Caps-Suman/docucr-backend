@@ -65,16 +65,20 @@ class DocumentService:
         # =========================================
         # ORG CONTEXT
         # =========================================
-        org_id = getattr(actor, "context_organisation_id", None)
+        org_id = getattr(actor, "context_organisation_id", None) or getattr(actor, "organisation_id", None)
+        if not org_id and hasattr(actor, "id") and not hasattr(actor, "organisation_id"):
+             org_id = actor.id
 
         # If no org selected → block
         if not org_id:
             return base.filter(text("1=0"))
 
         # =========================================
-        # SUPERADMIN AFTER SELECTING ORG
+        # SUPERADMIN / ORG ADMIN ACCESS
         # =========================================
-        if getattr(actor, "is_superuser", False):
+        role_names = [r.name for r in getattr(actor, "roles", [])]
+        
+        if getattr(actor, "is_superuser", False) or "ORGANISATION_ROLE" in role_names:
             return base.filter(Document.organisation_id == org_id)
 
         # =========================================
@@ -910,7 +914,9 @@ class DocumentService:
         # =====================================================
         # OPTIONAL FILTERS
         # =====================================================
-        org_id = getattr(current_user, "context_organisation_id", None)
+        org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+        if not org_id and hasattr(current_user, "id") and not hasattr(current_user, "organisation_id"):
+             org_id = current_user.id
         if org_id:
             query = query.filter(Document.organisation_id == org_id)
 
@@ -1203,9 +1209,6 @@ class DocumentService:
         if getattr(current_user, "is_superuser", False):
             return None
 
-        if isinstance(current_user, Organisation):
-            return str(current_user.id)
-
         if isinstance(current_user, User):
             return str(current_user.organisation_id) if current_user.organisation_id else None
 
@@ -1234,12 +1237,6 @@ class DocumentService:
             return query.all()
 
         org_id = DocumentService._resolve_org_id(current_user)
-
-        # =============================
-        # ORGANISATION LOGIN
-        # =============================
-        if isinstance(current_user, Organisation):
-            return query.filter(User.organisation_id == org_id).all()
 
         # =============================
         # ORG USER LOGIN

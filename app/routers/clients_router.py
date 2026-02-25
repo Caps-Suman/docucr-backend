@@ -319,19 +319,6 @@ def get_visible_clients(
 ):
 
     # --------------------------------------------
-    # LOGIN AS ORGANISATION
-    # --------------------------------------------
-    if isinstance(current_user, Organisation):
-        clients = db.query(Client).filter(
-            Client.organisation_id == current_user.id
-        ).all()
-
-        return [
-            ClientResponse(**ClientService._format_client(c, db))
-            for c in clients
-        ]
-
-    # --------------------------------------------
     # LOGIN AS USER
     # --------------------------------------------
     if isinstance(current_user, User):
@@ -627,11 +614,6 @@ async def activate_client(
     if isinstance(current_user, User) and current_user.is_superuser:
         allow = True
 
-    # ORG LOGIN
-    elif isinstance(current_user, Organisation):
-        if str(client.organisation_id) == str(current_user.id):
-            allow = True
-
     # ORG USER
     elif isinstance(current_user, User):
         if current_user.organisation_id and str(client.organisation_id) == str(current_user.organisation_id):
@@ -675,11 +657,6 @@ async def deactivate_client(
     # SUPERADMIN
     if isinstance(current_user, User) and current_user.is_superuser:
         allow = True
-
-    # ORG LOGIN
-    elif isinstance(current_user, Organisation):
-        if str(client.organisation_id) == str(current_user.id):
-            allow = True
 
     # ORG USER
     elif isinstance(current_user, User):

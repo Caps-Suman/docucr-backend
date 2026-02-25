@@ -21,8 +21,8 @@ class SOPService:
 
     @staticmethod
     def _get_org_id(current_user):
-        org_id = getattr(current_user, "context_organisation_id", None)
-        is_super = getattr(current_user, "context_is_superadmin", False)
+        org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+        is_super = getattr(current_user, "context_is_superadmin", getattr(current_user, "is_superuser", False))
 
         # normal user must have org
         if not org_id and not is_super:

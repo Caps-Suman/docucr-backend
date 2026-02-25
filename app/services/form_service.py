@@ -19,7 +19,7 @@ class FormService:
             return None
 
         # org selected context
-        return getattr(current_user, "context_organisation_id", None)
+        return getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
     @staticmethod
     def _apply_access_filter(query, current_user):
 
