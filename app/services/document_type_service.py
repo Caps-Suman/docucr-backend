@@ -107,6 +107,9 @@ class DocumentTypeService:
         if self._check_duplicate(name):
             raise HTTPException(400, f"Document type '{name}' already exists")
 
+        # -----------------------------
+        # Resolve status → DEFAULT ACTIVE
+        # -----------------------------
         if status_id:
             if isinstance(status_id, str) and not status_id.isdigit():
                 st = self.db.query(Status).filter(Status.code == status_id).first()
@@ -114,8 +117,10 @@ class DocumentTypeService:
             else:
                 status_id_val = status_id
         else:
-            inactive = self.db.query(Status).filter(Status.code == "INACTIVE").first()
-            status_id_val = inactive.id if inactive else None
+            active = self.db.query(Status).filter(Status.code == "ACTIVE").first()
+            if not active:
+                raise HTTPException(400, "Active status missing")
+            status_id_val = active.id
 
         doc = DocumentType(
             name=name,

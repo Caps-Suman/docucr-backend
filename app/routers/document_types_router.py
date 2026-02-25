@@ -21,12 +21,12 @@ router = APIRouter(prefix="/api/document-types", tags=["document-types"], depend
 class DocumentTypeCreate(BaseModel):
     name: str
     description: str = None
-    status_id: str = 'inactive'
+    status_code: str = None
 
 class DocumentTypeUpdate(BaseModel):
     name: str = None
     description: str = None
-    status_id: str = None
+    status_code: str = None
 
 class DocumentTypeResponse(BaseModel):
     id: UUID
@@ -88,7 +88,7 @@ def create_document_type(
 ):
     """Create a new document type"""
     service = DocumentTypeService(db, current_user)
-    result = service.create(document_type_data.name, document_type_data.description, document_type_data.status_id)
+    result = service.create(document_type_data.name, document_type_data.description, document_type_data.status_code)
     
     ActivityService.log(
         db=db,

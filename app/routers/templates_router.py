@@ -109,7 +109,7 @@ def create_template(
         action="CREATE",
         entity_type="template",
         entity_id=str(template.id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": template.template_name},
         request=req,
         background_tasks=background_tasks

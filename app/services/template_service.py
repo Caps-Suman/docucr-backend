@@ -119,7 +119,6 @@ class TemplateService:
         if not self.current_user:
             raise HTTPException(401, "Authentication required")
 
-        # 🔒 org context from token
         org_id = getattr(self.current_user, "context_organisation_id", None) or getattr(self.current_user, "organisation_id", None)
         is_super = getattr(self.current_user, "context_is_superadmin", getattr(self.current_user, "is_superuser", False))
 
@@ -127,7 +126,19 @@ class TemplateService:
             raise HTTPException(403, "No organisation selected")
 
         # -----------------------------
-        # Resolve status
+        # Resolve ACTIVE + INACTIVE status ids
+        # -----------------------------
+        active_status = self.db.query(Status).filter(Status.code == "ACTIVE").first()
+        inactive_status = self.db.query(Status).filter(Status.code == "INACTIVE").first()
+
+        if not active_status:
+            raise HTTPException(400, "Active status missing")
+        if not inactive_status:
+            raise HTTPException(400, "Inactive status missing")
+
+        # -----------------------------
+        # Resolve requested status
+        # DEFAULT → ACTIVE
         # -----------------------------
         if status_id:
             if isinstance(status_id, str) and not status_id.isdigit():
@@ -136,13 +147,10 @@ class TemplateService:
             else:
                 status_id_val = status_id
         else:
-            inactive = self.db.query(Status).filter(Status.code == "INACTIVE").first()
-            if not inactive:
-                raise HTTPException(400, "Inactive status missing")
-            status_id_val = inactive.id
+            status_id_val = active_status.id
 
         # -----------------------------
-        # Check doc type
+        # Validate doc type
         # -----------------------------
         doc_type = self.db.query(DocumentType).filter(
             DocumentType.id == document_type_id
@@ -152,25 +160,20 @@ class TemplateService:
             raise HTTPException(400, "Document type not found")
 
         # -----------------------------
-        # Prevent duplicate ACTIVE template in same org
+        # If creating ACTIVE → deactivate old one
         # -----------------------------
-        active_status = self.db.query(Status).filter(Status.code == "ACTIVE").first()
-
-        if active_status:
-            existing = self.db.query(Template).filter(
+        if status_id_val == active_status.id:
+            existing_active = self.db.query(Template).filter(
                 Template.document_type_id == document_type_id,
                 Template.organisation_id == org_id,
                 Template.status_id == active_status.id
             ).first()
 
-            if existing:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Active template already exists for this document type"
-                )
+            if existing_active:
+                existing_active.status_id = inactive_status.id
 
         # -----------------------------
-        # Create
+        # Create template
         # -----------------------------
         template = Template(
             template_name=template_name,
