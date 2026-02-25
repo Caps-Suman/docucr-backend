@@ -145,17 +145,16 @@ def check_providers(
     current_user = Depends(get_current_user)
 ):
     provider_ids = payload.get("provider_ids", [])
+    sop_id = payload.get("sop_id")   # 👈 MUST exist
 
     blocked = SOPService.get_blocked_providers(
         client_id=client_id,
         provider_ids=provider_ids,
-        db=db
+        db=db,
+        exclude_sop_id=sop_id        # 👈 MUST pass
     )
 
-    return {
-        "blocked_provider_ids": blocked
-    }
-
+    return {"blocked_provider_ids": blocked}
 @router.post("/check-client-sop/{client_id}")
 def check_client_sop(
     client_id: str,

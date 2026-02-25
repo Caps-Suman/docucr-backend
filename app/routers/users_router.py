@@ -347,7 +347,7 @@ async def get_user(
 async def create_user(
     user: UserCreate, 
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("users", "CREATE")),
+    permission: bool = Depends(Permission("user_module", "CREATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
     current_user: User = Depends(get_current_user)

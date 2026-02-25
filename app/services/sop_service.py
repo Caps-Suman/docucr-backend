@@ -50,12 +50,12 @@ class SOPService:
 
 
     @staticmethod
-    def check_sop_exists(client_id: str, provider_ids: list[str] | None, db: Session) -> bool:
-        """
-        NPI1 → only one SOP per client
-        NPI2 → providers cannot exist in another active SOP
-        """
-
+    def check_sop_exists(
+        client_id: str,
+        provider_ids: list[str] | None,
+        db: Session,
+        exclude_sop_id: str | None = None   # 🔥 important
+    ):
         active_status = db.query(Status).filter(
             Status.code == "ACTIVE",
             Status.type == "GENERAL"
@@ -68,41 +68,47 @@ class SOPService:
         if not client:
             return False
 
-        # -----------------------------
-        # NPI1
-        # -----------------------------
+        # -------------------------
+        # NPI1 → Individual client
+        # -------------------------
         if client.type == "Individual":
-            exists_q = db.query(SOP.id).filter(
+
+            q = db.query(SOP.id).filter(
                 SOP.client_id == client_id,
                 SOP.status_id == active_status.id
-            ).first()
-
-            return bool(exists_q)
-
-        # -----------------------------
-        # NPI2
-        # -----------------------------
-        if client.type != "Individual":
-
-            if not provider_ids:
-                return False
-
-            # if ANY provider already linked to active SOP → block
-            exists_q = (
-                db.query(SopProviderMapping.id)
-                .join(SOP, SOP.id == SopProviderMapping.sop_id)
-                .filter(
-                    SOP.client_id == client_id,
-                    SOP.status_id == active_status.id,
-                    SopProviderMapping.provider_id.in_(provider_ids)
-                )
-                .first()
             )
 
-            return bool(exists_q)
+            # 🔥 EXCLUDE current SOP during edit
+            if exclude_sop_id:
+                q = q.filter(SOP.id != exclude_sop_id)
 
-        return False
+            exists = db.query(q.exists()).scalar()
 
+            if exists:
+                return True
+
+            return False
+
+        # -------------------------
+        # NPI2 → Providers
+        # -------------------------
+        if not provider_ids:
+            return False
+
+        q = (
+            db.query(SopProviderMapping.id)
+            .join(SOP, SOP.id == SopProviderMapping.sop_id)
+            .filter(
+                SOP.client_id == client_id,
+                SOP.status_id == active_status.id,
+                SopProviderMapping.provider_id.in_(provider_ids)
+            )
+        )
+
+        if exclude_sop_id:
+            q = q.filter(SOP.id != exclude_sop_id)
+
+        return db.query(q.exists()).scalar()
     @staticmethod
     def get_sops(
         db: Session,
@@ -346,14 +352,7 @@ class SOPService:
         ]
         return formatted_sop
     @staticmethod
-    def get_blocked_providers(
-        client_id: str,
-        provider_ids: list[str],
-        db: Session
-    ) -> list[str]:
-        """
-        Returns provider IDs that already have ACTIVE SOP
-        """
+    def get_blocked_providers(client_id, provider_ids, db, exclude_sop_id=None):
 
         active_status = db.query(Status).filter(
             Status.code == "ACTIVE",
@@ -367,20 +366,34 @@ class SOPService:
         if not client:
             return []
 
-        # NPI1 → whole client blocked
+        # =========================================================
+        # 🔴 INDIVIDUAL CLIENT CASE
+        # =========================================================
         if client.type == "Individual":
-            exists = db.query(SOP.id).filter(
+
+            q = db.query(SOP.id).filter(
                 SOP.client_id == client_id,
                 SOP.status_id == active_status.id
-            ).first()
+            )
+
+            # 🔥 THIS IS THE MISSING PIECE
+            if exclude_sop_id:
+                q = q.filter(SOP.id != exclude_sop_id)
+
+            exists = db.query(q.exists()).scalar()
 
             if exists:
-                return ["CLIENT_BLOCKED"]  # special flag
+                return ["CLIENT_BLOCKED"]
 
             return []
 
-        # NPI2 → provider-level block
-        blocked = (
+        # =========================================================
+        # 🔴 PROVIDER CASE
+        # =========================================================
+        if not provider_ids:
+            return []
+
+        q = (
             db.query(SopProviderMapping.provider_id)
             .join(SOP, SOP.id == SopProviderMapping.sop_id)
             .filter(
@@ -388,11 +401,13 @@ class SOPService:
                 SOP.status_id == active_status.id,
                 SopProviderMapping.provider_id.in_(provider_ids)
             )
-            .all()
         )
 
-        return [str(b[0]) for b in blocked]
+        # 🔥 ALSO EXCLUDE CURRENT SOP HERE
+        if exclude_sop_id:
+            q = q.filter(SOP.id != exclude_sop_id)
 
+        return [r.provider_id for r in q.all()]
     @staticmethod
     def create_sop(sop_data: Dict, db: Session, current_user: Any, client_id:str) -> SOP:
         # Extract provider_ids
@@ -462,9 +477,10 @@ class SOPService:
         return db_sop
 
     @staticmethod
-    def update_sop(sop_id: str, sop_data: Dict, db: Session, current_user: User = None) -> Optional[SOP]:
-        # db_sop = SOPService.get_sop_by_id(sop_id, db)
+    def update_sop(sop_id: str, sop_data: Dict, db: Session, current_user: User):
+
         org_id = SOPService._get_org_id(current_user)
+
         db_sop = db.query(SOP).filter(
             SOP.id == sop_id,
             SOP.organisation_id == org_id
@@ -472,53 +488,65 @@ class SOPService:
 
         if not db_sop:
             return None
-        
-        # --- Provider Update Logic ---
-        if 'provider_ids' in sop_data:
-            # Get list or empty if None
-            provider_ids_raw = sop_data.pop('provider_ids')
-            new_provider_ids = set(str(pid) for pid in (provider_ids_raw or []))
 
-            # Fetch existing mappings
-            existing_mappings = (
-                db.query(SopProviderMapping)
+        # 🔥 handle providers correctly
+        provider_ids = sop_data.get("provider_ids")
+
+        if provider_ids is None:
+            provider_ids = [
+                str(m.provider_id)
+                for m in db.query(SopProviderMapping)
                 .filter(SopProviderMapping.sop_id == sop_id)
                 .all()
-            )
-            existing_ids = {str(m.provider_id) for m in existing_mappings}
+            ]
 
-            to_add = new_provider_ids - existing_ids
-            to_remove = existing_ids - new_provider_ids
+        # 🔥 validation excluding self
+        if SOPService.check_sop_exists(
+            client_id=db_sop.client_id,
+            provider_ids=provider_ids,
+            db=db,
+            exclude_sop_id=sop_id,   # 🔥 THIS IS THE FIX
+        ):
+            raise HTTPException(400, "Provider already has active SOP")
 
-            # Remove
+        # -------------------------
+        # update providers
+        # -------------------------
+        if "provider_ids" in sop_data:
+            new_ids = set(provider_ids)
+
+            existing = db.query(SopProviderMapping).filter(
+                SopProviderMapping.sop_id == sop_id
+            ).all()
+
+            existing_ids = {str(m.provider_id) for m in existing}
+
+            to_add = new_ids - existing_ids
+            to_remove = existing_ids - new_ids
+
             if to_remove:
                 db.query(SopProviderMapping).filter(
                     SopProviderMapping.sop_id == sop_id,
-                    SopProviderMapping.provider_id.in_([uuid.UUID(pid) for pid in to_remove])
+                    SopProviderMapping.provider_id.in_(to_remove)
                 ).delete(synchronize_session=False)
 
-            # Add
-            if to_add:
-                new_objs = [
-                    SopProviderMapping(
-                        sop_id=uuid.UUID(sop_id),
-                        provider_id=uuid.UUID(pid)
-                    )
-                    for pid in to_add
-                ]
-                db.add_all(new_objs)
-        # Update other fields
-        for key, value in sop_data.items():
-            if key == 'client_id' and not value:
-                 setattr(db_sop, key, None)
-            else:
-                setattr(db_sop, key, value)
-        
-        db.commit()
-        
-        # Re-fetch full object to include updated providers
-        return SOPService.get_sop_by_id(sop_id, db, current_user)
+            for pid in to_add:
+                db.add(SopProviderMapping(
+                    sop_id=sop_id,
+                    provider_id=pid
+                ))
 
+        # -------------------------
+        # update fields
+        # -------------------------
+        for k, v in sop_data.items():
+            if k != "provider_ids":
+                setattr(db_sop, k, v)
+
+        db.commit()
+        db.refresh(db_sop)
+
+        return SOPService.get_sop_by_id(sop_id, db, current_user)
     @staticmethod
     def delete_sop(sop_id: str, db: Session, current_user: User = None) -> bool:
         

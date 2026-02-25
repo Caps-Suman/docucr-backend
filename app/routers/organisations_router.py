@@ -321,7 +321,7 @@ async def update_organisation(
 
     if not (payload.get("temp") and payload.get("superadmin")):
         current_user = get_current_user(credentials, db)
-        await Permission("users", "UPDATE")(current_user)
+        Permission("users", "UPDATE")(current_user)
     else:
         current_user = None
 
