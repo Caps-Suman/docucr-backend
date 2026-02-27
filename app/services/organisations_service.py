@@ -395,29 +395,67 @@ class OrganisationService:
     # -------------------------------------------------
     @staticmethod
     def activate_organisation(org_id: str, db: Session):
-        org = db.query(Organisation).filter(Organisation.id == org_id).first()
+        org = db.query(Organisation).filter(
+            Organisation.id == org_id
+        ).first()
+
         if not org:
             return None
 
-        active = db.query(Status).filter(Status.code == "ACTIVE").first()
+        active = db.query(Status).filter(
+            Status.code == "ACTIVE"
+        ).first()
+
+        if not active:
+            raise Exception("ACTIVE status not found")
+
+        # 1️⃣ Activate organisation
         org.status_id = active.id
+
+        # 2️⃣ Reactivate all users of this organisation
+        db.query(User).filter(
+            User.organisation_id == org_id
+        ).update(
+            {"status_id": active.id},
+            synchronize_session=False
+        )
+
         db.commit()
         db.refresh(org)
 
-        return OrganisationService._format_organisation(org,db)
+        return OrganisationService._format_organisation(org, db)
 
     @staticmethod
     def deactivate_organisation(org_id: str, db: Session):
-        org = db.query(Organisation).filter(Organisation.id == org_id).first()
+        org = db.query(Organisation).filter(
+            Organisation.id == org_id
+        ).first()
+
         if not org:
             return None
 
-        inactive = db.query(Status).filter(Status.code == "INACTIVE").first()
+        inactive = db.query(Status).filter(
+            Status.code == "INACTIVE"
+        ).first()
+
+        if not inactive:
+            raise Exception("INACTIVE status not found")
+
+        # 1️⃣ Deactivate organisation
         org.status_id = inactive.id
+
+        # 2️⃣ Deactivate all users of this organisation
+        db.query(User).filter(
+            User.organisation_id == org_id
+        ).update(
+            {"status_id": inactive.id},
+            synchronize_session=False
+        )
+
         db.commit()
         db.refresh(org)
 
-        return OrganisationService._format_organisation(org,db)
+        return OrganisationService._format_organisation(org, db)
 
     # -------------------------------------------------
     # STATS

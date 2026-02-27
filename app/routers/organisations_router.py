@@ -384,8 +384,6 @@ async def deactivate_organisation(
 
     return OrganisationResponse(**deactivated_org)
 
-
-
 class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=6, description="New password for the organisation")
 @router.put("/{org_id}/change-password")

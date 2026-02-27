@@ -54,36 +54,22 @@ class DocumentService:
     @staticmethod
     def _document_access_query(db: Session, actor: User):
         base = db.query(Document)
-
-        # =========================================
-        # TEMP SUPERADMIN (before org selection)
-        # should never see documents
-        # =========================================
         if getattr(actor, "context_temp", False):
             return base.filter(text("1=0"))
 
-        # =========================================
-        # ORG CONTEXT
-        # =========================================
+    
         org_id = getattr(actor, "context_organisation_id", None) or getattr(actor, "organisation_id", None)
         if not org_id and hasattr(actor, "id") and not hasattr(actor, "organisation_id"):
              org_id = actor.id
 
-        # If no org selected → block
         if not org_id:
             return base.filter(text("1=0"))
 
-        # =========================================
-        # SUPERADMIN / ORG ADMIN ACCESS
-        # =========================================
         role_names = [r.name for r in getattr(actor, "roles", [])]
         
         if getattr(actor, "is_superuser", False) or "ORGANISATION_ROLE" in role_names:
             return base.filter(Document.organisation_id == org_id)
 
-        # =========================================
-        # CLIENT USER
-        # =========================================
         if actor.is_client:
             client_docs = base.filter(
                 and_(
@@ -105,10 +91,6 @@ class DocumentService:
             )
 
             return client_docs.union(shared_docs)
-
-        # =========================================
-        # INTERNAL STAFF (ORG USER)
-        # =========================================
         assigned_clients = (
             db.query(UserClient.client_id)
             .filter(UserClient.user_id == actor.id)
@@ -136,92 +118,6 @@ class DocumentService:
         return staff_docs.union(shared_docs)
         # fallback
         return base.filter(Document.created_by == actor.id)
-
-    # @staticmethod
-    # def _document_access_query(db: Session, actor):
-    #     base = db.query(Document)
-
-    #     # -----------------------------
-    #     # SUPER ADMIN (User)
-    #     # -----------------------------
-    #     if isinstance(actor, User):
-    #         role_names = [r.name for r in actor.roles]
-    #         if "SUPER_ADMIN" in role_names:
-    #             return base
-
-    #     # -----------------------------
-    #     # 🔥 ORGANISATION LOGIN
-    #     # actor = Organisation
-    #     # -----------------------------
-    #     if isinstance(actor, Organisation):
-    #         org_docs = base.filter(
-    #             Document.organisation_id == actor.id
-    #         )
-
-    #         # also allow shared docs TO organisation users later if needed
-    #         return org_docs
-
-    #     # -----------------------------
-    #     # CLIENT USER
-    #     # -----------------------------
-    #     if isinstance(actor, User) and actor.client_id:
-    #         client_docs = base.filter(
-    #             Document.client_id == actor.client_id
-    #         )
-    #     else:
-    #         client_docs = None
-
-    #     # -----------------------------
-    #     # STAFF USER (org member)
-    #     # -----------------------------
-    #     if isinstance(actor, User) and actor.organisation_id:
-
-    #         assigned_clients = (
-    #             db.query(UserClient.client_id)
-    #             .filter(UserClient.user_id == actor.id)
-    #         )
-
-    #         staff_docs = base.filter(
-    #             or_(
-    #                 Document.created_by == actor.id,
-    #                 Document.organisation_id == actor.organisation_id,
-    #                 Document.client_id.in_(assigned_clients),
-    #             )
-    #         )
-    #     else:
-    #         staff_docs = None
-
-    #     # -----------------------------
-    #     # OWN DOCS fallback
-    #     # -----------------------------
-    #     own_docs = base.filter(Document.created_by == actor.id)
-
-    #     # -----------------------------
-    #     # 🔥 SHARED ACCESS (users only)
-    #     # -----------------------------
-    #     from app.models.document_share import DocumentShare
-
-    #     if isinstance(actor, User):
-    #         shared_docs = (
-    #             db.query(Document)
-    #             .join(DocumentShare, DocumentShare.document_id == Document.id)
-    #             .filter(DocumentShare.user_id == actor.id)
-    #         )
-    #     else:
-    #         shared_docs = None
-
-    #     # -----------------------------
-    #     # COMBINE ALL
-    #     # -----------------------------
-    #     queries = [q for q in [client_docs, staff_docs, own_docs, shared_docs] if q]
-
-    #     if queries:
-    #         q = queries[0]
-    #         for other in queries[1:]:
-    #             q = q.union(other)
-    #         return q
-
-    #     return own_docs
 
 
     @staticmethod
@@ -291,14 +187,6 @@ class DocumentService:
     @staticmethod
     async def create_document(db: Session, file: UploadFile, user) -> Document:
         status_id = DocumentService.get_status_id_by_code(db, "QUEUED")
-
-        # determine org correctly
-        # if hasattr(user, "organisation_id") and user.organisation_id:
-        #     org_id = getattr(user, "context_organisation_id", None)
-        # elif user.__class__.__name__ == "Organisation":
-        #     org_id = user.id
-        # else:
-        #     org_id = None
         if isinstance(user, User):
             created_by = user.id
             org_id = getattr(user, "context_organisation_id", None)
@@ -667,7 +555,6 @@ class DocumentService:
         """Handle ONLY the AI analysis part"""
         from ..core.database import SessionLocal
         db = SessionLocal()
-        
         try:
             # Update status to ANALYZING
             await DocumentService.update_document_status(
@@ -699,20 +586,66 @@ class DocumentService:
             from ..services.ai_service import ai_service
             
             # Build schemas
-            schemas = []
-            templates = db.query(Template).all()
-            template_map = {str(t.document_type_id): t for t in templates}
-            doc_types = db.query(DocumentType).all()
-            doc_type_map = {t.name: t for t in doc_types}
-            
-            for dt in doc_types:
-                t = template_map.get(str(dt.id))
-                if t:
-                    schemas.append({
-                        "type_name": dt.name,
-                        "fields": t.extraction_fields
-                    })
+            from collections import defaultdict
 
+            active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+            if not active_status:
+                raise Exception("ACTIVE status not found")
+
+            # Only ACTIVE templates for this organisation
+            templates = db.query(Template).filter(
+                Template.status_id == active_status.id,
+                Template.organisation_id == document.organisation_id
+            ).all()
+
+            if not templates:
+                raise Exception("No active templates found for this organisation")
+
+            # Fetch doc types for this organisation
+            doc_types = db.query(DocumentType).filter(
+                DocumentType.organisation_id == document.organisation_id
+            ).all()
+
+            doc_type_map = {
+                dt.name.strip().upper(): dt
+                for dt in doc_types
+            }
+
+            # Group templates by document_type_id
+            template_group = defaultdict(list)
+            for t in templates:
+                template_group[t.document_type_id].append(t)
+
+            schemas = []
+            active_template_map = {}
+
+            for dt in doc_types:
+                grouped = template_group.get(dt.id, [])
+
+                if not grouped:
+                    continue
+
+                # 🚨 HARD ENFORCEMENT: Only ONE active template per doc type
+                if len(grouped) > 1:
+                    raise Exception(
+                        f"Multiple ACTIVE templates found for document type {dt.name}"
+                    )
+
+                template_obj = grouped[0]
+
+                if not template_obj.extraction_fields:
+                    continue
+
+                normalized_name = dt.name.strip().upper()
+
+                schemas.append({
+                    "type_name": normalized_name,
+                    "fields": template_obj.extraction_fields
+                })
+
+                active_template_map[normalized_name] = template_obj
+
+            print("FINAL SCHEMAS:", schemas)
             # Define Cancellation Check Callback
             async def check_cancelled():
                 # We need a fresh check
@@ -735,43 +668,95 @@ class DocumentService:
                 check_cancelled_callback=check_cancelled
             )
             # Process Findings
-            findings = analysis_result.get("findings", [])
+            documents = analysis_result.get("findings", [])
+            print("AI RAW RESULT:", json.dumps(analysis_result, indent=2))
+            def normalize_fields(raw_fields):
+                if isinstance(raw_fields, dict):
+                    return raw_fields
+
+                if isinstance(raw_fields, list):
+                    normalized = {}
+                    for item in raw_fields:
+                        field_name = item.get("fieldName")
+                        value = item.get("exampleValue")
+                        if field_name:
+                            normalized[field_name] = value
+                    return normalized
+
+                return {}
+            # 🔥 Clear previous extracted/unverified docs
+            db.query(ExtractedDocument).filter(
+                ExtractedDocument.document_id == document.id
+            ).delete()
+
+            db.query(UnverifiedDocument).filter(
+                UnverifiedDocument.document_id == document.id
+            ).delete()
+
+            db.commit()
             excel_rows = []
 
-            for finding in findings:
-                f_type = finding.get("type", "Unknown")
-                f_range = finding.get("page_range")
-                f_data = finding.get("data")
-                f_confidence = finding.get("confidence", 0.0)
-                
-                excel_rows.append({
-                    "Document Type": f_type,
-                    "Page Range": f_range,
-                    "Extracted Data": str(f_data)
-                })
 
-                doc_type_obj = doc_type_map.get(f_type)
-                if doc_type_obj:
-                    t = template_map.get(str(doc_type_obj.id))
+            for doc in documents:
+                doc_type_raw = doc.get("type", "")
+                doc_type = doc_type_raw.strip().upper()
+
+                page_range = doc.get("page_range")
+                confidence = doc.get("confidence", 1.0)
+
+                if not doc_type or not page_range:
+                    continue
+
+                raw_fields = doc.get("data", {}).get("fields", {})
+                fields = normalize_fields(raw_fields)
+
+                # 🔥 Resolve template FIRST (this was your bug)
+                doc_type_obj = doc_type_map.get(doc_type)
+                template_obj = active_template_map.get(doc_type)
+
+                if template_obj:
+                    expected_fields = [
+                        f["fieldName"]
+                        for f in template_obj.extraction_fields
+                    ]
+
+                    validated = {}
+                    for ef in expected_fields:
+                        validated[ef] = fields.get(ef)
+
+                    fields = validated
+                    row = {
+                        "Document Type": doc_type,
+                        "Page Range": page_range,
+                    }
+
+                    for key, value in fields.items():
+                        row[key] = value
+
+                    excel_rows.append(row)
+                # -----------------------------
+                # Save
+                # -----------------------------
+                if doc_type_obj and template_obj:
                     extracted_doc = ExtractedDocument(
                         document_id=document.id,
                         document_type_id=doc_type_obj.id,
-                        template_id=t.id if t else None,
-                        extracted_data=f_data,
-                        page_range=f_range,
-                        confidence=f_confidence
+                        template_id=template_obj.id,
+                        extracted_data=fields,
+                        page_range=page_range,
+                        confidence=confidence
                     )
                     db.add(extracted_doc)
                 else:
                     unverified_doc = UnverifiedDocument(
                         document_id=document.id,
-                        suspected_type=f_type,
-                        page_range=f_range,
-                        extracted_data=f_data,
+                        suspected_type=doc_type_raw,
+                        page_range=page_range,
+                        extracted_data=fields,
                         status="PENDING"
                     )
                     db.add(unverified_doc)
-            
+
             db.commit()
 
             # Excel Report
@@ -793,7 +778,7 @@ class DocumentService:
                 db.commit()
 
             # Check if any findings reported an error
-            error_findings = [f for f in findings if f.get("type") == "Error" or f.get("type") == "Unknown" and "error" in f.get("data", {})]
+            error_findings = [f for f in documents if f.get("type") == "Error" or f.get("type") == "Unknown" and "error" in f.get("data", {})]
             
             if error_findings:
                 # If we have errors, mark as AI_FAILED and use the first error message
@@ -858,7 +843,7 @@ class DocumentService:
                     str((db.query(Document).filter(Document.id == document_id).first()).created_by) if db.query(Document).filter(Document.id == document_id).first() else "Unknown",
                     SessionLocal
                 ))
-            
+            print("AI RESULT:", json.dumps(analysis_result, indent=2))
             print(f"AI Analysis {'Cancelled' if is_cancelled else 'Failed'} for {document_id}: {e}")
         finally:
             db.close()
@@ -883,19 +868,11 @@ class DocumentService:
         from datetime import datetime, timedelta
         from sqlalchemy import and_, func
 
-        # =====================================================
-        # BASE QUERY — SINGLE SOURCE OF TRUTH
-        # =====================================================
         query = DocumentService._document_access_query(db, current_user)
 
         query = query.options(joinedload(Document.status))
         query = query.options(joinedload(Document.form_data_relation))
 
-        print('calling for get douc')
-
-        # =====================================================
-        # SHARED WITH ME
-        # =====================================================
         base_query = DocumentService._document_access_query(db, current_user)
 
         if shared_only and isinstance(current_user, User):
@@ -910,10 +887,6 @@ class DocumentService:
         else:
             query = base_query
 
-
-        # =====================================================
-        # OPTIONAL FILTERS
-        # =====================================================
         org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
         if not org_id and hasattr(current_user, "id") and not hasattr(current_user, "organisation_id"):
              org_id = current_user.id
@@ -926,9 +899,7 @@ class DocumentService:
         if client_id:
             query = query.filter(Document.client_id == client_id)
 
-        # -------------------------
-        # STATUS
-        # -------------------------
+      
         if status_id:
             code = str(status_id).upper()
 
@@ -943,23 +914,14 @@ class DocumentService:
                     or_(Document.is_archived == False, Document.is_archived.is_(None))
                 )
 
-        # -------------------------
-        # DOCUMENT TYPE
-        # -------------------------
         if document_type_id:
             query = query.filter(Document.document_type_id == document_type_id)
 
-        # -------------------------
-        # SEARCH
-        # -------------------------
+     
         if search_query:
             query = query.filter(
                 Document.original_filename.ilike(f"%{search_query}%")
             )
-
-        # -------------------------
-        # DATE FILTERS
-        # -------------------------
         if date_from:
             try:
                 dt = datetime.fromisoformat(date_from)
@@ -974,9 +936,6 @@ class DocumentService:
             except:
                 pass
 
-        # =====================================================
-        # FORM FIELD FILTERS (SAFE CAST)
-        # =====================================================
         if form_filters:
             for field_id, value in form_filters.items():
                 if not value:
@@ -987,7 +946,6 @@ class DocumentService:
                     DocumentFormData.document_id == Document.id
                 )
 
-                # ---- DATE FIELD ----
                 if "T" in str(value):
                     try:
                         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -1010,20 +968,13 @@ class DocumentService:
                     except:
                         pass
 
-                # ---- NORMAL FIELD ----
                 else:
                     query = query.filter(
                         DocumentFormData.data[field_id].astext == str(value)
                     )
 
-        # =====================================================
-        # TOTAL COUNT
-        # =====================================================
         total = query.count()
 
-        # =====================================================
-        # PAGINATION
-        # =====================================================
         documents = (
             query.order_by(Document.created_at.desc())
             .offset(skip)
@@ -1067,42 +1018,22 @@ class DocumentService:
         doc_types = db.query(DocumentType).all()
         doc_type_map = {str(d.id): d for d in doc_types}
 
-        # =====================================================
-        # BUILD RESPONSE
-        # =====================================================
+        
         result = []
 
         for doc in documents:
             raw = form_map.get(doc.id, {}) or {}
 
-            # client_name = None
-            # doc_type_name = None
-
-            # for field_id, value in raw.items():
-            #     field = field_map.get(str(field_id))
-            #     if not field or not value:
-            #         continue
-
-            #     label = field.label.lower()
-
-            #     if label == "client":
-            #         c = client_map.get(str(value))
-            #         if c:
-            #             client_name = c.business_name or f"{c.first_name} {c.last_name}"
+            
             client_name = None
             doc_type_name = None
 
-            # -----------------------------------
-            # 1️⃣ PRIMARY: document.client_id
-            # -----------------------------------
             if doc.client_id:
                 c = client_map.get(str(doc.client_id))
                 if c:
                     client_name = c.business_name or f"{c.first_name} {c.last_name}"
 
-            # -----------------------------------
-            # 2️⃣ FALLBACK: form data client field
-            # -----------------------------------
+        
             if not client_name:
                 for field_id, value in raw.items():
                     field = field_map.get(str(field_id))
@@ -1157,49 +1088,6 @@ class DocumentService:
 
         return result, total
 
-
-
-    # @staticmethod
-    # def get_document_detail(db: Session, document_id: int, created_by: str, current_user:User) -> Document:
-    #     """Get document with all details (extracted/unverified docs) with role-based access control"""
-    #     from sqlalchemy.orm import joinedload
-    #     from ..models.user import User
-    #     from ..models.user_role import UserRole
-    #     from ..models.role import Role
-    #     from ..models.status import Status
-    #     from ..models.user_client import UserClient
-    #     from ..models.client import Client
-    #     from ..models.document_form_data import DocumentFormData
-    #     from sqlalchemy import cast, String, or_
-        
-    #     # Get user's roles to determine access level
-    #     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-    #         User.id == created_by,
-    #         Role.status_id.in_(
-    #             db.query(Status.id).filter(Status.code == 'ACTIVE')
-    #         )
-    #     ).all()
-        
-    #     role_names = [role.name for role in user_roles]
-    #     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-        
-    #     query = (
-    #         DocumentService._visible_documents_query(db, current_user)
-    #         .options(joinedload(Document.extracted_documents))
-    #         .options(joinedload(Document.unverified_documents))
-    #     )
-
-        
-    #     if not is_admin:
-    #         query = query.filter(
-    #             or_(
-    #                 Document.created_by == created_by,
-    #                 Document.client_id.in_(
-    #                     select(UserClient.client_id).where(UserClient.user_id == created_by)
-    #                 )
-    #             )
-    #         )
-    #     return query.filter(Document.id == document_id).first()
     @staticmethod
     def _resolve_org_id(current_user):
         if not current_user:
@@ -1252,51 +1140,6 @@ class DocumentService:
 
         return []
 
-
-
-    # @staticmethod
-    # async def archive_document(db: Session, document_id: int, created_by: str, current_user:User) -> bool:
-    #     """Archive a document by setting is_archived to True with role-based access control"""
-    #     from ..models.user import User
-    #     from ..models.user_role import UserRole
-    #     from ..models.role import Role
-    #     from ..models.status import Status
-    #     from ..models.user_client import UserClient
-    #     from ..models.client import Client
-    #     from ..models.document_form_data import DocumentFormData
-    #     from sqlalchemy import cast, String, or_
-        
-    #     # Get user's roles to determine access level
-    #     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-    #         User.id == created_by,
-    #         Role.status_id.in_(
-    #             db.query(Status.id).filter(Status.code == 'ACTIVE')
-    #         )
-    #     ).all()
-        
-    #     role_names = [role.name for role in user_roles]
-    #     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-        
-    #     query = DocumentService._visible_documents_query(db, current_user)
-    #     document = (
-    #         DocumentService._visible_documents_query(db, current_user)
-    #         .filter(Document.id == document_id)
-    #         .first()
-    #     )
-
-    #     if not document:
-    #         return False
-
-    #     document.is_archived = True
-    #     db.commit()
-        
-    #     await websocket_manager.broadcast_document_status(
-    #         document_id=document_id,
-    #         status="ARCHIVED",
-    #         user_id=str(document.created_by),
-    #         progress=100
-    #     )
-    #     return True
     @staticmethod
     async def archive_document(db: Session, document_id: int, user: User):
         document = DocumentService._get_accessible_document(db, document_id, user)
@@ -1316,58 +1159,6 @@ class DocumentService:
 
         return True
 
-    # @staticmethod
-    # async def unarchive_document(db: Session, document_id: int, created_by: str, current_user:User) -> bool:
-    #     """Unarchive a document by setting is_archived to False with role-based access control"""
-    #     from ..models.user import User
-    #     from ..models.user_role import UserRole
-    #     from ..models.role import Role
-    #     from ..models.status import Status
-    #     from ..models.user_client import UserClient
-    #     from ..models.client import Client
-    #     from ..models.document_form_data import DocumentFormData
-    #     from sqlalchemy import cast, String, or_
-        
-    #     # Get user's roles to determine access level
-    #     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-    #         User.id == created_by,
-    #         Role.status_id.in_(
-    #             db.query(Status.id).filter(Status.code == 'ACTIVE')
-    #         )
-    #     ).all()
-        
-    #     role_names = [role.name for role in user_roles]
-    #     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-        
-    #     query = DocumentService._visible_documents_query(db, current_user)
-    #     document = query.filter(Document.id == document_id).first()
-
-        
-    #     if not is_admin:
-    #         query = query.filter(
-    #             or_(
-    #                 Document.created_by == created_by,
-    #                 Document.client_id.in_(
-    #                     select(UserClient.client_id).where(UserClient.user_id == created_by)
-    #                 )
-    #             )
-    #         )
-
-        
-    #     document = query.first()
-    #     if not document:
-    #         return False
-        
-    #     document.is_archived = False
-    #     db.commit()
-        
-    #     await websocket_manager.broadcast_document_status(
-    #         document_id=document_id,
-    #         status=document.status.code if document.status else "COMPLETED",
-    #         user_id=str(document.created_by),
-    #         progress=100
-    #     )
-    #     return True
     @staticmethod
     async def unarchive_document(db: Session, document_id: int, user: User):
         document = DocumentService._get_accessible_document(db, document_id, user)
@@ -1387,82 +1178,6 @@ class DocumentService:
 
         return True
 
-
-    # @staticmethod
-    # async def delete_document(db: Session, document_id: int, created_by: str, current_user:User) -> Optional[str]:
-    #     """Delete a document and its S3 file with role-based access control"""
-    #     from ..models.user import User
-    #     from ..models.user_role import UserRole
-    #     from ..models.role import Role
-    #     from ..models.status import Status
-    #     from ..models.user_client import UserClient
-    #     from ..models.client import Client
-    #     from ..models.document_form_data import DocumentFormData
-    #     from sqlalchemy import cast, String, or_
-        
-    #     # Get user's roles to determine access level
-    #     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-    #         User.id == created_by,
-    #         Role.status_id.in_(
-    #             db.query(Status.id).filter(Status.code == 'ACTIVE')
-    #         )
-    #     ).all()
-        
-    #     role_names = [role.name for role in user_roles]
-    #     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-        
-    #     query = DocumentService._visible_documents_query(db, current_user)
-    #     document = query.filter(Document.id == document_id).first()
-
-        
-    #     if not is_admin:
-    #         query = query.filter(
-    #             or_(
-    #                 Document.created_by == created_by,
-    #                 Document.client_id.in_(
-    #                     select(UserClient.client_id).where(UserClient.user_id == created_by)
-    #                 )
-    #             )
-    #         )
-        
-    #     document = query.first()
-    #     if not document:
-    #         return None
-        
-    #     filename = document.original_filename or document.filename
-        
-    #     # Delete from S3 if exists
-    #     if document.s3_key:
-    #         await s3_service.delete_file(document.s3_key)
-            
-    #     # Delete analysis report from S3 if exists
-    #     if document.analysis_report_s3_key:
-    #         await s3_service.delete_file(document.analysis_report_s3_key)
-        
-    #     # Delete dependent records
-    #     from ..models.external_share import ExternalShare
-    #     from ..models.document_share import DocumentShare
-        
-    #     db.query(ExternalShare).filter(ExternalShare.document_id == document_id).delete()
-    #     db.query(DocumentShare).filter(DocumentShare.document_id == document_id).delete()
-
-    #     # Delete from database
-    #     db.delete(document)
-    #     db.commit()
-
-    #     # Trigger Webhook: document.deleted
-    #     asyncio.create_task(asyncio.to_thread(
-    #         webhook_service.trigger_webhook_background,
-    #         "document.deleted",
-    #         {
-    #             "document_id": document_id,
-    #             "filename": filename
-    #         },
-    #         str(created_by),
-    #         SessionLocal
-    #     ))
-        
-    #     return filename
     @staticmethod
     async def delete_document(db: Session, document_id: int, user: User):
         document = DocumentService._get_accessible_document(db, document_id, user)
@@ -1483,52 +1198,6 @@ class DocumentService:
 
         return filename
 
-
-    # @staticmethod
-    # async def cancel_document_analysis(db: Session, document_id: int, created_by: str, current_user:User):
-    #     """Cancel ongoing analysis by setting status with role-based access control"""
-    #     from ..models.user import User
-    #     from ..models.user_role import UserRole
-    #     from ..models.role import Role
-    #     from ..models.status import Status
-    #     from ..models.user_client import UserClient
-    #     from ..models.client import Client
-    #     from ..models.document_form_data import DocumentFormData
-    #     from sqlalchemy import cast, String, or_
-        
-    #     # Get user's roles to determine access level
-    #     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-    #         User.id == created_by,
-    #         Role.status_id.in_(
-    #             db.query(Status.id).filter(Status.code == 'ACTIVE')
-    #         )
-    #     ).all()
-        
-    #     role_names = [role.name for role in user_roles]
-    #     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    #     query = DocumentService._visible_documents_query(db, current_user)
-    #     document = query.filter(Document.id == document_id).first()
-        
-    #     if not is_admin:
-    #         query = query.filter(
-    #             or_(
-    #                 Document.created_by == created_by,
-    #                 Document.client_id.in_(
-    #                     select(UserClient.client_id).where(UserClient.user_id == created_by)
-    #                 )
-    #             )
-    #         )
-
-        
-    #     document = query.first()
-    #     if not document:
-    #          return False
-             
-    #     await DocumentService.update_document_status(
-    #         db, document_id, "CANCELLED",
-    #         error_message="Analysis Cancelled by User"
-    #     )
-    #     return True
     @staticmethod
     async def cancel_document_analysis(db: Session, document_id: int, user: User):
         document = DocumentService._get_accessible_document(db, document_id, user)
@@ -1544,61 +1213,6 @@ class DocumentService:
         return True
 
 
-    # @staticmethod
-    # async def reanalyze_document(db: Session, document_id: int, created_by: str,  current_user:User):
-    #     """Reset status to AI_QUEUED and trigger background analysis with role-based access control"""
-    #     from ..models.user import User
-    #     from ..models.user_role import UserRole
-    #     from ..models.role import Role
-    #     from ..models.status import Status
-    #     from ..models.user_client import UserClient
-    #     from ..models.client import Client
-    #     from ..models.document_form_data import DocumentFormData
-    #     from sqlalchemy import cast, String, or_
-        
-    #     # Get user's roles to determine access level
-    #     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-    #         User.id == created_by,
-    #         Role.status_id.in_(
-    #             db.query(Status.id).filter(Status.code == 'ACTIVE')
-    #         )
-    #     ).all()
-        
-    #     role_names = [role.name for role in user_roles]
-    #     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-        
-    #     query = DocumentService._visible_documents_query(db, current_user)
-    #     document = query.filter(Document.id == document_id).first()
-
-        
-    #     if not is_admin:
-    #         query = query.filter(
-    #             or_(
-    #                 Document.created_by == created_by,
-    #                 Document.client_id.in_(
-    #                     select(UserClient.client_id).where(UserClient.user_id == created_by)
-    #                 )
-    #             )
-    #         )
-
-    #     document = query.first()
-    #     if not document:
-    #         raise Exception("Document not found")
-            
-    #     # We need the S3 file to be present
-    #     if not document.s3_key:
-    #          raise Exception("Cannot re-analyze: Original file not found on S3")
-
-    #     # Reset status immediately to give instant feedback
-    #     await DocumentService.update_document_status(
-    #          db, document_id, "AI_QUEUED", 
-    #          progress=0, error_message="Queued for Re-analysis"
-    #     )
-
-    #     # Spawn background task for the heavy lifting (S3 download + AI)
-    #     asyncio.create_task(DocumentService._perform_reanalysis_background(document_id, created_by))
-        
-    #     return True
     @staticmethod
     async def reanalyze_document(db: Session, document_id: int, user: User):
         document = DocumentService._get_accessible_document(db, document_id, user)
@@ -1666,56 +1280,6 @@ class DocumentService:
             print(f"Background re-analysis failed: {e}")
         finally:
             db.close()
-
-    # @staticmethod
-    # def get_document_stats(db: Session, created_by: str, current_user: User) -> dict:
-    #     """Get document statistics for a user with role-based access control"""
-    #     from sqlalchemy import func
-    #     from ..models.status import Status
-    #     from ..models.user import User
-    #     from ..models.user_role import UserRole
-    #     from ..models.role import Role
-    #     from ..models.user_client import UserClient
-    #     from ..models.client import Client
-    #     from ..models.document_form_data import DocumentFormData
-    #     from ..models.document_share import DocumentShare
-    #     from ..services.document_share_service import DocumentShareService
-    #     from sqlalchemy import cast, String, or_\
-        
-    #     base = DocumentService._visible_documents_query(  
-    #     db=db,
-    #     user=current_user)
-
-    #     total_active = base.filter(Document.is_archived == False).count()
-    #     total_archived = base.filter(Document.is_archived == True).count()
-
-    #     status_counts = (
-    #         base.join(Document.status)
-    #         .filter(Document.is_archived == False)
-    #         .with_entities(Status.code, func.count(Document.id))
-    #         .group_by(Status.code)
-    #         .all()
-    #     )
-
-    #     counts = {code: count for code, count in status_counts}
-
-    #     shared_with_me = (
-    #         base.join(DocumentShare, DocumentShare.document_id == Document.id)
-    #         .filter(DocumentShare.user_id == created_by)
-    #         .count()
-    #     )
-
-    #     return {
-    #         "total": total_active,
-    #         "processed": counts.get("COMPLETED", 0),
-    #         "processing": (
-    #             counts.get("PROCESSING", 0)
-    #             + counts.get("ANALYZING", 0)
-    #             + counts.get("AI_QUEUED", 0)
-    #         ),
-    #         "sharedWithMe": shared_with_me,
-    #         "archived": total_archived,
-    #     }
     @staticmethod
     def get_document_stats(db: Session, user):
 

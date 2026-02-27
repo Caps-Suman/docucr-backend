@@ -6,6 +6,7 @@ from uuid import UUID
 import json
 
 from app.models.document_form_data import DocumentFormData
+from app.models.extracted_document import ExtractedDocument
 from app.models.organisation import Organisation
 from app.models.user_client import UserClient
 from ..core.database import get_db
@@ -659,7 +660,6 @@ async def get_document_report_url(
 
     return {"url": presigned_url}
 
-
 @router.get("/{document_id}/report-data")
 async def get_document_report_data(
     document_id: int,
@@ -667,66 +667,77 @@ async def get_document_report_data(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    from sqlalchemy.orm import joinedload
+    from fastapi import HTTPException
+    from app.models.extracted_document import ExtractedDocument
+
     document = (
         DocumentService
         ._document_access_query(db, current_user)
+        .options(
+            joinedload(Document.extracted_documents)
+            .joinedload(ExtractedDocument.document_type)
+        )
         .filter(Document.id == document_id)
         .first()
     )
 
-    if not document or not document.analysis_report_s3_key:
-        raise HTTPException(status_code=404, detail="Analysis report not found")
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
 
-    from ..services.s3_service import s3_service
-    import pandas as pd, io, json
-
-    file_bytes = await s3_service.download_file(document.analysis_report_s3_key)
-    df = pd.read_excel(io.BytesIO(file_bytes))
+    if not document.extracted_documents:
+        return {
+            "findings": [],
+            "total_pages": document.total_pages or 0
+        }
 
     findings = []
 
-    for _, row in df.iterrows():
-        page_range = row.get("Page Range", "")
+    for ed in document.extracted_documents:
+        page_range = (ed.page_range or "").strip()
 
         if page is not None:
-            if not page_range:
-                continue
-
             match = False
-            for part in str(page_range).split(","):
-                part = part.strip()
-                if "-" in part:
-                    start, end = map(int, part.split("-"))
-                    if start <= page <= end:
-                        match = True
-                else:
-                    if int(part) == page:
-                        match = True
+            try:
+                for part in page_range.split(","):
+                    part = part.strip()
+                    if "-" in part:
+                        start_str, end_str = part.split("-")
+                        start = int(start_str.strip())
+                        end = int(end_str.strip())
+                        if start <= page <= end:
+                            match = True
+                            break
+                    else:
+                        if part.isdigit() and int(part) == page:
+                            match = True
+                            break
+            except Exception:
+                continue
 
             if not match:
                 continue
 
-        raw = row.get("Extracted Data", "{}")
-
-        try:
-            if isinstance(raw, dict):
-                extracted = raw
-            else:
-                extracted = json.loads(str(raw).replace("'", '"'))
-        except:
-            extracted = {"raw": str(raw)}
-
         findings.append({
-            "document_type": row.get("Document Type", "Unknown"),
-            "page_range": str(page_range),
-            "extracted_data": extracted
+            "document_type": (
+                ed.document_type.name.upper()
+                if ed.document_type and ed.document_type.name
+                else "UNKNOWN"
+            ),
+            "page_range": page_range,
+            "extracted_data": ed.extracted_data or {}
         })
+
+    findings.sort(
+        key=lambda x: int(x["page_range"].split("-")[0])
+        if x["page_range"] and x["page_range"].split("-")[0].isdigit()
+        else 0
+    )
 
     return {
         "findings": findings,
-        "total_pages": document.total_pages
+        "total_pages": document.total_pages or 0
     }
-
 @router.post("/{document_id}/cancel")
 async def cancel_document(
     document_id: int,

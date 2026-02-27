@@ -33,9 +33,30 @@ class AuthService:
 
     @staticmethod
     def check_user_active(user: User, db: Session) -> bool:
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        return active_status and user.status_id == active_status.id
+        active_status = db.query(Status).filter(
+            Status.code == "ACTIVE"
+        ).first()
 
+        if not active_status:
+            return False
+
+        # 1️⃣ Check user status first
+        if user.status_id != active_status.id:
+            return False
+
+        # 2️⃣ If user has no organisation → allow
+        if not user.organisation_id:
+            return True
+
+        # 3️⃣ If user belongs to organisation → check org status
+        org = db.query(Organisation).filter(
+            Organisation.id == user.organisation_id
+        ).first()
+
+        if not org or org.status_id != active_status.id:
+            return False
+
+        return True
     # @staticmethod
     # def authenticate_organisation(email: str, password: str, db: Session) -> Optional[Organisation]:
     #     org = db.query(Organisation).filter(Organisation.email == email).first()
@@ -43,10 +64,10 @@ class AuthService:
     #         return None
     #     return org
 
-    # @staticmethod
-    # def check_organisation_active(org: Organisation, db: Session) -> bool:
-    #     active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-    #     return active_status and org.status_id == active_status.id
+    @staticmethod
+    def check_organisation_active(org: Organisation, db: Session) -> bool:
+        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
+        return active_status and org.status_id == active_status.id
     
     @staticmethod
     def get_role_permissions(role_id: str, db: Session) -> dict:
