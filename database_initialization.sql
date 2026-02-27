@@ -652,7 +652,7 @@ ON CONFLICT (id) DO UPDATE SET
 -- 5. Roles
 INSERT INTO role (id, name, description, status_id, can_edit, is_default) VALUES
 ('5b0660b7-f68c-4655-8510-7dee8540781d', 'SUPER_ADMIN', 'System administrator with full access', 1, FALSE, TRUE),
-('52d854f8-09a4-49c6-817e-5e4e2783e06d', 'ORGANISATION_ROLE', 'Organisation level administrator', 1, TRUE, TRUE),
+('52d854f8-09a4-49c6-817e-5e4e2783e06d', 'ORGANISATION_ADMIN', 'Organisation level administrator', 1, TRUE, TRUE),
 ('d875f220-5e8f-47d8-9f1a-3d7a88bb7e39', 'ADMIN', 'Standard administrator', 1, TRUE, FALSE),
 ('4646b137-fe4e-4552-9904-002a6325bfbb', 'USER', 'Regular system user', 1, TRUE, FALSE)
 ON CONFLICT (name) DO UPDATE SET 

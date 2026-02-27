@@ -223,8 +223,8 @@ async def login(
         )
         raise HTTPException(401, "Invalid credentials")
 
-    if not AuthService.check_user_active(user, db):
-        raise HTTPException(403, "Account is inactive")
+    # This will raise specific HTTPException if inactive (User or Org)
+    AuthService.check_user_active(user, db)
 
     # 🔥 SUPERADMIN FLOW (global)
     if user.is_superuser:
@@ -267,8 +267,7 @@ async def select_role(request: RoleSelectionRequest, db: Session = Depends(get_d
     if current_user.email != request.email:
         raise HTTPException(status_code=403, detail="Unauthorized to select role for this user")
     
-    if not AuthService.check_user_active(current_user, db):
-        raise HTTPException(status_code=403, detail="Account is inactive")
+    AuthService.check_user_active(current_user, db)
     
     role = AuthService.verify_user_role(current_user.id, request.role_id, db)
     if not role:
@@ -461,8 +460,7 @@ async def refresh_token(request: Request, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     
-    if not AuthService.check_user_active(user, db):
-        raise HTTPException(status_code=403, detail="Account is inactive")
+    AuthService.check_user_active(user, db)
 
     organisation_id = payload.get("organisation_id")
     is_superadmin = payload.get("superadmin", False)

@@ -192,7 +192,7 @@ class RoleService:
  
         #         query = query.filter(Role.created_by == str(current_user.id))
             
-        #     elif current_user.organisation_id or "ORGANISATION_ROLE" in role_names:
+        #     elif current_user.organisation_id or "ORGANISATION_ADMIN" in role_names:
         #          query = query.filter(Role.organisation_id == str(current_user.organisation_id))
             
         #     else:

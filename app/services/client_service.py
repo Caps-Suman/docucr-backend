@@ -851,7 +851,7 @@ class ClientService:
         is_org_role = False
         if hasattr(current_user, 'roles'):
             role_names = [r.name for r in current_user.roles]
-            if "ORGANISATION_ROLE" in role_names:
+            if "ORGANISATION_ADMIN" in role_names:
                 is_org_role = True
 
         # Determine assignment fields
@@ -861,7 +861,7 @@ class ClientService:
         if is_org_role:
              # If Organisation Role, use their organisation_id
              # assigned_by stays NULL (as per requirement "assigned_by": assigned_by if not org role)
-             # Wait, requirement says: if role is 'ORGANISATION_ROLE' then organisation_id = assigned_by.
+             # Wait, requirement says: if role is 'ORGANISATION_ADMIN' then organisation_id = assigned_by.
              # assigned_by in request is the ID of the user doing the assignment.
              
              final_organisation_id = assigned_by
@@ -1128,7 +1128,7 @@ class ClientService:
         """
         Fetch clients based on role for SOP creation.
         - SUPER_ADMIN: All active clients
-        - ORGANISATION_ROLE: Clients in the user's organisation
+        - ORGANISATION_ADMIN: Clients in the user's organisation
         - Other: Clients created by the user
         """
         active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
@@ -1156,7 +1156,7 @@ class ClientService:
         #     pass
         
         # # 2. ORG_ADMIN
-        # elif "ORGANISATION_ROLE" in role_names:
+        # elif "ORGANISATION_ADMIN" in role_names:
         #     if current_user.id:
         #         query = query.filter(Client.organisation_id == str(current_user.id))
         #     else:

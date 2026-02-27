@@ -67,7 +67,7 @@ class DocumentService:
 
         role_names = [r.name for r in getattr(actor, "roles", [])]
         
-        if getattr(actor, "is_superuser", False) or "ORGANISATION_ROLE" in role_names:
+        if getattr(actor, "is_superuser", False) or "ORGANISATION_ADMIN" in role_names:
             return base.filter(Document.organisation_id == org_id)
 
         if actor.is_client:

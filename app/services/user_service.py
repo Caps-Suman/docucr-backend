@@ -131,12 +131,12 @@ class UserService:
         if isinstance(current_user, User):
             is_super = UserService._ctx_is_super(current_user)
 
-        # Exclude users with ORGANISATION_ROLE unless the current user is a SUPER_ADMIN
+        # Exclude users with ORGANISATION_ADMIN unless the current user is a SUPER_ADMIN
         if not is_super:
             query = query.filter(
                 ~db.query(UserRole).join(Role).filter(
                     UserRole.user_id == User.id,
-                    Role.name == 'ORGANISATION_ROLE'
+                    Role.name == 'ORGANISATION_ADMIN'
                 ).exists()
             )
 
@@ -167,7 +167,7 @@ class UserService:
             # -----------------------------
             # ORG ROLE USER
             # -----------------------------
-            elif "ORGANISATION_ROLE" in role_names:
+            elif "ORGANISATION_ADMIN" in role_names:
                 if context_org:
                     query = query.filter(User.organisation_id == str(context_org))
 
@@ -267,7 +267,7 @@ class UserService:
             if current_user.is_superuser or "SUPER_ADMIN" in role_names:
                 pass
             
-            elif "ORGANISATION_ROLE" in role_names:
+            elif "ORGANISATION_ADMIN" in role_names:
                 if current_user.organisation_id:
                     query = query.filter(User.organisation_id == str(current_user.organisation_id))
 
@@ -388,7 +388,7 @@ class UserService:
         elif context_role:
             role = db.query(Role).filter(Role.id == context_role).first()
 
-            if role and role.name == "ORGANISATION_ROLE":
+            if role and role.name == "ORGANISATION_ADMIN":
                 if not context_org:
                     raise HTTPException(400, "No organisation context")
 
@@ -674,7 +674,7 @@ class UserService:
         if isinstance(current_user, User):
             role_names = [r.name for r in current_user.roles]
 
-            if "ORGANISATION_ROLE" in role_names:
+            if "ORGANISATION_ADMIN" in role_names:
                 if context_org:
                     return str(target_user.organisation_id) == str(context_org)
 
@@ -725,12 +725,12 @@ class UserService:
         if isinstance(current_user, User):
             is_super = UserService._ctx_is_super(current_user)
 
-        # Exclude users with ORGANISATION_ROLE unless the current user is a SUPER_ADMIN
+        # Exclude users with ORGANISATION_ADMIN unless the current user is a SUPER_ADMIN
         if not is_super:
             query = query.filter(
                 ~db.query(UserRole).join(Role).filter(
                     UserRole.user_id == User.id,
-                    Role.name == 'ORGANISATION_ROLE'
+                    Role.name == 'ORGANISATION_ADMIN'
                 ).exists()
             )
 
@@ -747,7 +747,7 @@ class UserService:
         elif isinstance(current_user, User):
             role_names = [r.name for r in current_user.roles]
 
-            if "ORGANISATION_ROLE" in role_names:
+            if "ORGANISATION_ADMIN" in role_names:
                 if context_org:
                     query = query.filter(User.organisation_id == str(context_org))
 

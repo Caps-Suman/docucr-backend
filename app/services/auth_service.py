@@ -1,5 +1,6 @@
 from collections import defaultdict
 from sqlalchemy.orm import Session
+from fastapi import HTTPException
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 import random
@@ -38,13 +39,13 @@ class AuthService:
         ).first()
 
         if not active_status:
-            return False
+            raise HTTPException(500, "ACTIVE status not found")
 
         # 1️⃣ Check user status first
         if user.status_id != active_status.id:
-            return False
+            raise HTTPException(403, "Your account is inactive. Please contact your administrator.")
 
-        # 2️⃣ If user has no organisation → allow
+        # 2️⃣ If user has no organisation → allow (internal/superadmin users)
         if not user.organisation_id:
             return True
 
@@ -54,7 +55,7 @@ class AuthService:
         ).first()
 
         if not org or org.status_id != active_status.id:
-            return False
+            raise HTTPException(403, "Organisation is inactive. Please contact support.")
 
         return True
     # @staticmethod

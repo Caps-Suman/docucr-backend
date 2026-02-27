@@ -412,13 +412,19 @@ class OrganisationService:
         # 1️⃣ Activate organisation
         org.status_id = active.id
 
-        # 2️⃣ Reactivate all users of this organisation
-        db.query(User).filter(
-            User.organisation_id == org_id
-        ).update(
-            {"status_id": active.id},
-            synchronize_session=False
+        # 2️⃣ Reactivate ONLY the organization admin user
+        DEFAULT_ORG_ADMIN_ROLE_ID = "f7129eb0-7305-4279-8994-ee9256f91447"
+        admin_user = (
+            db.query(User)
+            .join(UserRole, User.id == UserRole.user_id)
+            .filter(
+                User.organisation_id == org_id,
+                UserRole.role_id == DEFAULT_ORG_ADMIN_ROLE_ID
+            )
+            .first()
         )
+        if admin_user:
+            admin_user.status_id = active.id
 
         db.commit()
         db.refresh(org)
@@ -444,13 +450,19 @@ class OrganisationService:
         # 1️⃣ Deactivate organisation
         org.status_id = inactive.id
 
-        # 2️⃣ Deactivate all users of this organisation
-        db.query(User).filter(
-            User.organisation_id == org_id
-        ).update(
-            {"status_id": inactive.id},
-            synchronize_session=False
+        # 2️⃣ Deactivate ONLY the organization admin user
+        DEFAULT_ORG_ADMIN_ROLE_ID = "f7129eb0-7305-4279-8994-ee9256f91447"
+        admin_user = (
+            db.query(User)
+            .join(UserRole, User.id == UserRole.user_id)
+            .filter(
+                User.organisation_id == org_id,
+                UserRole.role_id == DEFAULT_ORG_ADMIN_ROLE_ID
+            )
+            .first()
         )
+        if admin_user:
+            admin_user.status_id = inactive.id
 
         db.commit()
         db.refresh(org)
