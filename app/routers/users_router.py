@@ -121,6 +121,7 @@ async def get_users(
     role_id: Optional[List[str]] = Query(None),
     organisation_id: Optional[List[str]] = Query(None),
     client_id: Optional[List[str]] = Query(None),
+    is_client: Optional[bool] = Query(None),
     created_by: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
     _: User = Depends(Permission("user_module", "READ")),   # 🔥 FIX
@@ -136,7 +137,8 @@ async def get_users(
         role_id=role_id,
         organisation_id=organisation_id,
         client_id=client_id,
-        created_by=created_by
+        created_by=created_by,
+        is_client=is_client
     )
 
 

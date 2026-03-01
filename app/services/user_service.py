@@ -147,7 +147,8 @@ class UserService:
         role_id: Optional[List[str]] = None,
         organisation_id: Optional[List[str]] = None,
         client_id: Optional[List[str]] = None,
-        created_by: Optional[List[str]] = None
+        created_by: Optional[List[str]] = None,
+        is_client: Optional[bool] = None
     ) -> Tuple[List[Dict], int]:
         skip = (page - 1) * page_size
         query = db.query(User)
@@ -172,7 +173,11 @@ class UserService:
                     Role.name == 'ORGANISATION_ADMIN'
                 ).exists()
             )
+        if is_client is True:
+            query = query.filter(User.client_id.isnot(None))
 
+        elif is_client is False:
+            query = query.filter(User.client_id.is_(None))
         # ---------------------------------------------------------
         # Handle ORGANISATION/CLIENT Login (Instance Checks)
         # ---------------------------------------------------------
