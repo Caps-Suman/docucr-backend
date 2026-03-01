@@ -8,6 +8,8 @@ from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
 from uuid import UUID
 import io
+from app.models.sop import SOP
+from app.models.status import Status
 from app.services.activity_service import ActivityService
 from fastapi import Request, BackgroundTasks
 
@@ -112,17 +114,26 @@ class AISOPExtractResponse(BaseModel):
 
 @router.post("", response_model=SOPResponse, status_code=status.HTTP_201_CREATED)
 def create_sop(
-    sop: SOPCreate, 
+    sop: SOPCreate,
     db: Session = Depends(get_db),
-    client_id:str=None,
     permission: bool = Depends(Permission("SOPs", "CREATE")),
     current_user = Depends(get_current_user),
     request: Request = None,
     background_tasks: BackgroundTasks = None,
-
 ):
     sop_data = sop.model_dump()
-    result = SOPService.create_sop(sop_data, db, current_user, client_id)
+
+    client_id = str(sop.client_id) if sop.client_id else None
+
+    if not client_id:
+        raise HTTPException(400, "Client ID is required")
+
+    result = SOPService.create_sop(
+        sop_data,
+        db,
+        current_user,
+        client_id
+    )
 
     ActivityService.log(
         db=db,
@@ -134,6 +145,7 @@ def create_sop(
         request=request,
         background_tasks=background_tasks
     )
+
     return result
     # return SOPService.create_sop(sop_data, db, current_user)
 @router.post("/check-providers/{client_id}")
@@ -158,21 +170,21 @@ def check_providers(
 @router.post("/check-client-sop/{client_id}")
 def check_client_sop(
     client_id: str,
-    payload: dict,
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("SOPs", "CREATE")),
     current_user = Depends(get_current_user)
 ):
-    provider_ids = payload.get("provider_ids", [])
+    active_status_id = db.query(Status.id).filter(
+        Status.code == "ACTIVE",
+        Status.type == "GENERAL"
+    ).scalar()
 
-    exists = SOPService.check_sop_exists(
-        client_id=client_id,
-        provider_ids=provider_ids,
-        db=db
-    )
+    exists = db.query(SOP.id).filter(
+        SOP.client_id == client_id,
+        SOP.status_id == active_status_id
+    ).first() is not None
 
     return {"exists": exists}
-
 @router.get("/stats", response_model=SOPStatsResponse)
 def get_sop_stats(
     db: Session = Depends(get_db),

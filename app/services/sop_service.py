@@ -54,53 +54,29 @@ class SOPService:
         client_id: str,
         provider_ids: list[str] | None,
         db: Session,
-        exclude_sop_id: str | None = None   # 🔥 important
+        exclude_sop_id: str | None = None,
     ):
-        active_status = db.query(Status).filter(
+        if not client_id or not provider_ids:
+            return False
+
+        # get ACTIVE GENERAL status id
+        active_status_id = db.query(Status.id).filter(
             Status.code == "ACTIVE",
             Status.type == "GENERAL"
-        ).first()
+        ).scalar()
 
-        if not active_status:
+        if not active_status_id:
             return False
 
-        client = db.query(Client).filter(Client.id == client_id).first()
-        if not client:
-            return False
-
-        # -------------------------
-        # NPI1 → Individual client
-        # -------------------------
-        if client.type == "Individual":
-
-            q = db.query(SOP.id).filter(
-                SOP.client_id == client_id,
-                SOP.status_id == active_status.id
-            )
-
-            # 🔥 EXCLUDE current SOP during edit
-            if exclude_sop_id:
-                q = q.filter(SOP.id != exclude_sop_id)
-
-            exists = db.query(q.exists()).scalar()
-
-            if exists:
-                return True
-
-            return False
-
-        # -------------------------
-        # NPI2 → Providers
-        # -------------------------
-        if not provider_ids:
-            return False
+        # normalize ids
+        provider_ids = [str(pid) for pid in provider_ids]
 
         q = (
-            db.query(SopProviderMapping.id)
+            db.query(SopProviderMapping.provider_id)
             .join(SOP, SOP.id == SopProviderMapping.sop_id)
             .filter(
                 SOP.client_id == client_id,
-                SOP.status_id == active_status.id,
+                SOP.status_id == active_status_id,
                 SopProviderMapping.provider_id.in_(provider_ids)
             )
         )
@@ -452,8 +428,14 @@ class SOPService:
                 Status.type == "GENERAL"
             ).first()
             sop_data["status_id"] = active.id
+        provider_ids = sop_data.pop("provider_ids", [])
+        provider_ids = [str(pid) for pid in provider_ids]
+
         if SOPService.check_sop_exists(client_id, provider_ids, db):
-            raise HTTPException(400, "Provider already has active SOP")
+            raise HTTPException(
+                400,
+                "One or more selected providers already have an active SOP for this client."
+            )
 
         db_sop = SOP(**sop_data)
         db.add(db_sop)
@@ -535,12 +517,38 @@ class SOPService:
                     sop_id=sop_id,
                     provider_id=pid
                 ))
+        # -------------------------
+        # update fields (SAFE)
+        # -------------------------
 
-        # -------------------------
-        # update fields
-        # -------------------------
+        allowed_fields = {
+            "title",
+            "category",
+            "provider_type",
+            "client_id",
+            "provider_info",
+            "workflow_process",
+            "billing_guidelines",
+            "payer_guidelines",
+            "coding_rules_cpt",
+            "coding_rules_icd",
+            "status_id",
+        }
+
         for k, v in sop_data.items():
-            if k != "provider_ids":
+
+            if k == "provider_ids":
+                continue
+
+            if k not in allowed_fields:
+                continue   # ignore unknown keys completely
+
+            # 🔥 special handling for workflow JSON merge
+            if k == "workflow_process" and isinstance(v, dict):
+                existing = db_sop.workflow_process or {}
+                existing.update(v)
+                setattr(db_sop, "workflow_process", existing)
+            else:
                 setattr(db_sop, k, v)
 
         db.commit()
@@ -722,7 +730,7 @@ class SOPService:
             ],
             [
                 mk_field('Billing Provider', p_info.get('billingProviderName')),
-                mk_field('Practice Name', p_info.get('practiceName')),
+                mk_field('Practice Name', sop.get('client_name')),
                 mk_field('Software', p_info.get('software'))
             ],
             [
@@ -743,15 +751,23 @@ class SOPService:
         story.append(Spacer(1, 0.2*inch))
         
         # --- Workflow Process ---
-        if sop.get('workflow_process'):
-            story.append(Paragraph('Workflow Process', section_header))
+        workflow = sop.get("workflow_process") or {}
 
-            desc = sop.get('workflow_process', {}).get('description', '-')
+        if workflow:
+            story.append(Paragraph("Workflow Process", section_header))
+
+            # Description
+            description = (
+                workflow.get("description")
+                or workflow.get("superbill_source")
+                or "-"
+            )
+
             story.append(
                 Paragraph(
-                    desc,
+                    description,
                     ParagraphStyle(
-                        'WorkflowBody',
+                        "WorkflowBody",
                         parent=bs,
                         textColor=text_color,
                         fontSize=10,
@@ -760,17 +776,59 @@ class SOPService:
                 )
             )
 
-            portals = sop.get('workflow_process', {}).get('eligibilityPortals', [])
-            if portals:
+            # Posting Charges
+            posting_rules = workflow.get("posting_charges_rules") or []
+
+            if isinstance(posting_rules, str):
+                posting_rules = [posting_rules]
+
+            if posting_rules:
                 story.append(Spacer(1, 8))
-                p_text = "<b>Eligibility Portals:</b><br/>" + "<br/>".join(
-                    f"• {p}" for p in portals
-                )
                 story.append(
                     Paragraph(
-                        p_text,
+                        "<b>Posting Charges Rules:</b>",
                         ParagraphStyle(
-                            'Portals',
+                            "PostingHeader",
+                            parent=bs,
+                            textColor=primary_color,
+                            spaceAfter=4
+                        )
+                    )
+                )
+
+                for rule in posting_rules:
+                    story.append(
+                        Paragraph(
+                            f"• {rule}",
+                            ParagraphStyle(
+                                "PostingRule",
+                                parent=bs,
+                                leftIndent=12,
+                                textColor=text_color,
+                                spaceAfter=3
+                            )
+                        )
+                    )
+
+            # Eligibility Portals
+            portals = (
+                workflow.get("eligibility_verification_portals")
+                or workflow.get("eligibilityPortals")
+                or []
+            )
+
+            if portals:
+                story.append(Spacer(1, 8))
+
+                portal_text = "<b>Eligibility Portals:</b><br/>" + "<br/>".join(
+                    f"• {p}" for p in portals
+                )
+
+                story.append(
+                    Paragraph(
+                        portal_text,
+                        ParagraphStyle(
+                            "Portals",
                             parent=bs,
                             textColor=primary_color,
                             backColor=header_bg,
@@ -780,6 +838,43 @@ class SOPService:
                 )
 
             story.append(Spacer(1, 0.2 * inch))
+        # if sop.get('workflow_process'):
+        #     story.append(Paragraph('Workflow Process', section_header))
+
+        #     desc = sop.get('workflow_process', {}).get('description', '-')
+        #     story.append(
+        #         Paragraph(
+        #             desc,
+        #             ParagraphStyle(
+        #                 'WorkflowBody',
+        #                 parent=bs,
+        #                 textColor=text_color,
+        #                 fontSize=10,
+        #                 leading=14
+        #             )
+        #         )
+        #     )
+
+        #     portals = sop.get('workflow_process', {}).get('eligibilityPortals', [])
+        #     if portals:
+        #         story.append(Spacer(1, 8))
+        #         p_text = "<b>Eligibility Portals:</b><br/>" + "<br/>".join(
+        #             f"• {p}" for p in portals
+        #         )
+        #         story.append(
+        #             Paragraph(
+        #                 p_text,
+        #                 ParagraphStyle(
+        #                     'Portals',
+        #                     parent=bs,
+        #                     textColor=primary_color,
+        #                     backColor=header_bg,
+        #                     borderPadding=6,
+        #                 )
+        #             )
+        #         )
+
+        #     story.append(Spacer(1, 0.2 * inch))
 
 
         # --- Billing Guidelines (GROUPED) ---

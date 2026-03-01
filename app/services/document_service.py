@@ -550,7 +550,7 @@ class DocumentService:
             db.close()
 
     @staticmethod
-    async def _process_single_ai_analysis(document_id: int, file_data: dict, 
+    async def _process_single_ai_analysis(document_id: int, file_data: dict, analysis_result=None,
                                         document_type_id: str = None, template_id: str = None):
         """Handle ONLY the AI analysis part"""
         from ..core.database import SessionLocal
@@ -669,7 +669,7 @@ class DocumentService:
             )
             # Process Findings
             documents = analysis_result.get("findings", [])
-            print("AI RAW RESULT:", json.dumps(analysis_result, indent=2))
+            print("AI RESULT:", json.dumps(analysis_result, indent=2) if analysis_result else "No AI result")
             def normalize_fields(raw_fields):
                 if isinstance(raw_fields, dict):
                     return raw_fields
