@@ -102,7 +102,40 @@ class UserService:
     @staticmethod
     def _ctx_is_super(user):
         return getattr(user, "context_is_superadmin", False)
+    
+    @staticmethod
+    def get_internal_share_users(db: Session, current_user: User) -> List[Dict]:
 
+        ORG_ADMIN_ROLE = "ORGANISATION_ADMIN"
+        SUPER_ADMIN_ROLE = "SUPER_ADMIN"
+
+        active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+
+        query = (
+            db.query(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .filter(
+                User.organisation_id == current_user.organisation_id,
+                User.id != current_user.id,
+                User.status_id == active_status.id,
+                ~Role.name.in_([SUPER_ADMIN_ROLE, ORG_ADMIN_ROLE])
+            )
+            .distinct()
+        )
+
+        users = query.all()
+
+        return [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email,
+                "roles": [r.name for r in u.roles]
+            }
+            for u in users
+        ]
     @staticmethod
     def get_users(
         page: int, 

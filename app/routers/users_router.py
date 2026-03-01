@@ -1,6 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from sqlalchemy import and_, or_
 from app.models.organisation import Organisation
+from app.models.role import Role
+from app.models.status import Status
+from app.models.user_role import UserRole
 from app.services.activity_service import ActivityService
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, field_validator
@@ -251,15 +254,26 @@ def get_share_users(
     is_client: bool,
     search: str | None = None,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    # resolve org id
-    if hasattr(current_user, "organisation_id") and current_user.organisation_id:
-        org_id = current_user.organisation_id
-    else:
-        org_id = current_user.id
+    # Resolve organisation
+    org_id = current_user.organisation_id
 
-    query = db.query(User).filter(User.organisation_id == org_id)
+    if not org_id:
+        raise HTTPException(400, "User not linked to organisation")
+
+    active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+
+    query = (
+        db.query(User)
+        .join(UserRole, UserRole.user_id == User.id)
+        .join(Role, Role.id == UserRole.role_id)
+        .filter(
+            User.organisation_id == org_id,
+            User.id != current_user.id,
+            User.status_id == active_status.id
+        )
+    )
 
     # -------------------------
     # CLIENT USERS
@@ -277,10 +291,9 @@ def get_share_users(
     # -------------------------
     else:
         query = query.filter(
-            and_(
-                User.is_client.is_(False),
-                User.client_id.is_(None)
-            )
+            User.is_client.is_(False),
+            User.client_id.is_(None),
+            ~Role.name.in_(["SUPER_ADMIN", "ORGANISATION_ADMIN"])
         )
 
     if search:
@@ -292,7 +305,7 @@ def get_share_users(
             )
         )
 
-    users = query.limit(50).all()
+    users = query.distinct().limit(50).all()
 
     return {
         "users": [
@@ -301,6 +314,10 @@ def get_share_users(
                 "first_name": u.first_name,
                 "last_name": u.last_name,
                 "email": u.email,
+                "roles": [
+                    {"id": r.id, "name": r.name}
+                    for r in u.roles
+                ]
             }
             for u in users
         ]
