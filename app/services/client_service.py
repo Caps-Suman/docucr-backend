@@ -174,9 +174,6 @@ class ClientService:
             for client, count in results
         ], total
 
-    # @staticmethod
-    # def create_client(client_data: Dict, db: Session, current_user: User):
-
     @staticmethod
     def create_client(client_data: Dict, db: Session, current_user: Optional[User] = None) -> Dict:
         try:
@@ -349,115 +346,6 @@ class ClientService:
         except Exception:
             db.rollback()
             raise
-
-      
-
-    # @staticmethod
-    # def create_client(client_data: Dict, db: Session, current_user: User) -> Dict:
-    #     print("INCOMING CLIENT DATA:", client_data)
-
-    #     client_type = client_data.get("type")
-    #     providers = client_data.pop("providers", None)
-    #     locations = client_data.pop("locations", None)
-    #     print("PROVIDERS:", providers)
-    #     print("LOCATIONS:", locations)
-    #     # -------- NPI-1 (Individual) --------
-    #     if client_type == "NPI1":
-    #         client = Client(
-    #             first_name=client_data.get("first_name"),
-    #             middle_name=client_data.get("middle_name"),
-    #             last_name=client_data.get("last_name"),
-    #             npi=client_data.get("npi"),
-    #             type="NPI1",
-
-    #             address_line_1=client_data.get("address_line_1"),
-    #             address_line_2=client_data.get("address_line_2"),
-    #             city=client_data.get("city"),
-    #             state_code=client_data.get("state_code"),
-    #             state_name=client_data.get("state_name"),
-    #             country=client_data.get("country"),
-    #             zip_code=client_data.get("zip_code"),
-
-    #             description=client_data.get("description"),
-    #         )
-    #         db.add(client)
-    #         db.commit()
-    #         db.refresh(client)
-
-    #         # ❌ NO USER LINKING HERE
-    #         return ClientService._format_client(client, db)
-
-    #     # -------- NPI-2 (Organization) --------
-    #     if client_type == "NPI2":
-
-    #         zip_code = client_data.get("zip_code")
-
-    #         print("BACKEND ORG ZIP:", zip_code)
-    #         print("BACKEND PROVIDERS:", providers)
-
-    #         if not zip_code:
-    #             raise ValueError("ORG ZIP missing")
-
-    #         client = Client(
-    #             business_name=client_data["business_name"],
-    #             npi=client_data.get("npi"),
-    #             type="NPI2",
-    #             address_line_1=client_data.get("address_line_1"),
-    #             address_line_2=client_data.get("address_line_2"),
-    #             city=client_data.get("city"),
-    #             state_code=client_data.get("state_code"),
-    #             state_name=client_data.get("state_name"),
-    #             country=client_data.get("country"),
-    #             zip_code=zip_code,
-    #         )
-    #         client.created_by = current_user.id
-    #         client.status_id = db.query(Status.id).filter(Status.code == "ACTIVE").scalar()
-    #         db.add(client)
-    #         db.flush()
-
-    #         db.add(ClientLocation(
-    #             client_id=client.id,
-    #             address_line_1=client.address_line_1,
-    #             address_line_2=client.address_line_2,
-    #             city=client.city,
-    #             state_code=client.state_code,
-    #             state_name=client.state_name,
-    #             country=client.country,
-    #             zip_code=zip_code,
-    #             is_primary=True,
-    #         ))
-    #         if locations:
-    #             ClientService._create_secondary_locations(
-    #                 client_id=client.id,
-    #                 locations=locations,
-    #                 db=db
-    #             )
-    #         if providers:
-    #             print("RAW PROVIDERS FROM FRONTEND:", providers)
-
-    #             for p in providers:
-    #                 if not p.get("zip_code") or p.get("zip_code") == "":
-    #                     raise ValueError(f"Provider ZIP missing → {p}")
-    #                 location_id = p.get("location_id")
-    #                 provider_data = {k: v for k, v in p.items() if k != "location_id"}
-    #                 db.add(Provider(
-    #                     client_id=client.id,
-    #                     location_id=location_id,
-    #                     **provider_data
-    #                 ))
-
-    #         try:
-    #             db.commit()
-    #             print("COMMIT SUCCESS")
-    #         except Exception as e:
-    #             print("COMMIT FAILED:", e)
-    #             db.rollback()
-    #             raise
-
-    #         db.refresh(client)
-    #         return ClientService._format_client(client, db)
-
-
 
     @staticmethod
     def _create_secondary_locations(
@@ -634,22 +522,11 @@ class ClientService:
                          # Note: we don't add to payload_loc_ids because it wasn't in existing map
                     else:
                         print(f"DEBUG: Location item ignored. ID: {loc_id}, TempID: {loc_item.get('temp_id')}")
-                
-                # --- DELETE MISSING ---
-                # Delete any existing secondary location NOT present in the payload
-                # (Only if IDs were provided in payload. If payload items lacked IDs, they were treated as new)
-                # Strategy: If the frontend sends existing items, it MUST send their IDs.
+              
                 for eid, eloc in existing_loc_map.items():
                     if eid not in payload_loc_ids:
                         db.delete(eloc)
 
-
-            # -------------------------------------------------
-            # 3. PROVIDERS HANDLING
-            # -------------------------------------------------
-            # -------------------------------------------------
-            # 3. PROVIDERS HANDLING
-            # -------------------------------------------------
             if providers_data is not None:
                 # Fetch existing mappings
                 existing_mappings = db.query(ProviderClientMapping).filter(
@@ -661,7 +538,6 @@ class ClientService:
                 payload_provider_ids = set()
 
                 for p_item in providers_data:
-                    # Resolve Location (same logic as before)
                     location_id = p_item.get("location_id")
                     location_temp = p_item.get("location_temp_id")
                     if location_temp:
@@ -686,14 +562,10 @@ class ClientService:
                         provider_obj = db.query(Provider).filter(Provider.npi == npi_val).first()
                     
                     if provider_obj:
-                        # PROVIDER EXISTS GLOBAL
-                        # Update details
-                        # provider_obj.location_id = location_id # REMOVED from Provider
-                        
+                    
                         provider_obj.first_name = p_item.get("first_name", provider_obj.first_name)
                         provider_obj.middle_name = p_item.get("middle_name", provider_obj.middle_name)
                         provider_obj.last_name = p_item.get("last_name", provider_obj.last_name)
-                        # npi is unique key, so if we found it by npi, we don't change npi usually.
                         
                         provider_obj.address_line_1 = p_item.get("address_line_1", provider_obj.address_line_1)
                         provider_obj.address_line_2 = p_item.get("address_line_2", provider_obj.address_line_2)
@@ -703,12 +575,10 @@ class ClientService:
                         provider_obj.country = p_item.get("country", provider_obj.country)
                         provider_obj.zip_code = p_item.get("zip_code", provider_obj.zip_code)
 
-                        # Update Mapping (location_id)
                         if str(provider_obj.id) in mapping_map:
                              existing_map = mapping_map[str(provider_obj.id)]
                              existing_map.location_id = location_id
                         else:
-                             # Create new mapping
                              new_map = ProviderClientMapping(
                                  provider_id=provider_obj.id,
                                  client_id=client.id,
@@ -720,9 +590,7 @@ class ClientService:
                         payload_provider_ids.add(str(provider_obj.id))
 
                     else:
-                         # CREATE NEW PROVIDER
                          new_prov = Provider(
-                             # location_id=location_id, # REMOVED
                              first_name=p_item.get("first_name"),
                              middle_name=p_item.get("middle_name"),
                              last_name=p_item.get("last_name"),
@@ -739,7 +607,6 @@ class ClientService:
                          db.add(new_prov)
                          db.flush()
                          
-                         # Create Mapping
                          new_map = ProviderClientMapping(
                                  provider_id=new_prov.id,
                                  client_id=client.id,
@@ -750,8 +617,7 @@ class ClientService:
                          payload_provider_ids.add(str(new_prov.id))
 
                 
-                # --- REMOVE UNMAPPED ---
-                # Delete mapping, NOT provider
+                
                 for existing_map in existing_mappings:
                     if str(existing_map.provider_id) not in payload_provider_ids:
                         db.delete(existing_map)
@@ -787,16 +653,12 @@ class ClientService:
         inactive_status = db.query(Status).filter(Status.code == 'INACTIVE').first()
         if inactive_status:
             client.status_id = inactive_status.id
-            
-            # Deactivate linked user(s) - Check all possible links
-            
-            # 1. Direct link on Client (Owner)
+           
             if client.created_by:
                 linked_user = db.query(User).filter(User.id == client.created_by).first()
                 if linked_user and not linked_user.is_superuser:
                     linked_user.status_id = inactive_status.id
 
-            # 2. Links via UserClient (Many-to-Many junction)
             linked_users_via_junction = db.query(User).join(UserClient, User.id == UserClient.user_id).filter(
                 UserClient.client_id == client.id
             ).all()
@@ -805,7 +667,6 @@ class ClientService:
                 if not user.is_superuser:
                     user.status_id = inactive_status.id
 
-            # 3. Direct link on User (if User.client_id is used)
             linked_users_via_foreign_key = db.query(User).filter(User.client_id == client.id).all()
             for user in linked_users_via_foreign_key:
                 if not user.is_superuser:
@@ -859,11 +720,7 @@ class ClientService:
         final_organisation_id = None
 
         if is_org_role:
-             # If Organisation Role, use their organisation_id
-             # assigned_by stays NULL (as per requirement "assigned_by": assigned_by if not org role)
-             # Wait, requirement says: if role is 'ORGANISATION_ADMIN' then organisation_id = assigned_by.
-             # assigned_by in request is the ID of the user doing the assignment.
-             
+            
              final_organisation_id = assigned_by
         else:
              final_assigned_by = assigned_by

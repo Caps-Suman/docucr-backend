@@ -1,8 +1,10 @@
 import re
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from app.models.client import Client
+from app.models.client_location import ClientLocation
 from app.models.organisation import Organisation
 from app.models.provider import Provider
+from app.models.provider_client_mapping import ProviderClientMapping
 from app.services.activity_service import ActivityService
 from sqlalchemy import text
 from app.core.permissions import Permission
@@ -88,11 +90,17 @@ class ClientCreate(BaseModel):
     @field_validator("zip_code")
     @classmethod
     def validate_zip(cls, v):
-        if v is None:
-            return v
-        if not re.match(r"^[0-9]{5}-[0-9]{4}$", v):
-            raise ValueError("ZIP code must be in format 11111-1111")
+        if v and not re.match(r"^[0-9]{5}(-[0-9]{4})?$", v):
+            raise ValueError("ZIP code must be 12345 or 12345-6789")
         return v
+    # @field_validator("zip_code")
+    # @classmethod
+    # def validate_zip(cls, v):
+    #     if v is None:
+    #         return v
+    #     if not re.match(r"^[0-9]{5}-[0-9]{4}$", v):
+    #         raise ValueError("ZIP code must be in format 11111-1111")
+    #     return v
    
     @field_validator("address_line_1", "city", "state_code", "zip_code", mode="before")
     @classmethod
@@ -247,7 +255,7 @@ class ProviderCreateSchema(BaseModel):
     address_line_2: Optional[str] = Field(None, max_length=250)
     city: Optional[str]
     state_code: Optional[str] = Field(None, min_length=2, max_length=2)
-    state_name: Optional[str]
+    state_name: Optional[str]=None
     country: Optional[str] = "United States"
     zip_code: Optional[str]
 
@@ -426,12 +434,6 @@ async def get_client_users(client_id: str, db: Session = Depends(get_db)):
         # "created_at": user.created_at # Assuming created_at exists on User model, otherwise skip or join UserClient
     } for user in users]
 
-# @router.get("/{client_id}", response_model=ClientResponse)
-# async def get_client(client_id: str, db: Session = Depends(get_db)):
-#     client = ClientService.get_client_by_id(client_id, db)
-#     if not client:
-#         raise HTTPException(status_code=404, detail="Client not found")
-#     return ClientResponse(**client)
 
 @router.post("/", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "CREATE"))])
 async def create_client(
@@ -462,13 +464,64 @@ async def create_client(
         
     return ClientResponse(**created_client)
 
-@router.post(
-    "/{client_id}/providers",
-    dependencies=[Depends(Permission("clients", "UPDATE"))]
-)
+from typing import List
+
+@router.post("/{client_id}/providers",
+             dependencies=[Depends(Permission("clients", "UPDATE"))])
 def add_providers(
     client_id: str,
     providers: List[ProviderCreateSchema],
+    db: Session = Depends(get_db),
+):
+
+    client = db.query(Client).filter(
+        Client.id == client_id,
+        Client.deleted_at.is_(None)
+    ).first()
+
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    if client.type != "NPI2":
+        raise HTTPException(
+            status_code=400,
+            detail="Providers can only be added to NPI2 clients"
+        )
+
+    created = []
+
+    for provider in providers:
+
+        # check if provider already exists by NPI
+        existing_provider = db.query(Provider).filter(
+            Provider.npi == provider.npi
+        ).first()
+
+        if existing_provider:
+            provider_obj = existing_provider
+        else:
+            provider_obj = Provider(**provider.model_dump())
+            db.add(provider_obj)
+            db.flush()  # get ID
+
+        # create mapping
+        mapping = ProviderClientMapping(
+            provider_id=provider_obj.id,
+            client_id=client.id,
+            created_by=client.created_by
+        )
+
+        db.add(mapping)
+        created.append(provider.npi)
+
+    db.commit()
+
+    return {"success": True, "created": len(created)}
+@router.post("/{client_id}/locations",
+             dependencies=[Depends(Permission("clients", "UPDATE"))])
+def add_location(
+    client_id: str,
+    location: ClientLocationCreate,
     db: Session = Depends(get_db),
 ):
     client = db.query(Client).filter(
@@ -479,35 +532,33 @@ def add_providers(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    if client.type != "NPA2":
-        raise HTTPException(
-            status_code=400,
-            detail="Providers can only be added to NPA2 clients"
+    # 🔥 If new location is primary → demote existing primary
+    if location.is_primary:
+        db.query(ClientLocation).filter(
+            ClientLocation.client_id == client.id,
+            ClientLocation.is_primary.is_(True)
+        ).update(
+            {"is_primary": False},
+            synchronize_session=False
         )
 
-    for p in providers:
-        if ClientService.check_npi_exists(p.npi, None, db):
-            raise HTTPException(
-                status_code=400,
-                detail=f"NPI already exists: {p.npi}"
-            )
-
-        db.add(Provider(
-            client_id=client.id,
-            **p.model_dump()
-        ))
-
-    db.commit()
-    ActivityService.log(
-        db=db,
-        action="ADD_PROVIDER",
-        entity_type="client",
-        entity_id=str(client_id),
-        details={"count": len(providers)}
+    new_location = ClientLocation(
+        client_id=client.id,
+        address_line_1=location.address_line_1,
+        address_line_2=location.address_line_2,
+        city=location.city,
+        state_code=location.state_code,
+        state_name=location.state_name,
+        country=location.country,
+        zip_code=location.zip_code,
+        is_primary=location.is_primary,
+        created_by=client.created_by
     )
 
-    return {"success": True}
+    db.add(new_location)
+    db.commit()
 
+    return {"success": True}
 @router.get("/{client_id}/providers", response_model=ProviderListResponse)
 def get_client_providers(
     client_id: str,
@@ -515,7 +566,7 @@ def get_client_providers(
     page_size: int = 10,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user) # Ensure security
+    current_user: User = Depends(get_current_user) 
 ):
     providers, total = ClientService.get_providers_by_client(
         client_id=client_id,
