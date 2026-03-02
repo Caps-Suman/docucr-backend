@@ -162,6 +162,16 @@ class ClientUpdate(BaseModel):
                 f"{info.field_name} is required for US addresses"
             )
         return v
+
+class ClientLocationUpdate(BaseModel):
+    address_line_1: Optional[str] = None
+    address_line_2: Optional[str] = None
+    city: Optional[str] = None
+    state_code: Optional[str] = None
+    state_name: Optional[str] = None
+    country: Optional[str] = None
+    zip_code: Optional[str] = None
+    is_primary: Optional[bool] = None    
 class ProviderResponse(BaseModel):
     id: UUID
     name: Optional[str] = None
@@ -582,7 +592,61 @@ def get_client_providers(
         page=page,
         page_size=page_size
     )
+@router.put("/{client_id}/locations/{location_id}",
+            dependencies=[Depends(Permission("clients", "UPDATE"))])
+def update_location(
+    client_id: str,
+    location_id: str,
+    location: ClientLocationUpdate,
+    db: Session = Depends(get_db),
+):
+    client = db.query(Client).filter(
+        Client.id == client_id,
+        Client.deleted_at.is_(None)
+    ).first()
 
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    loc = db.query(ClientLocation).filter(
+        ClientLocation.id == location_id,
+        ClientLocation.client_id == client.id
+    ).first()
+
+    if not loc:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    # If set as primary → demote others
+    if location.is_primary:
+        db.query(ClientLocation).filter(
+            ClientLocation.client_id == client.id,
+            ClientLocation.is_primary.is_(True)
+        ).update({"is_primary": False}, synchronize_session=False)
+
+    # Update location fields
+    update_data = location.model_dump(exclude_unset=True)
+
+    if update_data.get("is_primary") is True:
+        db.query(ClientLocation).filter(
+            ClientLocation.client_id == client.id,
+            ClientLocation.id != loc.id
+        ).update({"is_primary": False}, synchronize_session=False)
+
+    for field, value in update_data.items():
+        setattr(loc, field, value)
+
+    if loc.is_primary:
+        client.address_line_1 = loc.address_line_1
+        client.address_line_2 = loc.address_line_2
+        client.city = loc.city
+        client.state_code = loc.state_code
+        client.state_name = loc.state_name
+        client.zip_code = loc.zip_code
+        client.country = loc.country
+
+    db.commit()
+
+    return {"success": True}
 @router.get("/{client_id}", response_model=dict)
 def get_client_by_id(
     client_id: str,

@@ -394,7 +394,7 @@ class ClientService:
     def _link_user(client: Client, user_id: str, db: Session):
         # Ownership only — NO user_client
         UserService.link_client_owner(db, user_id, client.id)
-
+        
     @staticmethod
     def update_client(client_id: str, client_data: Dict, db: Session, current_user: User) -> Optional[Dict]:
 
@@ -408,165 +408,161 @@ class ClientService:
             Client.id == client_id,
             Client.deleted_at.is_(None)
         )
+
         if org_id:
             query = query.filter(Client.organisation_id == org_id)
-            
+
         client = query.first()
 
         if not client:
             return None
 
-        # Extract nested data
         providers_data = client_data.pop("providers", None)
         locations_data = client_data.pop("locations", None)
-        primary_temp_id = client_data.pop("primary_temp_id", "primary") # Use "primary" as fallback key if none provided
 
         try:
+
             # -------------------------------------------------
-            # 1. UPDATE CLIENT BASIC FIELDS
+            # UPDATE BASIC CLIENT FIELDS (NON ADDRESS)
             # -------------------------------------------------
             for key, value in client_data.items():
                 if hasattr(client, key):
                     setattr(client, key, value)
 
             # -------------------------------------------------
-            # 2. LOCATIONS HANDLING
+            # PRIMARY LOCATION (SOURCE OF TRUTH)
             # -------------------------------------------------
-            
-            # Fetch Primary Location
             primary_loc = db.query(ClientLocation).filter(
                 ClientLocation.client_id == client.id,
                 ClientLocation.is_primary.is_(True)
             ).first()
 
             if not primary_loc:
-                # Should not happen ideally, but if missing recreate?
-                # For safety, let's create if missing, though schema implies it exists.
-                primary_loc = ClientLocation(client_id=client.id, is_primary=True)
+                primary_loc = ClientLocation(
+                    client_id=client.id,
+                    is_primary=True,
+                    created_by=client.created_by
+                )
                 db.add(primary_loc)
                 db.flush()
 
-            # Map temp_id -> real_id (UUID)
-            # We start by mapping the known primary_temp_id to the real DB ID
-            temp_to_real: Dict[str, str] = {}
-            if primary_temp_id:
-                temp_to_real[primary_temp_id] = str(primary_loc.id)
-
-            # Sync primary location address from Client basic fields
-            # (Because Client table duplicates primary address cols)
-            for f in [
-                "address_line_1", "address_line_2", "city",
-                "state_code", "state_name", "country", "zip_code"
-            ]:
-                val = getattr(client, f, None)
-                if val is not None:
-                     setattr(primary_loc, f, val)
-
-            # Process Secondary Locations (if provided)
-            # If locations_data is None, we DO NOT touch secondary locations (PATCH behavior).
-            # If locations_data is [], we DELETE all secondary locations.
             if locations_data is not None:
-                
-                # Get existing secondary locations
-                existing_locs = db.query(ClientLocation).filter(
+                for loc_item in locations_data:
+                    if loc_item.get("is_primary"):
+
+                        for field in [
+                            "address_line_1",
+                            "address_line_2",
+                            "city",
+                            "state_code",
+                            "state_name",
+                            "country",
+                            "zip_code"
+                        ]:
+                            if field in loc_item:
+                                setattr(primary_loc, field, loc_item.get(field))
+
+                        break
+
+            # Sync CLIENT table from PRIMARY location
+            client.address_line_1 = primary_loc.address_line_1
+            client.address_line_2 = primary_loc.address_line_2
+            client.city = primary_loc.city
+            client.state_code = primary_loc.state_code
+            client.state_name = primary_loc.state_name
+            client.country = primary_loc.country
+            client.zip_code = primary_loc.zip_code
+
+            # -------------------------------------------------
+            # SECONDARY LOCATIONS
+            # -------------------------------------------------
+            if locations_data is not None:
+
+                existing_secondary = db.query(ClientLocation).filter(
                     ClientLocation.client_id == client.id,
                     ClientLocation.is_primary.is_(False)
                 ).all()
-                existing_loc_map = {str(l.id): l for l in existing_locs}
-                
-                payload_loc_ids = set()
+
+                existing_map = {str(loc.id): loc for loc in existing_secondary}
+                payload_ids = set()
 
                 for loc_item in locations_data:
-                    # Skip primary if it accidentally got into this array
-                    if loc_item.get("is_primary"): 
+
+                    if loc_item.get("is_primary"):
                         continue
-                        
-                    # Identify if it's an existing location (has ID) or new (no ID / temp_id)
+
                     loc_id = loc_item.get("id")
-                    
-                    if loc_id and str(loc_id) in existing_loc_map:
-                        # --- UPDATE EXISTING ---
-                        loc_obj = existing_loc_map[str(loc_id)]
+
+                    # UPDATE EXISTING
+                    if loc_id and str(loc_id) in existing_map:
+                        loc_obj = existing_map[str(loc_id)]
+
                         for k, v in loc_item.items():
-                            if k in ["id", "temp_id", "is_primary"]: continue
+                            if k in ["id", "is_primary"]:
+                                continue
                             if hasattr(loc_obj, k):
                                 setattr(loc_obj, k, v)
-                        payload_loc_ids.add(str(loc_id))
-                        
-                        # Map temp_id if present
-                        if loc_item.get("temp_id"):
-                            temp_to_real[loc_item["temp_id"]] = str(loc_obj.id)
-                            
-                    elif loc_item.get("temp_id") and loc_item.get("temp_id") != primary_temp_id:
-                         # --- CREATE NEW ---
-                         # Ensure valid address
-                         if not loc_item.get("address_line_1"): 
-                             continue
 
-                         new_loc = ClientLocation(
-                             client_id=client.id,
-                             is_primary=False,
-                             address_line_1=loc_item.get("address_line_1"),
-                             address_line_2=loc_item.get("address_line_2"),
-                             city=loc_item.get("city"),
-                             state_code=loc_item.get("state_code"),
-                             state_name=loc_item.get("state_name"),
-                             country=loc_item.get("country"),
-                             zip_code=loc_item.get("zip_code"),
-                             created_by=client.created_by
-                         )
-                         db.add(new_loc)
-                         db.flush() # Get ID
-                         
-                         temp_to_real[loc_item["temp_id"]] = str(new_loc.id)
-                         # Note: we don't add to payload_loc_ids because it wasn't in existing map
-                    else:
-                        print(f"DEBUG: Location item ignored. ID: {loc_id}, TempID: {loc_item.get('temp_id')}")
-              
-                for eid, eloc in existing_loc_map.items():
-                    if eid not in payload_loc_ids:
+                        payload_ids.add(str(loc_id))
+                        continue
+
+                    # CREATE NEW (ONLY if NO ID)
+                    if not loc_id:
+                        if not loc_item.get("address_line_1"):
+                            continue
+
+                        new_loc = ClientLocation(
+                            client_id=client.id,
+                            is_primary=False,
+                            address_line_1=loc_item.get("address_line_1"),
+                            address_line_2=loc_item.get("address_line_2"),
+                            city=loc_item.get("city"),
+                            state_code=loc_item.get("state_code"),
+                            state_name=loc_item.get("state_name"),
+                            country=loc_item.get("country"),
+                            zip_code=loc_item.get("zip_code"),
+                            created_by=client.created_by
+                        )
+                        db.add(new_loc)
+
+                # DELETE removed secondary locations
+                for eid, eloc in existing_map.items():
+                    if eid not in payload_ids:
                         db.delete(eloc)
 
+            # -------------------------------------------------
+            # PROVIDERS
+            # -------------------------------------------------
             if providers_data is not None:
-                # Fetch existing mappings
+
                 existing_mappings = db.query(ProviderClientMapping).filter(
-                     ProviderClientMapping.client_id == client.id
+                    ProviderClientMapping.client_id == client.id
                 ).all()
-                existing_mapped_provider_ids = {str(m.provider_id) for m in existing_mappings}
+
                 mapping_map = {str(m.provider_id): m for m in existing_mappings}
-                
                 payload_provider_ids = set()
 
                 for p_item in providers_data:
-                    location_id = p_item.get("location_id")
-                    location_temp = p_item.get("location_temp_id")
-                    if location_temp:
-                        location_id = temp_to_real.get(location_temp)
-                        if not location_id:
-                             try:
-                                 uuid.UUID(location_temp)
-                                 location_id = location_temp
-                             except:
-                                 pass 
-                    
-                    if not location_id:
-                         location_id = primary_loc.id
 
-                    # Resolve Provider by NPI
+                    location_id = p_item.get("location_id")
+
+                    if not location_id:
+                        location_id = primary_loc.id
+
                     npi_val = p_item.get("npi")
                     if not npi_val:
-                        pass
+                        continue
 
-                    provider_obj = None
-                    if npi_val:
-                        provider_obj = db.query(Provider).filter(Provider.npi == npi_val).first()
-                    
+                    provider_obj = db.query(Provider).filter(
+                        Provider.npi == npi_val
+                    ).first()
+
+                    # UPDATE EXISTING PROVIDER
                     if provider_obj:
-                    
+
                         provider_obj.first_name = p_item.get("first_name", provider_obj.first_name)
                         provider_obj.middle_name = p_item.get("middle_name", provider_obj.middle_name)
                         provider_obj.last_name = p_item.get("last_name", provider_obj.last_name)
-                        
                         provider_obj.address_line_1 = p_item.get("address_line_1", provider_obj.address_line_1)
                         provider_obj.address_line_2 = p_item.get("address_line_2", provider_obj.address_line_2)
                         provider_obj.city = p_item.get("city", provider_obj.city)
@@ -576,60 +572,58 @@ class ClientService:
                         provider_obj.zip_code = p_item.get("zip_code", provider_obj.zip_code)
 
                         if str(provider_obj.id) in mapping_map:
-                             existing_map = mapping_map[str(provider_obj.id)]
-                             existing_map.location_id = location_id
+                            mapping_map[str(provider_obj.id)].location_id = location_id
                         else:
-                             new_map = ProviderClientMapping(
-                                 provider_id=provider_obj.id,
-                                 client_id=client.id,
-                                 location_id=location_id,
-                                 created_by=client.created_by
-                             )
-                             db.add(new_map)
-                        
+                            db.add(ProviderClientMapping(
+                                provider_id=provider_obj.id,
+                                client_id=client.id,
+                                location_id=location_id,
+                                created_by=client.created_by
+                            ))
+
                         payload_provider_ids.add(str(provider_obj.id))
 
+                    # CREATE NEW PROVIDER
                     else:
-                         new_prov = Provider(
-                             first_name=p_item.get("first_name"),
-                             middle_name=p_item.get("middle_name"),
-                             last_name=p_item.get("last_name"),
-                             npi=p_item.get("npi"),
-                             address_line_1=p_item.get("address_line_1"),
-                             address_line_2=p_item.get("address_line_2"),
-                             city=p_item.get("city"),
-                             state_code=p_item.get("state_code"),
-                             state_name=p_item.get("state_name"),
-                             country=p_item.get("country"),
-                             zip_code=p_item.get("zip_code"),
-                             created_by=client.created_by
-                         )
-                         db.add(new_prov)
-                         db.flush()
-                         
-                         new_map = ProviderClientMapping(
-                                 provider_id=new_prov.id,
-                                 client_id=client.id,
-                                 location_id=location_id,
-                                 created_by=client.created_by
-                             )
-                         db.add(new_map)
-                         payload_provider_ids.add(str(new_prov.id))
+                        new_prov = Provider(
+                            first_name=p_item.get("first_name"),
+                            middle_name=p_item.get("middle_name"),
+                            last_name=p_item.get("last_name"),
+                            npi=npi_val,
+                            address_line_1=p_item.get("address_line_1"),
+                            address_line_2=p_item.get("address_line_2"),
+                            city=p_item.get("city"),
+                            state_code=p_item.get("state_code"),
+                            state_name=p_item.get("state_name"),
+                            country=p_item.get("country"),
+                            zip_code=p_item.get("zip_code"),
+                            created_by=client.created_by
+                        )
+                        db.add(new_prov)
+                        db.flush()
 
-                
-                
-                for existing_map in existing_mappings:
-                    if str(existing_map.provider_id) not in payload_provider_ids:
-                        db.delete(existing_map)
+                        db.add(ProviderClientMapping(
+                            provider_id=new_prov.id,
+                            client_id=client.id,
+                            location_id=location_id,
+                            created_by=client.created_by
+                        ))
+
+                        payload_provider_ids.add(str(new_prov.id))
+
+                # DELETE removed mappings
+                for m in existing_mappings:
+                    if str(m.provider_id) not in payload_provider_ids:
+                        db.delete(m)
 
             db.commit()
             db.refresh(client)
+
             return ClientService._format_client(client, db)
 
         except Exception:
             db.rollback()
             raise
-
 
     @staticmethod
     def activate_client(client_id: str, db: Session) -> Optional[Dict]:
