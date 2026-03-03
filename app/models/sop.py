@@ -21,7 +21,10 @@ class SOP(Base):
     provider_info = Column(JSONB, nullable=True)
     workflow_process = Column(JSONB, nullable=True)
     billing_guidelines = Column(JSONB, nullable=True)
+    payer_guidelines=Column(JSONB, nullable=True)
     coding_rules = Column(JSONB, nullable=True)
+    coding_rules_cpt = Column(JSONB, nullable=True, default=list)
+    coding_rules_icd = Column(JSONB, nullable=True, default=list)
 
     # 🔒 Lifecycle status (ONLY ACTIVE / INACTIVE)
     status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)
@@ -29,11 +32,16 @@ class SOP(Base):
     # 🔁 Workflow / processing status
     workflow_status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)
 
+    created_by = Column(String, ForeignKey("docucr.user.id"), nullable=True)
+    organisation_id = Column(String, ForeignKey("docucr.organisation.id"), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # ---------- Relationships ----------
     client = relationship("Client", backref="sops")
+    creator = relationship("User", foreign_keys=[created_by], backref="created_sops")
+    organisation = relationship("Organisation", foreign_keys=[organisation_id], backref="sops")
 
     lifecycle_status = relationship(
         "Status",

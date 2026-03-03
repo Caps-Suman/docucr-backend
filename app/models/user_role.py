@@ -12,6 +12,7 @@ class UserRole(Base):
     role_id = Column(String, ForeignKey('docucr.role.id'), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    organisation_id = Column(String, ForeignKey('docucr.organisation.id'), nullable=True)
 
     user = relationship("User", backref=backref("user_roles", overlaps="users,roles"), overlaps="users,roles")
     role = relationship("Role", backref=backref("role_users", overlaps="users,roles"), overlaps="users,roles")

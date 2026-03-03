@@ -8,28 +8,30 @@ from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
 from uuid import UUID
 import io
+from app.models.sop import SOP
+from app.models.status import Status
+from app.services.activity_service import ActivityService
+from fastapi import Request, BackgroundTasks
 
 from app.core.database import get_db
+from app.models.user import User
 from app.services.ai_sop_service import AISOPService
 from app.services.sop_service import SOPService
 from app.core.security import get_current_user
-# Assuming generic permissions or skipping for now as per "simple integration" request, but better to be safe.
-# Using generic "sops" permission resource name based on patterns.
 from app.core.permissions import Permission
 
 router = APIRouter()
-
-# --- Schemas ---
-# Defining schemas here for simplicity as per user request to "integrate". 
-# If a separate schemas file is preferred, I can move it, but keeping it co-located is often easier for initial iteration.
-# Actually, I should check if there is a schemas directory. Previous list_dir showed no schemas dir?
-# Ah, list_dir returned "directory ... does not exist". 
-# So schemas are likely inside routers or models or separate files? 
-# Clients router defined models inline. I will do the same.
-
-class BillingGuideline(BaseModel):
-    title: str
+class BillingRule(BaseModel):
     description: str
+
+class BillingGuidelineGroup(BaseModel):
+    category: str
+    rules: list[BillingRule]
+
+
+class PayerGuideline(BaseModel):
+    payer_name:str
+    description:str
 class SOPBase(BaseModel):
     title: str
     category: str
@@ -37,16 +39,19 @@ class SOPBase(BaseModel):
     client_id: Optional[UUID] = None
     provider_info: Optional[Dict[str, Any]] = None
     workflow_process: Optional[Dict[str, Any]] = None
-    # billing_guidelines: Optional[List[Dict[str, Any]]] = None
-    billing_guidelines: Optional[List[BillingGuideline]]=None
-    coding_rules: Optional[List[Dict[str, Any]]] = None
+    billing_guidelines: Optional[List[BillingGuidelineGroup]]=None
+    payer_guidelines: Optional[List[PayerGuideline]]=None
+    coding_rules_cpt: Optional[List[Dict[str, Any]]] = None
+    coding_rules_icd: Optional[List[Dict[str, Any]]] = None
     status_id: Optional[int] = None
+    created_by: Optional[str] = None
+    organisation_id: Optional[str] = None
 
 class SOPCreate(SOPBase):
-    pass
+    provider_ids: Optional[List[UUID]] = []
 
 class SOPUpdate(SOPBase):
-    pass
+    provider_ids: Optional[List[UUID]] = None
 
 class SOPStatusUpdate(BaseModel):
     status_id: int
@@ -66,6 +71,13 @@ class SOPShortResponse(BaseModel):
     provider_info: Optional[Dict[str, Any]] = None
     status_id: Optional[int] = None
     status: Optional[StatusInfo] = None
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
+    organisation_id: Optional[str] = None
+    organisation_name: Optional[str] = None
+    client_id: Optional[UUID] = None
+    client_name: Optional[str] = None
+    client_npi: Optional[str] = None
     updated_at: Any
 
     class Config:
@@ -79,8 +91,14 @@ class SOPStatsResponse(BaseModel):
 class SOPResponse(SOPBase):
     id: UUID
     status: Optional[StatusInfo] = None
+    created_by_name: Optional[str] = None
+    organisation_id: Optional[str] = None
+    organisation_name: Optional[str] = None
+    client_name: Optional[str] = None
+    client_npi: Optional[str] = None
     created_at: Any
     updated_at: Any
+    providers: Optional[List[Dict[str, Any]]] = None
 
     class Config:
         from_attributes = True
@@ -96,33 +114,110 @@ class AISOPExtractResponse(BaseModel):
 
 @router.post("", response_model=SOPResponse, status_code=status.HTTP_201_CREATED)
 def create_sop(
-    sop: SOPCreate, 
+    sop: SOPCreate,
     db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("SOPs", "CREATE")),
+    current_user = Depends(get_current_user),
+    request: Request = None,
+    background_tasks: BackgroundTasks = None,
+):
+    sop_data = sop.model_dump()
+
+    client_id = str(sop.client_id) if sop.client_id else None
+
+    if not client_id:
+        raise HTTPException(400, "Client ID is required")
+
+    result = SOPService.create_sop(
+        sop_data,
+        db,
+        current_user,
+        client_id
+    )
+
+    ActivityService.log(
+        db=db,
+        action="CREATE",
+        entity_type="sop",
+        entity_id=str(result.id),
+        details={"title": result.title},
+        current_user=current_user,
+        request=request,
+        background_tasks=background_tasks
+    )
+
+    return result
+    # return SOPService.create_sop(sop_data, db, current_user)
+@router.post("/check-providers/{client_id}")
+def check_providers(
+    client_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("SOPs", "CREATE")),
     current_user = Depends(get_current_user)
 ):
-    return SOPService.create_sop(sop.model_dump(), db)
+    provider_ids = payload.get("provider_ids", [])
+    sop_id = payload.get("sop_id")   # 👈 MUST exist
+
+    blocked = SOPService.get_blocked_providers(
+        client_id=client_id,
+        provider_ids=provider_ids,
+        db=db,
+        exclude_sop_id=sop_id        # 👈 MUST pass
+    )
+
+    return {"blocked_provider_ids": blocked}
+@router.post("/check-client-sop/{client_id}")
+def check_client_sop(
+    client_id: str,
+    db: Session = Depends(get_db),
+    permission: bool = Depends(Permission("SOPs", "CREATE")),
+    current_user = Depends(get_current_user)
+):
+    active_status_id = db.query(Status.id).filter(
+        Status.code == "ACTIVE",
+        Status.type == "GENERAL"
+    ).scalar()
+
+    exists = db.query(SOP.id).filter(
+        SOP.client_id == client_id,
+        SOP.status_id == active_status_id
+    ).first() is not None
+
+    return {"exists": exists}
 @router.get("/stats", response_model=SOPStatsResponse)
 def get_sop_stats(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    return SOPService.get_sop_stats(db)
+    return SOPService.get_sop_stats(db, current_user)
 
 @router.get("", response_model=SOPListResponse)
 def get_sops(
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
-    status_code: Optional[str] = None,   # FIX
+    status_code: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    organisation_id: Optional[str] = None,
+    created_by: Optional[str] = None,
+    client_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     sops, total = SOPService.get_sops(
         db,
+        current_user=current_user,
         skip=skip,
         limit=limit,
         search=search,
-        status_code=status_code
+        status_code=status_code,
+        from_date=from_date,
+        to_date=to_date,
+        organisation_id=organisation_id,
+        created_by=created_by,
+        client_id=client_id
     )
     return {"sops": sops, "total": total}
 
@@ -176,66 +271,138 @@ async def ai_extract_sop(
         # ✅ guaranteed cleanup
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
-
 @router.get("/{sop_id}", response_model=SOPResponse)
 def get_sop(
-    sop_id: str, 
+    sop_id: str,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    sop = SOPService.get_sop_by_id(sop_id, db)
-    if not sop:
-        raise HTTPException(status_code=404, detail="SOP not found")
-    return sop
+    sop = SOPService.get_sop_by_id(sop_id, db, current_user)
 
+    if not sop:
+        raise HTTPException(404, "SOP not found")
+
+    return sop
 @router.put("/{sop_id}", response_model=SOPResponse)
 def update_sop(
     sop_id: str, 
     sop: SOPUpdate, 
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(Permission("SOPs", "UPDATE")),
+    request: Request = None,
+    background_tasks: BackgroundTasks = None,
 ):
-    updated_sop = SOPService.update_sop(sop_id, sop.model_dump(exclude_unset=True), db)
-    if not updated_sop:
-        raise HTTPException(status_code=404, detail="SOP not found")
-    return updated_sop
+    existing = SOPService.get_sop_by_id(sop_id, db, current_user)
+
+    updated = SOPService.update_sop(
+        sop_id,
+        sop.model_dump(exclude_unset=True),
+        db,
+        current_user
+    )
+    if not updated:
+        raise HTTPException(404, "SOP not found")
+
+    changes = ActivityService.calculate_changes(
+        existing,
+        sop.model_dump(exclude_unset=True)
+    )
+
+    ActivityService.log(
+        db=db,
+        action="UPDATE",
+        entity_type="sop",
+        entity_id=str(sop_id),
+        current_user=current_user,
+        details={"title": updated["title"], "changes": changes},
+        request=request,
+        background_tasks=background_tasks
+    )
+
+    return updated
+
 
 @router.patch("/{sop_id}", response_model=SOPResponse)
 def update_sop_status(
     sop_id: str,
     status_update: SOPStatusUpdate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    request:Request=None,
+    background_tasks:BackgroundTasks=None,
+    current_user: User = Depends(Permission("SOPs", "UPDATE"))
 ):
-    updated_sop = SOPService.update_sop(sop_id, status_update.model_dump(), db)
+    updated_sop = SOPService.update_sop(
+        sop_id,
+        status_update.model_dump(),
+        db,
+        current_user
+    )
     if not updated_sop:
         raise HTTPException(status_code=404, detail="SOP not found")
+    ActivityService.log(
+        db=db,
+        action="STATUS_CHANGE",
+        entity_type="sop",
+        entity_id=str(sop_id),
+        current_user=current_user,
+        details={"status_id": status_update.status_id},
+        request=request,
+        background_tasks=background_tasks
+    )
+
     return updated_sop
 
 @router.delete("/{sop_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_sop(
     sop_id: str, 
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    request:Request=None,
+    background_tasks:BackgroundTasks=None,
+    current_user: User = Depends(Permission("SOPs", "DELETE"))
 ):
-    success = SOPService.delete_sop(sop_id, db)
+    success = SOPService.delete_sop(sop_id, db, current_user)  
     if not success:
         raise HTTPException(status_code=404, detail="SOP not found")
-    return None
+    ActivityService.log(
+        db=db,
+        action="DELETE",
+        entity_type="sop",
+        entity_id=str(sop_id),
+        current_user=current_user,
+        request=request,
+        background_tasks=background_tasks
+    )
 
+    return None
 @router.get("/{sop_id}/pdf")
 def download_sop_pdf(
     sop_id: str,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    request: Request = None,
+    background_tasks: BackgroundTasks = None,
+    current_user: User = Depends(Permission("SOPs", "EXPORT"))
 ):
-    sop = SOPService.get_sop_by_id(sop_id, db)
+    sop = SOPService.get_sop_by_id(sop_id, db, current_user)
+
     if not sop:
-        raise HTTPException(status_code=404, detail="SOP not found")
-    
+        raise HTTPException(404, "SOP not found")
+
     pdf_buffer = SOPService.generate_sop_pdf(sop)
+    filename = sop.get("title", "SOP").replace(" ", "_")
+
+    ActivityService.log(
+        db=db,
+        action="EXPORT",
+        entity_type="sop",
+        entity_id=str(sop_id),
+        current_user=current_user,
+        details={"title": sop.get("title")},
+        request=request,
+        background_tasks=background_tasks
+    )
+
     return StreamingResponse(
         io.BytesIO(pdf_buffer),
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={sop.title.replace(' ', '_')}.pdf"}
+        headers={"Content-Disposition": f"attachment; filename={filename}.pdf"}
     )

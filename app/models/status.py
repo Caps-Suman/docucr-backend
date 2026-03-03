@@ -20,3 +20,9 @@ class Status(Base):
         back_populates="status",
         cascade="all, delete-orphan"
     )
+
+    organisations = relationship(
+        "Organisation",
+        back_populates="status_relation",
+        cascade="all, delete-orphan"
+    )

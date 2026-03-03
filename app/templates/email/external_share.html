@@ -1,100 +1,153 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Shared With You</title>
+    <!-- Importing Comfortaa for email clients that support web fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Comfortaa:wght@400;700&display=swap" rel="stylesheet">
     <style>
+        /* Base Reset */
         body {
-            font-family: 'Inter', sans-serif;
-            line-height: 1.6;
-            color: #1e293b;
-            background-color: #f1f5f9;
-            padding: 20px;
+            margin: 0;
+            padding: 0;
+            width: 100% !important;
+            background-color: #ffffff;
+            font-family: 'Comfortaa', cursive !important;
+            color: #1a1a1a;
+            -webkit-font-smoothing: antialiased;
         }
 
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background: white;
+        /* Container */
+        .email-wrapper {
+            width: 100%;
+            background-color: #ffffff;
+            padding: 40px 20px;
+        }
+
+        .content-card {
+            max-width: 520px;
+            /* margin: 0 auto; */
+            border: 1px solid #f0f0f0;
+            border-radius: 32px;
             padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        }
-
-        .header {
+            box-shadow: 0 10px 25px rgba(0,0,0,0.03);
             text-align: center;
-            margin-bottom: 30px;
         }
 
-        .logo {
+        /* Branding */
+        .brand-logo {
+            font-size: 26px;
+            font-weight: 700;
+            letter-spacing: -1px;
+            color: #000000;
+            margin-bottom: 40px;
+            display: block;
+            text-decoration: none;
+        }
+
+        /* Typography */
+        h1 {
             font-size: 24px;
-            font-weight: 800;
+            font-weight: 700;
+            line-height: 1.3;
+            margin-bottom: 16px;
+            color: #000000;
+        }
+
+        p {
+            font-size: 15px;
+            line-height: 1.6;
+            color: #666666;
+            margin-bottom: 24px;
+        }
+
+        .highlight {
+            color: #0ea5e9;
+            font-weight: 700;
+        }
+
+        /* Document List Section */
+        .document-box {
+            background-color: #f8fafc;
+            border-radius: 24px;
+            padding: 24px;
+            margin: 32px 0;
+            text-align: left;
+            border: 1px solid #f1f5f9;
+        }
+
+        /* Note: Style for links within {{ documents_html }} */
+        .document-box a {
             color: #0ea5e9;
             text-decoration: none;
-            font-family: 'Comfortaa', cursive;
+            font-weight: 700;
+            display: block;
+            margin: 8px 0;
         }
 
-        .content {
-            margin-bottom: 30px;
-        }
-
-        .button {
+        /* Action Text */
+        .action-note {
+            font-size: 14px;
+            background: #f0f9ff;
+            color: #0369a1;
+            padding: 12px 20px;
+            border-radius: 16px;
             display: inline-block;
-            padding: 8px 18px;
-            background-color: #0ea5e9;
-            color: white !important;
-            text-decoration: none;
-            border-radius: 8px;
-            font-weight: 600;
-            margin: 10px 0;
+            margin-bottom: 32px;
         }
 
+        .divider {
+            height: 1px;
+            background-color: #f0f0f0;
+            margin: 32px 0;
+        }
+
+        /* Footer */
         .footer {
-            font-size: 14px;
-            color: #64748b;
-            text-align: center;
-            border-top: 1px solid #e2e8f0;
-            padding-top: 20px;
+            font-size: 13px;
+            color: #bbbbbb;
+            line-height: 1.5;
         }
 
-        .info-box {
-            background-color: #f0f9ff;
-            border-left: 4px solid #0ea5e9;
-            padding: 15px;
-            margin: 20px 0;
-            font-size: 14px;
-        }
-
-        .brand-text {
-            font-family: 'Comfortaa', cursive;
-            font-weight: bold;
+        /* Mobile */
+        @media screen and (max-width: 480px) {
+            .content-card {
+                padding: 30px 20px;
+                border: none;
+                box-shadow: none;
+            }
         }
     </style>
 </head>
-
 <body>
-    <div class="container">
-        <div class="header">
-            <a href="{{ site_url }}" class="logo">docucr</a>
-        </div>
-        <div class="content">
-            <h2>Document Shared With You</h2>
+    <div class="email-wrapper">
+        <div class="content-card">
+            <!-- Brand -->
+            <a href="https://docucr.medeye360.com" class="brand-logo">docucr</a>
+            
+            <h1>Document Shared</h1>
+            
             <p>Hello,</p>
-            <p><strong>{{ shared_by }}</strong> has shared document(s) with you using <span
-                    class="brand-text">docucr</span>.</p>
+            <p><span class="highlight">{{ shared_by }}</span> has shared document(s) with you via docucr.</p>
 
-            <div class="content">
+            <!-- Documents List Container -->
+            <div class="document-box">
                 {{ documents_html }}
             </div>
 
-            <p>To access these documents, please click the links above. You will be asked to enter the password provided
-                to you by the sender.</p>
-        </div>
-        <div class="footer">
-            <p>This is an automated notification from <span class="brand-text">docucr</span>. If you weren't expecting
-                this, please ignore this email.
-            </p>
+            <div class="action-note">
+                Use the password provided by the sender to access.
+            </div>
+
+            <div class="divider"></div>
+            
+            <div class="footer">
+                This is a secure automated notification.<br>
+                If you weren't expecting this, you can safely ignore this email.<br><br>
+                &copy; 2025 docucr. Secure document sharing.
+            </div>
         </div>
     </div>
 </body>
-
 </html>

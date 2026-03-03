@@ -56,6 +56,7 @@ class Client(Base):
         traceback.print_stack()
         self.created_by = value
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
+    organisation_id = Column(String, ForeignKey('docucr.organisation.id'), nullable=True)
     description = Column(Text, nullable=True)
 
     deleted_at = Column(DateTime(timezone=True), nullable=True)

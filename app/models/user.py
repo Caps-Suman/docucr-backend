@@ -24,8 +24,19 @@ class User(Base):
     status_id = Column(Integer, ForeignKey('docucr.status.id'), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    documents = relationship("Document", back_populates="user")
+    created_by = Column(String, ForeignKey('docucr.user.id'), nullable=True)
+    organisation_id = Column(String, ForeignKey('docucr.organisation.id'), nullable=True)
+    profile_image_url = Column(String, nullable=True)
+
+    creator = relationship("User", remote_side=[id], backref="created_users")
+
+    organisation = relationship("Organisation", back_populates="users")
+
+    documents_created  = relationship(
+        "Document",
+        foreign_keys="Document.created_by",
+        back_populates="creator"
+    )
     status_relation = relationship("Status")
     shared_documents = relationship(
     "DocumentShare",

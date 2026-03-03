@@ -4,13 +4,20 @@ from alembic import context
 import os
 import sys
 from dotenv import load_dotenv
-
+from app.models import *
+from app.models.provider import Provider
+from app.models.client_location import ClientLocation
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 load_dotenv()
 
 config = context.config
-if "DATABASE_URL" in os.environ:
+
+if os.getenv("DATABASE_URL"):
+    # escape % for configparser
+    db_url = os.getenv("DATABASE_URL").replace("%", "%%")
+    config.set_main_option('sqlalchemy.url', db_url)
+elif "PROD_DB" in os.environ:
     db_url = os.environ["DATABASE_URL"].replace("%", "%%")
     config.set_main_option('sqlalchemy.url', db_url)
 

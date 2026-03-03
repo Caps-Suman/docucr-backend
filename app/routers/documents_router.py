@@ -5,6 +5,9 @@ from typing import List, Optional
 from uuid import UUID
 import json
 
+from app.models.document_form_data import DocumentFormData
+from app.models.extracted_document import ExtractedDocument
+from app.models.organisation import Organisation
 from app.models.user_client import UserClient
 from ..core.database import get_db
 from ..core.security import get_current_user
@@ -34,7 +37,7 @@ async def upload_documents(
     template_id: Optional[UUID] = Form(None),
     form_id: Optional[UUID] = Form(None),
     form_data: Optional[str] = Form(None),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     _: bool = Depends(Permission("documents", "CREATE")),
     background_tasks: BackgroundTasks = None,
@@ -114,7 +117,6 @@ async def upload_documents(
     documents = await document_service.process_multiple_uploads(
         db=db,
         files=files,
-        user_id=current_user.id,
         user=current_user,
         enable_ai=enable_ai,
         document_type_id=document_type_id,
@@ -132,7 +134,7 @@ async def upload_documents(
             action="CREATE",
             entity_type="document",
             entity_id=str(doc.id),
-            user_id=current_user.id,
+            current_user=current_user,
             details={
                 "filename": doc.filename,
                 "size": doc.file_size,
@@ -160,107 +162,65 @@ async def upload_documents(
 @router.get("/{document_id}/form-data")
 async def get_document_form_data(
     document_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "READ"))
 ):
-    """Get form data for a document with role-based access control"""
-    from ..models.user_role import UserRole
-    from ..models.role import Role
-    from ..models.status import Status
-    from ..models.user_client import UserClient
-    from ..models.client import Client
-    from ..models.document_form_data import DocumentFormData
-    from sqlalchemy import cast, String, or_
-    from sqlalchemy import select
+    document = (
+        DocumentService
+        ._document_access_query(db, current_user)
+        .filter(Document.id == document_id)
+        .first()
+    )
 
-    # Get user's roles to determine access level
-    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-        User.id == current_user.id,
-        Role.status_id.in_(
-            db.query(Status.id).filter(Status.code == 'ACTIVE')
-        )
-    ).all()
-    
-    role_names = [role.name for role in user_roles]
-    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-    query = db.query(Document).filter(Document.id == document_id)
-    
-    if not is_admin:
-        # assigned_client_ids = db.query(UserClient.client_id).filter(
-        #     UserClient.user_id == current_user.id
-        # ).subquery()
-        assigned_client_ids = select(UserClient.client_id).where(
-            UserClient.user_id == current_user.id
-        )
-        client_documents_query = db.query(Document.id).join(
-            DocumentFormData, Document.id == DocumentFormData.document_id
-        ).join(
-            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-        ).filter(
-            Client.id.in_(assigned_client_ids)
-        )
-        
-        query = query.filter(
-            or_(
-                Document.user_id == current_user.id,
-                Document.id.in_(client_documents_query)
-            )
-        )
-    
-    document = query.first()
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-        
+
     if not document.form_data_relation:
-         return {"data": {}, "form_id": None}
-    
-    # Resolve field IDs to field names
+        return {"data": {}, "form_id": None}
+
+    # ---- resolve fields ----
     resolved_data = {}
-    if document.form_data_relation.data:
-        from ..models.form import FormField
-        from ..models.client import Client
-        from ..models.document_type import DocumentType
-        
-        for field_id, value in document.form_data_relation.data.items():
-            field = db.query(FormField).filter(FormField.id == field_id).first()
-            if field:
-                # Resolve dropdown values if needed
-                display_value = value
-                if field.field_type == 'dropdown' and field.options:
-                    # Find the option label for the value
-                    for option in field.options:
-                        if option.get('value') == value:
-                            display_value = option.get('label', value)
-                            break
-                elif field.field_type == 'client_dropdown':
-                    # Resolve client ID to client name
-                    try:
-                        client = db.query(Client).filter(Client.id == value).first()
-                        if client:
-                            display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
-                    except:
-                        pass
-                elif field.field_type == 'document_type_dropdown':
-                    # Resolve document type ID to document type name
-                    try:
-                        doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
-                        if doc_type:
-                            display_value = doc_type.name
-                    except:
-                        pass
-                        
-                resolved_data[field.label] = display_value
+
+    raw = document.form_data_relation.data or {}
+
+    for key, value in raw.items():
+
+        # 🔥 handle system client field directly
+        if key == "client_id":
+            client = db.query(Client).filter(Client.id == value).first()
+            if client:
+                resolved_data["Client"] = (
+                    client.business_name
+                    or f"{client.first_name} {client.last_name}".strip()
+                )
             else:
-                # Field not found, keep original
-                resolved_data[field_id] = value
-         
+                resolved_data["Client"] = value
+            continue
+
+        # normal form field resolution
+        field = db.query(FormField).filter(FormField.id == key).first()
+
+        if not field:
+            resolved_data[key] = value
+            continue
+
+        display_value = value
+
+        if field.field_type == "document_type_dropdown":
+            doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
+            if doc_type:
+                display_value = doc_type.name
+
+        resolved_data[field.label] = display_value
+
+
     return {
         "data": resolved_data,
         "form_id": document.form_data_relation.form_id,
         "updated_at": document.form_data_relation.updated_at
     }
+
 
 @router.patch("/{document_id}/form-data")
 async def update_document_form_data(
@@ -292,7 +252,9 @@ async def update_document_form_data(
     role_names = [role.name for role in user_roles]
     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
     
-    query = db.query(Document).filter(Document.id == document_id)
+    query = DocumentService._document_access_query(db, current_user)
+    document = query.filter(Document.id == document_id).first()
+
     
     if not is_admin:
         # assigned_client_ids = db.query(UserClient.client_id).filter(
@@ -312,7 +274,7 @@ async def update_document_form_data(
         
         query = query.filter(
             or_(
-                Document.user_id == current_user.id,
+                Document.created_by == current_user.id,
                 Document.id.in_(client_documents_query)
             )
         )
@@ -392,7 +354,7 @@ async def update_document_form_data(
         action="UPDATE",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={
             "sub_action": "METADATA_UPDATE",
             "filename": document.filename,
@@ -408,125 +370,131 @@ async def update_document_form_data(
 def get_document_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ"))
+    # permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get aggregate document statistics for the cards"""
-    return document_service.get_document_stats(db=db,user_id=current_user.id,current_user=current_user)
+    return document_service.get_document_stats(
+        db=db,
+        user=current_user
+    )
+
 
 @router.get("", response_model=dict)
 def get_documents(
     skip: int = 0,
     limit: int = 25,
-    status_id: Optional[str] = None,
+    status_code: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     search_query: Optional[str] = None,
     form_filters: Optional[str] = None,
-    document_type_id: Optional[UUID] = None,  # ADD
+    document_type_id: Optional[UUID] = None,
+    client_id: Optional[UUID] = None,
+    organisation_id: Optional[UUID] = None,
+    organisation_filter: Optional[str] = None,
+    uploaded_by: Optional[str] = None,
+    request: Request = None,
     shared_only: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ"))
 ):
-    """Get user documents with filters"""
-    documents, total_count = document_service.get_user_documents(
+
+    parsed_form_filters = None
+    if form_filters:
+        try:
+            parsed_form_filters = json.loads(form_filters)
+        except:
+            parsed_form_filters = None
+
+    docs, total = document_service.get_user_documents(
         db=db,
-        user_id=current_user.id,
+        current_user=current_user,
         skip=skip,
         limit=limit,
-        status_id=status_id,
+        status_id=status_code,
         date_from=date_from,
         date_to=date_to,
         search_query=search_query,
-        form_filters=form_filters,
-        current_user=current_user,   
+        form_filters=parsed_form_filters,
         document_type_id=document_type_id,
-        shared_only=shared_only
+        client_id=client_id,
+        organisation_id=organisation_filter,
+        shared_only=shared_only,
+        uploaded_by=uploaded_by,
     )
 
-    
-    # Get all form fields for this user's scope (simplified to all for now as it's small)
-    fields = db.query(FormField).all()
-    field_map = {str(f.id): f for f in fields}
-    
-    # Get all clients
-    # Determine role
-    role_names = [r.name for r in current_user.roles]
-    is_admin = any(r in ["ADMIN", "SUPER_ADMIN"] for r in role_names)
+    return {
+        "documents": docs,
+        "total": total,
+        "page": (skip // limit) + 1,
+        "page_size": limit,
+    }
 
-    if is_admin:
-        clients = db.query(Client).all()
-    else:
-        clients = (
-            db.query(Client)
-            .join(UserClient, UserClient.client_id == Client.id)
-            .filter(UserClient.user_id == current_user.id)
-            .all()
-        )
-    client_map = {str(c.id): c for c in clients}
-    
-    # Get all document types
-    doc_types = db.query(DocumentType).all()
-    doc_type_map = {str(dt.id): dt for dt in doc_types}
 
-    # Helper function to resolve form data using pre-fetched maps
-    def resolve_form_data(form_data_dict):
-        if not form_data_dict:
-            return {}
-        
-        resolved_data = {}
-        for field_id, value in form_data_dict.items():
-            field = field_map.get(str(field_id))
-            if field:
-                display_value = value
-                if field.field_type == 'client_dropdown':
-                    client = client_map.get(str(value))
-                    if client:
-                        display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
-                elif field.field_type == 'document_type_dropdown':
-                    doc_type = doc_type_map.get(str(value))
-                    if doc_type:
-                        display_value = doc_type.name
-                resolved_data[field.label] = display_value
-            else:
-                resolved_data[field_id] = value
-        return resolved_data
-    
-    result = [
+@router.get("/filters/uploaded-by")
+def get_uploaded_by_filter(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # only documents user can see
+    base_query = DocumentService._document_access_query(db, current_user)
+
+    creator_ids = (
+        base_query.with_entities(Document.created_by)
+        .filter(Document.created_by.isnot(None))
+        .distinct()
+        .all()
+    )
+
+    creator_ids = [c[0] for c in creator_ids if c[0]]
+
+    if not creator_ids:
+        return []
+
+    users = (
+        db.query(User)
+        .filter(User.id.in_(creator_ids))
+        .all()
+    )
+
+    return [
         {
-            "id": doc.id,
-            "filename": doc.filename,
-            "original_filename": doc.original_filename,
-            "status_id": doc.status_id,
-            "statusCode": doc.status.code if doc.status else None,
-            "file_size": doc.file_size,
-            "upload_progress": doc.upload_progress,
-            "error_message": doc.error_message,
-            "total_pages": doc.total_pages,
-            "created_at": doc.created_at.isoformat() if doc.created_at else None,
-            "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
-            "is_archived": doc.is_archived,
-            "custom_form_data": resolve_form_data(doc.form_data_relation.data if doc.form_data_relation else {})
+            "id": str(u.id),
+            "name": f"{u.first_name or ''} {u.last_name or ''}".strip() or u.email
         }
-        for doc in documents
+        for u in users
     ]
 
-    return {
-        "documents": result,
-        "total": total_count,
-        "page": (skip // limit) + 1 if limit > 0 else 1,
-        "page_size": limit
-    }
+
+@router.get("/filter/organisations")
+def get_org_filter(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not getattr(current_user, "is_superuser", False):
+        return []
+
+    orgs = db.query(Organisation.id, Organisation.name).all()
+
+    return [
+        {"id": str(o.id), "name": o.name}
+        for o in orgs
+    ]
 
 @router.get("/{document_id}")
 async def get_document_detail(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    request: Request = None,
     permission: bool = Depends(Permission("documents", "READ"))
 ):
     """Get document details including extracted data"""
-    document = document_service.get_document_detail(db, document_id, current_user.id)
+    document = document_service.get_document_detail(
+        db,
+        document_id,
+        current_user
+    )
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     derived_counts = document_service.build_derived_document_counts(document.extracted_documents,document.unverified_documents)
@@ -565,375 +533,226 @@ async def get_document_detail(
             } for ud in document.unverified_documents
         ]
     }
-
 @router.get("/{document_id}/preview-url")
 async def get_document_preview_url(
     document_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ"))
 ):
-    """Get secure, temporary pre-signed URL for preview with role-based access control"""
-    from ..models.user_role import UserRole
-    from ..models.role import Role
-    from ..models.status import Status
-    from ..models.user_client import UserClient
-    from ..models.client import Client
-    from ..models.document_form_data import DocumentFormData
-    from sqlalchemy import cast, String, or_
-    
-    # Get user's roles to determine access level
-    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-        User.id == current_user.id,
-        Role.status_id.in_(
-            db.query(Status.id).filter(Status.code == 'ACTIVE')
-        )
-    ).all()
-    
-    role_names = [role.name for role in user_roles]
-    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-    query = db.query(Document).filter(Document.id == document_id)
-    
-    if not is_admin:
-        # assigned_client_ids = db.query(UserClient.client_id).filter(
-        #     UserClient.user_id == current_user.id
-        # ).subquery()
-        assigned_client_ids = select(UserClient.client_id).where(
-            UserClient.user_id == current_user.id
-        )
-        client_documents_query = db.query(Document.id).join(
-            DocumentFormData, Document.id == DocumentFormData.document_id
-        ).join(
-            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-        ).filter(
-            Client.id.in_(assigned_client_ids)
-        )
-        
-        query = query.filter(
-            or_(
-                Document.user_id == current_user.id,
-                Document.id.in_(client_documents_query)
-            )
-        )
-    
-    document = query.first()
-    if not document or not document.s3_key:
+    document = (
+        DocumentService
+        ._document_access_query(db, current_user)
+        .filter(Document.id == document_id)
+        .first()
+    )
+
+    if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-        
-    from ..services.s3_service import s3_service
+
+    if not document.s3_key:
+        raise HTTPException(status_code=404, detail="File not uploaded")
     
+    from ..services.s3_service import s3_service
     presigned_url = s3_service.generate_presigned_url(document.s3_key, expiration=3600)
+
     if not presigned_url:
         raise HTTPException(status_code=500, detail="Failed to generate preview URL")
-        
+
+
     return {"url": presigned_url}
+
 
 @router.get("/{document_id}/download-url")
 async def get_document_download_url(
     document_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "EXPORT")),
     background_tasks: BackgroundTasks = None,
     request: Request = None
 ):
-    """Get secure download URL with role-based access control"""
-    from ..models.user_role import UserRole
-    from ..models.role import Role
-    from ..models.status import Status
-    from ..models.user_client import UserClient
-    from ..models.client import Client
-    from ..models.document_form_data import DocumentFormData
-    from sqlalchemy import cast, String, or_
-    
-    # Get user's roles to determine access level
-    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-        User.id == current_user.id,
-        Role.status_id.in_(
-            db.query(Status.id).filter(Status.code == 'ACTIVE')
-        )
-    ).all()
-    
-    role_names = [role.name for role in user_roles]
-    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-    query = db.query(Document).filter(Document.id == document_id)
-    
-    if not is_admin:
-        # assigned_client_ids = db.query(UserClient.client_id).filter(
-        #     UserClient.user_id == current_user.id
-        # ).subquery()
-        assigned_client_ids = select(UserClient.client_id).where(
-            UserClient.user_id == current_user.id
-        )
-        client_documents_query = db.query(Document.id).join(
-            DocumentFormData, Document.id == DocumentFormData.document_id
-        ).join(
-            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-        ).filter(
-            Client.id.in_(assigned_client_ids)
-        )
-        
-        query = query.filter(
-            or_(
-                Document.user_id == current_user.id,
-                Document.id.in_(client_documents_query)
-            )
-        )
-    
-    document = query.first()
-    if not document or not document.s3_key:
+    """
+    Secure download URL.
+    Uses centralized access control only.
+    """
+
+    document = (
+        DocumentService
+        ._document_access_query(db, current_user)
+        .filter(Document.id == document_id)
+        .first()
+    )
+    print("CURRENT USER:", type(current_user), current_user.id, getattr(current_user, "organisation_id", None))
+
+    if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-        
+
+    if not document.s3_key:
+        raise HTTPException(status_code=404, detail="File not uploaded")
+
     from ..services.s3_service import s3_service
-    
-    # Force download with correct filename
+
     filename = document.original_filename or document.filename
     disposition = f'attachment; filename="{filename}"'
-    
+
     presigned_url = s3_service.generate_presigned_url(
-        document.s3_key, 
+        document.s3_key,
         expiration=3600,
         response_content_disposition=disposition
     )
-    
+
     if not presigned_url:
         raise HTTPException(status_code=500, detail="Failed to generate download URL")
-        
+
     ActivityService.log(
         db,
         action="DOWNLOAD",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        current_user=current_user,
+        # user_id=str(current_user.id),
         details={"filename": filename},
         request=request,
         background_tasks=background_tasks
     )
-        
+
     return {"url": presigned_url}
+
 
 @router.get("/{document_id}/report-url")
 async def get_document_report_url(
     document_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "EXPORT")),
     background_tasks: BackgroundTasks = None,
     request: Request = None
 ):
-    """Get secure download URL for the analysis report with role-based access control"""
-    from ..models.user_role import UserRole
-    from ..models.role import Role
-    from ..models.status import Status
-    from ..models.user_client import UserClient
-    from ..models.client import Client
-    from ..models.document_form_data import DocumentFormData
-    from sqlalchemy import cast, String, or_
-    
-    # Get user's roles to determine access level
-    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-        User.id == current_user.id,
-        Role.status_id.in_(
-            db.query(Status.id).filter(Status.code == 'ACTIVE')
-        )
-    ).all()
-    
-    role_names = [role.name for role in user_roles]
-    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-    query = db.query(Document).filter(Document.id == document_id)
-    
-    if not is_admin:
-        # assigned_client_ids = db.query(UserClient.client_id).filter(
-        #     UserClient.user_id == current_user.id
-        # ).subquery()
-        assigned_client_ids = select(UserClient.client_id).where(
-            UserClient.user_id == current_user.id
-        )
-        client_documents_query = db.query(Document.id).join(
-            DocumentFormData, Document.id == DocumentFormData.document_id
-        ).join(
-            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-        ).filter(
-            Client.id.in_(assigned_client_ids)
-        )
-        
-        query = query.filter(
-            or_(
-                Document.user_id == current_user.id,
-                Document.id.in_(client_documents_query)
-            )
-        )
-    
-    document = query.first()
-    if not document or not document.analysis_report_s3_key:
+    """Download analysis report"""
+
+    document = (
+        DocumentService
+        ._document_access_query(db, current_user)
+        .filter(Document.id == document_id)
+        .first()
+    )
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not document.analysis_report_s3_key:
         raise HTTPException(status_code=404, detail="Analysis report not found")
-        
+
     from ..services.s3_service import s3_service
-    
-    # Force download with generic name or derived from doc name
+
     filename = f"analysis_report_{document.filename}.xlsx"
     disposition = f'attachment; filename="{filename}"'
-    
+
     presigned_url = s3_service.generate_presigned_url(
-        document.analysis_report_s3_key, 
+        document.analysis_report_s3_key,
         expiration=3600,
         response_content_disposition=disposition
     )
-    
+
     if not presigned_url:
         raise HTTPException(status_code=500, detail="Failed to generate report URL")
-        
-    ActivityService.log(
-        db,
-        action="DOWNLOAD_REPORT",
-        entity_type="document",
-        entity_id=str(document_id),
-        user_id=current_user.id,
-        details={"filename": filename},
-        request=request,
-        background_tasks=background_tasks
-    )
-        
+
+
+
     return {"url": presigned_url}
 
 @router.get("/{document_id}/report-data")
 async def get_document_report_data(
     document_id: int,
     page: int = Query(None),
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "READ"))
 ):
-    """Get parsed data from the analysis report XLSX with role-based access control"""
-    from ..models.user_role import UserRole
-    from ..models.role import Role
-    from ..models.status import Status
-    from ..models.user_client import UserClient
-    from ..models.client import Client
-    from ..models.document_form_data import DocumentFormData
-    from sqlalchemy import cast, String, or_
-    import pandas as pd
-    import io
-    import json
-    
-    # ... (access control logic remains same)
-    user_roles = db.query(Role.name).join(UserRole).join(User).filter(
-        User.id == current_user.id,
-        Role.status_id.in_(
-            db.query(Status.id).filter(Status.code == 'ACTIVE')
-        )
-    ).all()
-    
-    role_names = [role.name for role in user_roles]
-    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-    query = db.query(Document).filter(Document.id == document_id)
-    
-    if not is_admin:
-        assigned_client_ids = db.query(UserClient.client_id).filter(
-            UserClient.user_id == current_user.id
-        )
-        client_documents_query = db.query(Document.id).join(
-            DocumentFormData, Document.id == DocumentFormData.document_id
-        ).filter(
-            cast(DocumentFormData.data['client_id'], String).in_(
-                db.query(cast(Client.id, String)).filter(Client.id.in_(assigned_client_ids))
-            )
-        )
-        
-        query = query.filter(
-            or_(
-                Document.user_id == current_user.id,
-                Document.id.in_(client_documents_query)
-            )
-        )
-    
-    document = query.first()
-    if not document or not document.analysis_report_s3_key:
-        raise HTTPException(status_code=404, detail="Analysis report not found")
-        
-    from ..services.s3_service import s3_service
-    
-    try:
-        # Download XLSX from S3
-        file_bytes = await s3_service.download_file(document.analysis_report_s3_key)
-        
-        # Read XLSX using pandas
-        df = pd.read_excel(io.BytesIO(file_bytes))
-        
-        def is_page_in_range(target_page, page_range_str):
-            if not page_range_str or pd.isna(page_range_str):
-                return False
-            try:
-                # Handle comma separated ranges: "1-2, 4, 6-8"
-                parts = str(page_range_str).split(',')
-                for part in parts:
-                    part = part.strip()
-                    if '-' in part:
-                        start, end = map(int, part.split('-'))
-                        if start <= target_page <= end:
-                            return True
-                    else:
-                        if int(part) == target_page:
-                            return True
-                return False
-            except:
-                return False
+    from sqlalchemy.orm import joinedload
+    from fastapi import HTTPException
+    from app.models.extracted_document import ExtractedDocument
 
-        # Parse data
-        findings = []
-        for _, row in df.iterrows():
-            page_range = row.get("Page Range", "")
-            
-            # Filter by page if requested
-            if page is not None and not is_page_in_range(page, page_range):
+    document = (
+        DocumentService
+        ._document_access_query(db, current_user)
+        .options(
+            joinedload(Document.extracted_documents)
+            .joinedload(ExtractedDocument.document_type)
+        )
+        .filter(Document.id == document_id)
+        .first()
+    )
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not document.extracted_documents:
+        return {
+            "findings": [],
+            "total_pages": document.total_pages or 0
+        }
+
+    findings = []
+
+    for ed in document.extracted_documents:
+        page_range = (ed.page_range or "").strip()
+
+        if page is not None:
+            match = False
+            try:
+                for part in page_range.split(","):
+                    part = part.strip()
+                    if "-" in part:
+                        start_str, end_str = part.split("-")
+                        start = int(start_str.strip())
+                        end = int(end_str.strip())
+                        if start <= page <= end:
+                            match = True
+                            break
+                    else:
+                        if part.isdigit() and int(part) == page:
+                            match = True
+                            break
+            except Exception:
                 continue
 
-            extracted_data_raw = row.get("Extracted Data", "{}")
-            if pd.isna(extracted_data_raw) or not extracted_data_raw:
-                extracted_data_raw = "{}"
-            
-            extracted_data = {}
-            try:
-                if isinstance(extracted_data_raw, dict):
-                    extracted_data = extracted_data_raw
-                elif isinstance(extracted_data_raw, str):
-                    import ast
-                    try:
-                        extracted_data = ast.literal_eval(extracted_data_raw)
-                    except (ValueError, SyntaxError):
-                        extracted_data = json.loads(extracted_data_raw.replace("'", '"'))
-                else:
-                    extracted_data = {"raw_data": str(extracted_data_raw)}
-            except Exception:
-                extracted_data = {"raw_data": str(extracted_data_raw)}
-                
-            findings.append({
-                "document_type": row.get("Document Type", "Unknown"),
-                "page_range": str(page_range),
-                "extracted_data": extracted_data
-            })
-            
-        return {"findings": findings, "total_pages": document.total_pages}
-        
-    except Exception as e:
-        print(f"Error parsing report data: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to parse report data: {str(e)}")
+            if not match:
+                continue
 
+        findings.append({
+            "document_type": (
+                ed.document_type.name.upper()
+                if ed.document_type and ed.document_type.name
+                else "UNKNOWN"
+            ),
+            "page_range": page_range,
+            "extracted_data": ed.extracted_data or {}
+        })
+
+    findings.sort(
+        key=lambda x: int(x["page_range"].split("-")[0])
+        if x["page_range"] and x["page_range"].split("-")[0].isdigit()
+        else 0
+    )
+
+    return {
+        "findings": findings,
+        "total_pages": document.total_pages or 0
+    }
 @router.post("/{document_id}/cancel")
 async def cancel_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None
 ):
     """Cancel document analysis"""
-    success = await document_service.cancel_document_analysis(db, document_id, current_user.id)
+    success = await document_service.cancel_document_analysis(
+        db,
+        document_id,
+        current_user
+    )
+
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -943,7 +762,7 @@ async def cancel_document(
         action="UPDATE",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"sub_action": "CANCEL_ANALYSIS"},
         request=request,
         background_tasks=background_tasks
@@ -956,21 +775,24 @@ async def reanalyze_document(
     document_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("documents", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None
 ):
     """Re-analyze document"""
     try:
-        await document_service.reanalyze_document(db, document_id, current_user.id)
-        
+        await document_service.reanalyze_document(
+            db,
+            document_id,
+            current_user
+        )
+    
         # Activity Log
         ActivityService.log(
             db,
             action="UPDATE",
             entity_type="document",
             entity_id=str(document_id),
-            user_id=current_user.id,
+            current_user=current_user,
             details={"sub_action": "REANALYZE"},
             request=request,
             background_tasks=background_tasks
@@ -990,7 +812,13 @@ async def archive_document(
     request: Request = None
 ):
     """Archive a document"""
-    success = await document_service.archive_document(db, document_id, current_user.id)
+    success = await document_service.archive_document(
+        db,
+        document_id,
+        current_user
+    )
+
+
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -999,7 +827,7 @@ async def archive_document(
         action="UPDATE",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"sub_action": "ARCHIVE"},
         request=request,
         background_tasks=background_tasks
@@ -1016,7 +844,13 @@ async def unarchive_document(
     request: Request = None
 ):
     """Unarchive a document"""
-    success = await document_service.unarchive_document(db, document_id, current_user.id)
+    success = await document_service.unarchive_document(
+        db,
+        document_id,
+        current_user
+    )
+
+
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
         
@@ -1025,7 +859,7 @@ async def unarchive_document(
         action="UPDATE",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"sub_action": "UNARCHIVE"},
         request=request,
         background_tasks=background_tasks
@@ -1042,7 +876,12 @@ async def delete_document(
     request: Request = None
 ):
     """Delete a document"""
-    filename = await document_service.delete_document(db, document_id, current_user.id)
+    filename = await document_service.delete_document(
+        db,
+        document_id,
+        current_user
+    )
+
     if not filename:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -1051,12 +890,49 @@ async def delete_document(
         action="DELETE",
         entity_type="document",
         entity_id=str(document_id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"filename": filename},
         request=request,
         background_tasks=background_tasks
     )
     return {"message": "Document deleted successfully"}
+
+@router.get("/filter/organisations")
+def get_org_filter(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+
+    roles = [r.name for r in current_user.roles]
+    if "SUPER_ADMIN" not in roles:
+        return []
+
+    orgs = db.query(Organisation.id, Organisation.name).all()
+
+    return [{"id": str(o.id), "name": o.name} for o in orgs]
+
+@router.get("/filter/uploaded-by")
+def get_uploaded_by_filter(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    # visible documents only
+    base = DocumentService._document_access_query(db, current_user)
+
+    user_ids = db.query(Document.created_by)\
+        .filter(Document.created_by.isnot(None))\
+        .distinct().all()
+
+    user_ids = [u[0] for u in user_ids]
+
+    users = db.query(User.id, User.first_name, User.last_name)\
+        .filter(User.id.in_(user_ids)).all()
+
+    return [
+        {
+            "id": str(u.id),
+            "name": f"{u.first_name} {u.last_name}"
+        }
+        for u in users
+    ]
 
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str = "ae5b4fa6-44bb-45ce-beac-320bb4e21697"):

@@ -3,7 +3,7 @@ import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-def send_otp_email(to_email, otp_code):
+def send_otp_email(to_email, otp_code, purpose="RESET"):
     smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
     smtp_port = int(os.getenv('SMTP_PORT', 587))
     smtp_username = os.getenv('SMTP_USERNAME')
@@ -12,20 +12,22 @@ def send_otp_email(to_email, otp_code):
 
     if not smtp_username or not smtp_password:
         print("SMTP credentials not found. Skipping email send.")
-        print(f"DEBUG OTP for {to_email}: {otp_code}")
-        return True
+        print(f"DEBUG OTP for {to_email} ({purpose}): {otp_code}")
+        return False
 
     try:
-        # Load template
-        template_path = os.path.join(os.path.dirname(__file__), '../templates/email/otp.html')
+        # Load template based on purpose
+        template_name = 'login_2fa.html' if purpose == "LOGIN" else 'otp.html'
+        template_path = os.path.join(os.path.dirname(__file__), f'../templates/email/{template_name}')
+        
         with open(template_path, 'r') as f:
             html_content = f.read()
         
         html_content = html_content.replace('{{ otp_code }}', otp_code)
 
         msg = MIMEMultipart('alternative')
-        msg['Subject'] = "docucr Password Reset OTP"
-        msg['From'] = sender_email
+        msg['Subject'] = "docucr Login Verification" if purpose == "LOGIN" else "docucr Password Reset OTP"
+        msg['From'] = f"docucr <{sender_email}>"
         msg['To'] = to_email
 
         # Attach HTML content
@@ -40,42 +42,6 @@ def send_otp_email(to_email, otp_code):
         return True
     except Exception as e:
         print(f"Failed to send email: {e}")
-        return False
-
-def send_2fa_email(to_email, otp_code):
-    smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
-    smtp_port = int(os.getenv('SMTP_PORT', 587))
-    smtp_username = os.getenv('SMTP_USERNAME')
-    smtp_password = os.getenv('SMTP_PASSWORD')
-    sender_email = os.getenv('SENDER_EMAIL', smtp_username)
-
-    if not smtp_username or not smtp_password:
-        print("SMTP credentials not found. Skipping email send.")
-        print(f"DEBUG 2FA OTP for {to_email}: {otp_code}")
-        return False
-
-    try:
-        template_path = os.path.join(os.path.dirname(__file__), '../templates/email/two_factor_auth.html')
-        with open(template_path, 'r') as f:
-            html_content = f.read()
-        
-        html_content = html_content.replace('{{ otp_code }}', otp_code)
-
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = "docucr - Two-Factor Authentication Code"
-        msg['From'] = sender_email
-        msg['To'] = to_email
-
-        msg.attach(MIMEText(html_content, 'html'))
-
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
-            server.starttls()
-            server.login(smtp_username, smtp_password)
-            server.sendmail(sender_email, to_email, msg.as_string())
-        
-        return True
-    except Exception as e:
-        print(f"Failed to send 2FA email: {e}")
         return False
 
 def send_external_share_email(to_email, shared_by, documents):
@@ -93,7 +59,7 @@ def send_external_share_email(to_email, shared_by, documents):
         print("SMTP credentials not found. Skipping external share email send.")
         for doc in documents:
             print(f"DEBUG: Link for {to_email} ({doc['filename']}): {site_url}/public/share/{doc['token']}")
-        return True
+        return False
 
     try:
         # Load template
