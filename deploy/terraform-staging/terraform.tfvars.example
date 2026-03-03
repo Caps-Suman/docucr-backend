@@ -1,0 +1,6 @@
+aws_region    = "us-east-1"
+project_name  = "docucr-staging"
+instance_type = "t3.small"
+key_name      = "docu-cr-backend-key"  # Change to your key name
+db_name       = "docucr_staging"
+db_username   = "docucr_staging"
