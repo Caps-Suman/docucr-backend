@@ -42,7 +42,7 @@
 ### 1. **EC2 Instance** (Compute)
 - **Type**: t3.small
 - **OS**: Amazon Linux 2023
-- **IP**: 3.238.106.39
+- **IP**: Use `terraform output ec2_public_ip`
 - **Storage**: 30GB gp3 (encrypted)
 - **Purpose**: Hosts Docker containers running the backend application
 
@@ -65,7 +65,7 @@
 - **Engine**: PostgreSQL 15.14
 - **Instance**: db.t3.micro
 - **Storage**: 20GB gp3 (encrypted, auto-scaling up to 50GB)
-- **Endpoint**: docucr-staging-db.cg7xyuwv2b96.us-east-1.rds.amazonaws.com:5432
+- **Endpoint**: Use `terraform output rds_address`
 - **Database**: docucr_staging
 - **Schema**: docucr
 - **Backup**: 1 day retention
@@ -76,14 +76,13 @@
 
 **Connection**:
 ```bash
-psql -h docucr-staging-db.cg7xyuwv2b96.us-east-1.rds.amazonaws.com \
-     -U docucr_staging \
-     -d docucr_staging
+# Get connection details from terraform
+terraform output -raw database_url
 ```
 
 ### 3. **ECR (Elastic Container Registry)**
 - **Repository**: docucr-staging-backend
-- **URL**: 288373392300.dkr.ecr.us-east-1.amazonaws.com/docucr-staging-backend
+- **URL**: Use `terraform output ecr_repository_url`
 - **Features**:
   - Image scanning on push
   - AES256 encryption
@@ -91,14 +90,16 @@ psql -h docucr-staging-db.cg7xyuwv2b96.us-east-1.rds.amazonaws.com \
 
 **Usage**:
 ```bash
+# Get ECR URL
+ECR_REPO=$(terraform output -raw ecr_repository_url)
+
 # Login
 aws ecr get-login-password --region us-east-1 | \
-  docker login --username AWS --password-stdin \
-  288373392300.dkr.ecr.us-east-1.amazonaws.com
+  docker login --username AWS --password-stdin $ECR_REPO
 
 # Push
-docker tag app:latest 288373392300.dkr.ecr.us-east-1.amazonaws.com/docucr-staging-backend:latest
-docker push 288373392300.dkr.ecr.us-east-1.amazonaws.com/docucr-staging-backend:latest
+docker tag app:latest $ECR_REPO:latest
+docker push $ECR_REPO:latest
 ```
 
 ### 4. **VPC & Networking**
@@ -125,13 +126,13 @@ docker push 288373392300.dkr.ecr.us-east-1.amazonaws.com/docucr-staging-backend:
 - **Protocol**: HTTP/HTTPS (TCP/80, 443, 8000)
 - **Purpose**: Access backend API
 - **Endpoints**:
-  - `http://3.238.106.39:8000` - Direct API access
-  - `http://3.238.106.39:8000/health` - Health check
+  - Use `terraform output ec2_public_ip` for IP
+  - Health check: `http://<EC2_IP>:8000/health`
 
 ### Developer → EC2
 - **Protocol**: SSH (TCP/22)
 - **Authentication**: SSH key pair (docu-cr-backend-key)
-- **Command**: `ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@3.238.106.39`
+- **Command**: Use `terraform output ssh_command`
 
 ## Application Flow
 
@@ -147,7 +148,7 @@ docker push 288373392300.dkr.ecr.us-east-1.amazonaws.com/docucr-staging-backend:
 
 3. **Data Flow**:
    ```
-   Frontend (3.238.106.39:8000) ← HTTP → Backend Container ← PostgreSQL → RDS Database
+   Frontend (<EC2_IP>:8000) ← HTTP → Backend Container ← PostgreSQL → RDS Database
    ```
 
 ## Environment Variables
@@ -198,16 +199,16 @@ The application container receives:
 
 ## Access Information
 
-- **API URL**: http://3.238.106.39:8000
-- **SSH**: `ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@3.238.106.39`
-- **Database**: See Terraform outputs for credentials
-- **ECR**: 288373392300.dkr.ecr.us-east-1.amazonaws.com/docucr-staging-backend
+- **API URL**: Use `terraform output ec2_public_ip`
+- **SSH**: Use `terraform output ssh_command`
+- **Database**: Use `terraform output database_url`
+- **ECR**: Use `terraform output ecr_repository_url`
 
 ## Useful Commands
 
 ```bash
 # Get all infrastructure details
-terraform output
+cd terraform && terraform output
 
 # Deploy application
 ./deploy.sh
@@ -216,20 +217,22 @@ terraform output
 ./restore-db.sh
 
 # SSH to EC2
-ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@3.238.106.39
+EC2_IP=$(cd terraform && terraform output -raw ec2_public_ip)
+ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@$EC2_IP
 
 # Check application status
-ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@3.238.106.39 "cd /home/ec2-user/app && docker-compose ps"
+ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@$EC2_IP "cd /home/ec2-user/app && docker-compose ps"
 
 # View logs
-ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@3.238.106.39 "cd /home/ec2-user/app && docker-compose logs -f"
+ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@$EC2_IP "cd /home/ec2-user/app && docker-compose logs -f"
 ```
 
 ## Troubleshooting
 
 **Container not starting?**
 ```bash
-ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@3.238.106.39
+EC2_IP=$(cd terraform && terraform output -raw ec2_public_ip)
+ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@$EC2_IP
 cd /home/ec2-user/app
 docker-compose logs
 ```
@@ -237,7 +240,8 @@ docker-compose logs
 **Database connection issues?**
 ```bash
 # Test from EC2
-psql -h docucr-staging-db.cg7xyuwv2b96.us-east-1.rds.amazonaws.com -U docucr_staging -d docucr_staging
+DB_URL=$(cd terraform && terraform output -raw database_url)
+psql "$DB_URL"
 ```
 
 **Can't pull from ECR?**

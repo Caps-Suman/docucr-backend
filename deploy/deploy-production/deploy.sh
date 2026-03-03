@@ -20,7 +20,7 @@ echo "   Region: ${REGION}"
 echo "   ECR URI: ${ECR_URI}"
 echo ""
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../.."
 
 # ECR Login
 echo "Logging into ECR..."
@@ -28,7 +28,7 @@ aws ecr get-login-password --region ${REGION} | docker login --username AWS --pa
 
 # Build
 echo "Building Docker image..."
-docker build -t ${REPO_NAME}:${IMAGE_TAG} ..
+docker build -t ${REPO_NAME}:${IMAGE_TAG} .
 
 # Tag
 echo "Tagging images..."

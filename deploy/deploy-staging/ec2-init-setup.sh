@@ -38,55 +38,27 @@ yum install -y postgresql15
 mkdir -p /home/ec2-user/app
 chown -R ec2-user:ec2-user /home/ec2-user/app
 
-# Create docker-compose template
-cat > /home/ec2-user/app/docker-compose.yml.template << 'COMPOSE_EOF'
-version: '3.8'
-
-services:
-  backend:
-    image: YOUR_IMAGE_HERE
-    container_name: ${app_name}
-    ports:
-      - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://USER:PASS@HOST:5432/DB
-      - DB_SCHEMA=docucr
-      - ENVIRONMENT=staging
-      - PORT=8000
-    restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-COMPOSE_EOF
-
-chown ec2-user:ec2-user /home/ec2-user/app/docker-compose.yml.template
-
-# Create nginx config template
-cat > /etc/nginx/conf.d/app.conf.template << 'NGINX_EOF'
+# Configure Nginx with WebSocket support
+if [ -n "${domain}" ]; then
+  cat > /etc/nginx/conf.d/app.conf << 'NGINX'
 server {
     listen 80;
-    server_name _;
+    server_name ${domain};
 
     client_max_body_size 100M;
 
     location / {
         proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         
         # WebSocket support
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        
-        # Timeouts
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_read_timeout 86400;
     }
 
     location /health {
@@ -94,34 +66,24 @@ server {
         access_log off;
     }
 }
-NGINX_EOF
+NGINX
 
-# Create deployment script
-cat > /home/ec2-user/deploy.sh << 'DEPLOY_EOF'
-#!/bin/bash
-set -e
-
-cd /home/ec2-user/app
-
-echo "Pulling latest image..."
-docker-compose pull
-
-echo "Stopping old containers..."
-docker-compose down
-
-echo "Starting new containers..."
-docker-compose up -d
-
-echo "Deployment complete!"
-docker-compose ps
-DEPLOY_EOF
-
-chmod +x /home/ec2-user/deploy.sh
-chown ec2-user:ec2-user /home/ec2-user/deploy.sh
+  systemctl restart nginx
+  
+  # Wait for nginx to start
+  sleep 5
+  
+  # Install SSL certificate
+  certbot --nginx -d ${domain} --non-interactive --agree-tos --register-unsafely-without-email --redirect || echo "SSL setup will be done manually"
+fi
 
 # Create setup completion marker
 echo "Setup completed at $(date)" > /home/ec2-user/setup-complete.txt
 echo "Docker version: $(docker --version)" >> /home/ec2-user/setup-complete.txt
 echo "Docker Compose version: $(docker-compose --version)" >> /home/ec2-user/setup-complete.txt
+if [ -n "${domain}" ]; then
+  echo "Domain: ${domain}" >> /home/ec2-user/setup-complete.txt
+  echo "SSL: Configured" >> /home/ec2-user/setup-complete.txt
+fi
 
 echo "Setup complete!"

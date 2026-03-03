@@ -10,12 +10,12 @@ echo -e "${GREEN}🔄 Restoring Database Backup to Staging${NC}"
 echo ""
 
 # Get DB credentials from Terraform
-cd deploy/terraform-staging
+cd terraform
 DB_HOST=$(terraform output -raw rds_address)
 DB_USER=$(terraform output -raw db_username)
 DB_PASS=$(terraform output -raw db_password)
 DB_NAME=$(terraform output -raw db_name)
-cd ../..
+cd ..
 
 BACKUP_FILE="/Users/apple/Documents/docucr_db/dump-docucr_db-20260303.sql"
 

@@ -12,9 +12,11 @@ echo ""
 
 # Get outputs from Terraform
 echo -e "${GREEN}📍 Getting infrastructure details...${NC}"
+cd terraform
 ECR_REPO=$(terraform output -raw ecr_repository_url 2>/dev/null || echo "")
 EC2_IP=$(terraform output -raw ec2_public_ip 2>/dev/null || echo "")
 DB_URL=$(terraform output -raw database_url 2>/dev/null || echo "")
+cd ..
 
 if [ -z "$EC2_IP" ] || [ -z "$ECR_REPO" ]; then
     echo -e "${RED}❌ Could not retrieve infrastructure details. Ensure Terraform is deployed.${NC}"
@@ -39,11 +41,25 @@ echo -e "${GREEN}📦 Pushing to ECR...${NC}"
 docker tag docucr-backend:staging $ECR_REPO:latest
 docker push $ECR_REPO:latest
 
-cd deploy/terraform-staging/
+cd deploy/deploy-staging/
+
+# Fetch secrets from Secrets Manager
+echo -e "${GREEN}🔐 Fetching secrets from AWS Secrets Manager...${NC}"
+SECRETS=$(aws secretsmanager get-secret-value --secret-id docucr-staging/app --region us-east-1 --query SecretString --output text)
+
+# Parse secrets into environment variables
+JWT_SECRET=$(echo $SECRETS | jq -r '.JWT_SECRET_KEY')
+AWS_ACCESS_KEY_ID_SECRET=$(echo $SECRETS | jq -r '.AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY_SECRET=$(echo $SECRETS | jq -r '.AWS_SECRET_ACCESS_KEY')
+AWS_S3_BUCKET=$(echo $SECRETS | jq -r '.AWS_S3_BUCKET')
+SMTP_USER=$(echo $SECRETS | jq -r '.SMTP_USERNAME')
+SMTP_PASSWORD=$(echo $SECRETS | jq -r '.SMTP_PASSWORD')
+SMTP_FROM=$(echo $SECRETS | jq -r '.SENDER_EMAIL')
+OPENAI_API_KEY=$(echo $SECRETS | jq -r '.OPENAI_API_KEY')
 
 # Deploy to EC2
 echo -e "${GREEN}🚀 Deploying to EC2...${NC}"
-ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@$EC2_IP << EOF
+ssh -o StrictHostKeyChecking=no -i ~/.ssh/docu-cr-backend-key.pem ec2-user@$EC2_IP << ENDSSH
   set -e
   
   # Create app directory if not exists
@@ -64,6 +80,14 @@ services:
       - DB_SCHEMA=docucr
       - ENVIRONMENT=staging
       - PORT=8000
+      - JWT_SECRET_KEY=$JWT_SECRET
+      - AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID_SECRET
+      - AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY_SECRET
+      - AWS_S3_BUCKET=$AWS_S3_BUCKET
+      - SMTP_USERNAME=$SMTP_USER
+      - SMTP_PASSWORD=$SMTP_PASSWORD
+      - SENDER_EMAIL=$SMTP_FROM
+      - OPENAI_API_KEY=$OPENAI_API_KEY
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -82,9 +106,9 @@ COMPOSE
   
   echo "Deployment complete!"
   docker-compose ps
-EOF
+ENDSSH
 
 echo ""
 echo -e "${GREEN}✅ Backend deployment complete!${NC}"
-echo -e "${YELLOW}Application running at: http://$EC2_IP:8000${NC}"
-echo -e "${YELLOW}Health check: http://$EC2_IP:8000/health${NC}"
+echo -e "${YELLOW}Application running at: https://docucrapi.medeye360.com${NC}"
+echo -e "${YELLOW}Health check: https://docucrapi.medeye360.com/health${NC}"

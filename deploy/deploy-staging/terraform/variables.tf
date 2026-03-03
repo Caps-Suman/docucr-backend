@@ -83,3 +83,15 @@ variable "db_backup_retention_period" {
   type        = number
   default     = 5
 }
+
+variable "domain_name" {
+  description = "Domain name for SSL certificate (optional)"
+  type        = string
+  default     = ""
+}
+
+variable "secrets_name" {
+  description = "AWS Secrets Manager secret name (use production secrets)"
+  type        = string
+  default     = "docu-cr-backend/app"
+}

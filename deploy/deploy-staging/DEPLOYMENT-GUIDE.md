@@ -15,7 +15,7 @@ terraform output
 
 ```bash
 # Get ECR repository URL
-ECR_REPO=$(terraform output -raw ecr_repository_url)
+ECR_REPO=$(cd terraform && terraform output -raw ecr_repository_url)
 AWS_REGION="us-east-1"
 
 # Login to ECR
@@ -34,7 +34,7 @@ docker push $ECR_REPO:latest
 
 ```bash
 # Get EC2 IP
-EC2_IP=$(terraform output -raw ec2_public_ip)
+EC2_IP=$(cd terraform && terraform output -raw ec2_public_ip)
 
 # SSH to EC2
 ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@$EC2_IP
@@ -95,9 +95,11 @@ set -e
 cd "$(dirname "$0")"
 
 # Get outputs
+cd terraform
 ECR_REPO=$(terraform output -raw ecr_repository_url)
 EC2_IP=$(terraform output -raw ec2_public_ip)
 DB_URL=$(terraform output -raw database_url)
+cd ..
 
 echo "Building and pushing to ECR..."
 cd ../..
@@ -147,6 +149,6 @@ chmod +x deploy/terraform-staging/quick-deploy.sh
 
 ## Access Application
 
-- **API**: `http://<EC2_IP>:8000`
+- **API**: Use `terraform output ec2_public_ip` for IP
 - **Health Check**: `http://<EC2_IP>:8000/health`
-- **SSH**: `ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@<EC2_IP>`
+- **SSH**: Use `terraform output ssh_command`

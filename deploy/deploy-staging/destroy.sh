@@ -12,6 +12,9 @@ echo ""
 echo -e "${YELLOW}⚠️  WARNING: This will destroy all resources!${NC}"
 echo ""
 
+# Change to terraform directory
+cd terraform
+
 # Show what will be destroyed
 terraform plan -destroy
 

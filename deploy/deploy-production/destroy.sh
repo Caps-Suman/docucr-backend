@@ -21,15 +21,19 @@ fi
 
 echo "Starting infrastructure destruction..."
 
+# Get script directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+BACKEND_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+
 # Try Terraform destroy first
 echo "1. Attempting Terraform destroy..."
-cd deploy/terraform
+cd "$SCRIPT_DIR/terraform"
 if terraform destroy -auto-approve; then
     echo "Terraform destroy completed successfully"
-    cd ../..
+    cd "$BACKEND_ROOT"
 else
     echo "Terraform destroy failed, proceeding with manual cleanup..."
-    cd ../..
+    cd "$BACKEND_ROOT"
     
     # Manual cleanup
     echo "2. Manual cleanup - Scaling down ECS service..."

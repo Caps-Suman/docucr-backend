@@ -1,14 +1,17 @@
 # Staging Environment - Terraform
 
-## 💰 Estimated Cost: ~$39/month
+## 💰 Estimated Cost: ~$64-68/month
 
 ### Cost Breakdown:
-- EC2 t3.small: $15.18/month
-- RDS db.t3.micro: $14.60/month
-- EBS Storage (20GB): $1.92/month
-- RDS Storage (20GB): $1.92/month
-- Elastic IP: $3.60/month
-- Other: ~$1.78/month
+- EC2 t3.medium: $30.37/month
+- RDS db.t3.small: $24.82/month
+- EBS Storage (30GB): $2.40/month
+- RDS Storage (20GB): $2.30/month
+- RDS Backups (5 days): ~$8.14/month
+- ECR Storage (~2GB): $0.20/month
+- Other: ~$1-2/month
+
+**Capacity**: 50-60 concurrent users
 
 ---
 
@@ -18,15 +21,17 @@
 terraform-staging/
 ├── main.tf              # Provider configuration
 ├── vpc.tf               # VPC data sources
-├── ec2.tf               # EC2 instance & security
+├── ec2.tf               # EC2 instance & Elastic IP
+├── ecr.tf               # ECR repository
+├── iam.tf               # IAM roles for EC2
 ├── rds.tf               # RDS database & security
 ├── variables.tf         # Input variables
 ├── outputs.tf           # Output values
-├── terraform.tfvars     # Variable values
+├── terraform.tfvars     # Variable values (gitignored)
 ├── user-data.sh         # EC2 initialization script
-├── deploy.sh            # Deployment helper
+├── deploy.sh            # Deployment script
+├── restore-db.sh        # Database restore script
 ├── destroy.sh           # Destroy helper
-├── .gitignore           # Git ignore rules
 └── README.md            # This file
 ```
 
@@ -36,74 +41,102 @@ terraform-staging/
 
 ```
 Default VPC
-  ├── EC2 t3.small (Public)
+  ├── EC2 t3.medium (Elastic IP)
   │   - Docker + Docker Compose
-  │   - Nginx
-  │   - Your Backend App
+  │   - Nginx + SSL (Certbot)
+  │   - Backend App (Port 8000)
+  │   - IAM Role (ECR access)
   │
-  └── RDS db.t3.micro (Public)
-      - PostgreSQL 15.14
-      - 20GB gp3 storage
+  ├── RDS db.t3.small (Private)
+  │   - PostgreSQL 15.14
+  │   - 20GB gp3 storage
+  │   - 5 days backup retention
+  │
+  └── ECR Repository
+      - Image scanning enabled
+      - Lifecycle: Keep last 5 images
 ```
+
+**Domain**: Configured via terraform.tfvars
+**Capacity**: 50-60 concurrent users
 
 ---
 
 ## 🚀 Quick Start
 
-### Option 1: Using Helper Script (Recommended)
+### Deploy Infrastructure & Application
 
 ```bash
-cd /Users/apple/Documents/docucr/docucr-backend/deploy/terraform-staging
+cd deploy/terraform-staging
 
-# Deploy everything
+# 1. Initialize Terraform
+terraform init
+
+# 2. Deploy infrastructure
+terraform apply
+
+# 3. Deploy application
 ./deploy.sh
 ```
 
-### Option 2: Manual Deployment
+**That's it!** Application will be available at your configured domain
+
+---
+
+## 📦 Deployment
+
+### Automated Deployment Script
 
 ```bash
-cd /Users/apple/Documents/docucr/docucr-backend/deploy/terraform-staging
+cd deploy/terraform-staging
+./deploy.sh
+```
 
-# Initialize
-terraform init
+**What it does:**
+1. Builds Docker image locally
+2. Pushes to ECR
+3. SSHs to EC2
+4. Pulls latest image
+5. Restarts application
 
-# Plan
-terraform plan
+### Manual Deployment
 
-# Apply
-terraform apply
+```bash
+# 1. Build and push
+ECR_REPO=$(terraform output -raw ecr_repository_url)
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_REPO
+docker build -t docucr-backend:staging .
+docker tag docucr-backend:staging $ECR_REPO:latest
+docker push $ECR_REPO:latest
+
+# 2. Deploy on EC2
+EC2_IP=$(terraform output -raw ec2_public_ip)
+ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@$EC2_IP
+cd /home/ec2-user/app
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_REPO
+docker-compose pull
+docker-compose up -d
+```
+
+### Database Restore
+
+```bash
+cd deploy/terraform-staging
+./restore-db.sh
 ```
 
 ---
 
-## 📝 Configuration
-
-Edit `terraform.tfvars` to customize:
-
-```hcl
-# Change instance size
-instance_type = "t3.micro"  # Save $7/month
-
-# Change database size
-db_instance_class = "db.t3.micro"
-db_allocated_storage = 10  # Save $1/month
-
-# Change region
-aws_region = "ap-south-1"  # Mumbai
-```
-
----
-
-## 🔑 Get Outputs
+## 🔑 Access Information
 
 ```bash
-# All outputs
+# Get all details
 terraform output
 
-# Specific output
+# Specific outputs
 terraform output ec2_public_ip
-terraform output -raw db_password
 terraform output -raw database_url
+terraform output -raw ecr_repository_url
 terraform output -raw ssh_command
 ```
 
@@ -135,7 +168,7 @@ version: '3.8'
 
 services:
   backend:
-    image: 288373392300.dkr.ecr.us-east-1.amazonaws.com/docu-cr-backend:latest
+    image: $(terraform output -raw ecr_repository_url):latest
     container_name: docucr-staging
     ports:
       - "8000:8000"
@@ -148,7 +181,8 @@ services:
 EOF
 
 # Login to ECR
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 288373392300.dkr.ecr.us-east-1.amazonaws.com
+ECR_REPO=$(terraform output -raw ecr_repository_url)
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_REPO
 
 # Start application
 docker-compose up -d
@@ -224,20 +258,30 @@ terraform destroy
 
 ## 📊 Monitoring
 
-### Check EC2 Status
+### Application Status
 ```bash
-INSTANCE_ID=$(terraform output -raw ec2_instance_id)
-aws ec2 describe-instances --instance-ids $INSTANCE_ID --region us-east-1
+# Check health (use domain from terraform.tfvars or IP)
+EC2_IP=$(terraform output -raw ec2_public_ip)
+curl http://$EC2_IP:8000/health
+
+# View logs
+ssh ec2-user@$EC2_IP "cd /home/ec2-user/app && docker-compose logs -f"
+
+# Check container status
+ssh ec2-user@$EC2_IP "docker ps"
 ```
 
-### Check RDS Status
+### Infrastructure Status
 ```bash
-aws rds describe-db-instances --db-instance-identifier docucr-staging-db --region us-east-1
-```
+# EC2 status
+aws ec2 describe-instances --instance-ids $(terraform output -raw ec2_instance_id)
 
-### View CloudWatch Logs
-```bash
-aws logs tail /var/log/user-data.log --follow --region us-east-1
+# RDS status  
+aws rds describe-db-instances --db-instance-identifier docucr-staging-db
+
+# SSL certificate expiry (if domain configured)
+EC2_IP=$(terraform output -raw ec2_public_ip)
+ssh ec2-user@$EC2_IP "sudo certbot certificates"
 ```
 
 ---

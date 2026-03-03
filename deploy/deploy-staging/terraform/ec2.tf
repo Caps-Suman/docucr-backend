@@ -76,12 +76,30 @@ resource "aws_instance" "staging" {
     encrypted   = true
   }
 
-  user_data = templatefile("${path.module}/user-data.sh", {
+  user_data = templatefile("${path.module}/ec2-init-setup.sh", {
     app_name = var.project_name
+    domain   = var.domain_name
   })
 
   tags = {
     Name        = "${var.project_name}-ec2"
     Environment = var.environment
   }
+}
+
+
+# Elastic IP (imported from existing)
+resource "aws_eip" "staging" {
+  domain = "vpc"
+
+  tags = {
+    Name        = "${var.project_name}-eip"
+    Environment = var.environment
+  }
+}
+
+# Elastic IP Association
+resource "aws_eip_association" "staging" {
+  instance_id   = aws_instance.staging.id
+  allocation_id = aws_eip.staging.id
 }

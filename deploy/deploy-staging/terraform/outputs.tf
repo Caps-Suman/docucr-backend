@@ -1,6 +1,6 @@
 output "ec2_public_ip" {
-  description = "EC2 instance public IP"
-  value       = aws_instance.staging.public_ip
+  description = "EC2 instance public IP (Elastic IP)"
+  value       = aws_eip.staging.public_ip
 }
 
 output "ec2_instance_id" {
@@ -35,7 +35,7 @@ output "db_password" {
 
 output "ssh_command" {
   description = "SSH command to connect to EC2"
-  value       = "ssh -i ~/.ssh/${var.key_name}.pem ec2-user@${aws_instance.staging.public_ip}"
+  value       = "ssh -i ~/.ssh/${var.key_name}.pem ec2-user@${aws_eip.staging.public_ip}"
 }
 
 output "database_url" {
