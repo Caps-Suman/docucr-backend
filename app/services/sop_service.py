@@ -29,25 +29,31 @@ class SOPService:
             raise HTTPException(403, "No organisation selected")
 
         return org_id
+    # @staticmethod
+    # def _base_visible_sops_query(db: Session):
+    #     active = db.query(Status).filter(
+    #         Status.code == "ACTIVE",
+    #         Status.type == "GENERAL"
+    #     ).first()
+
+    #     inactive = db.query(Status).filter(
+    #         Status.code == "INACTIVE",
+    #         Status.type == "GENERAL"
+    #     ).first()
+
+    #     allowed_ids = [s.id for s in (active, inactive) if s]
+
+    #     if not allowed_ids:
+    #         return db.query(SOP).filter(False)  # explicit empty
+
+    #     return db.query(SOP).filter(SOP.status_id.in_(allowed_ids))
     @staticmethod
     def _base_visible_sops_query(db: Session):
-        active = db.query(Status).filter(
-            Status.code == "ACTIVE",
+        general_status_ids = db.query(Status.id).filter(
             Status.type == "GENERAL"
-        ).first()
+        ).subquery()
 
-        inactive = db.query(Status).filter(
-            Status.code == "INACTIVE",
-            Status.type == "GENERAL"
-        ).first()
-
-        allowed_ids = [s.id for s in (active, inactive) if s]
-
-        if not allowed_ids:
-            return db.query(SOP).filter(False)  # explicit empty
-
-        return db.query(SOP).filter(SOP.status_id.in_(allowed_ids))
-
+        return db.query(SOP).filter(SOP.status_id.in_(general_status_ids))
 
     @staticmethod
     def check_sop_exists(
@@ -288,6 +294,28 @@ class SOPService:
                 sop.billing_guidelines = SOPService.upgrade_flat_billing_guidelines(
                     sop.billing_guidelines
                 )
+        if sop.payer_guidelines:
+            normalized = []
+
+            for pg in sop.payer_guidelines:
+                if not isinstance(pg, dict):
+                    continue
+
+                # NEW AI STRUCTURE
+                if "payer_name" in pg:
+                    normalized.append({
+                        "payerName": pg.get("payer_name"),
+                        "description": pg.get("description", "")
+                    })
+
+                # OLD STRUCTURE (already correct)
+                elif "title" in pg:
+                    normalized.append({
+                        "title": pg.get("title"),
+                        "description": pg.get("description", "")
+                    })
+
+            sop.payer_guidelines = normalized    
         from app.models.provider import Provider
         from app.models.sop_provider_mapping import SopProviderMapping
 
@@ -314,7 +342,7 @@ class SOPService:
                 "npi": p.npi,
                 "type": "Individual",
                 "software": p_info.get("software", ""),
-                "practiceName": p_info.get("practiceName", ""),
+                "practiceName": client_name,
                 "providerName": p_info.get("providerName", ""),
                 "clearinghouse": p_info.get("clearinghouse", ""),
                 "providerTaxID": p_info.get("providerTaxID", ""),
@@ -385,76 +413,44 @@ class SOPService:
 
         return [r.provider_id for r in q.all()]
     @staticmethod
-    def create_sop(sop_data: Dict, db: Session, current_user: Any, client_id:str) -> SOP:
-        # Extract provider_ids
+    def create_sop(sop_data: Dict, db: Session, current_user: Any, client_id: str) -> SOP:
+
         provider_ids = sop_data.pop("provider_ids", [])
 
-        # Generate ID if not present (though model handles default, dict conversion might need it?)
-        # Model default is usually enough.
-        
-        # Handling client relationship if needed
-        # If client_id is empty string, set to None
-        if 'client_id' in sop_data and not sop_data['client_id']:
-            sop_data['client_id'] = None
-
-        # --- Ownership Logic ---
-        organisation_id_val = None
-        created_by_val = None
-
-        # if isinstance(current_user, Organisation):
-        #     created_by_val = None
-        #     organisation_id_val = str(current_user.id)
-        # elif isinstance(current_user, User):
-        #     if not current_user.is_superuser:
-        #         created_by_val = str(current_user.id)
-        #         if current_user.id:
-        #             organisation_id_val = str(current_user.organisation_id) if current_user.organisation_id else None
-        #     else:
-        #         created_by_val = None
-        
         org_id = SOPService._get_org_id(current_user)
 
         sop_data["organisation_id"] = org_id
-        sop_data["created_by"] = str(current_user.id) if hasattr(current_user, "id") else None
+        sop_data["created_by"] = str(current_user.id)
 
-        # Set default status if missing
-        if 'status_id' not in sop_data or sop_data['status_id'] is None:
-            active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
-            if active_status:
-                sop_data['status_id'] = active_status.id
         if not sop_data.get("status_id"):
             active = db.query(Status).filter(
                 Status.code == "ACTIVE",
                 Status.type == "GENERAL"
             ).first()
             sop_data["status_id"] = active.id
-        provider_ids = sop_data.pop("provider_ids", [])
-        provider_ids = [str(pid) for pid in provider_ids]
 
+        # 🔥 VALIDATE BEFORE INSERTING ANYTHING
         if SOPService.check_sop_exists(client_id, provider_ids, db):
             raise HTTPException(
                 400,
                 "One or more selected providers already have an active SOP for this client."
             )
 
+        # 🔥 Create SOP FIRST
         db_sop = SOP(**sop_data)
         db.add(db_sop)
         db.commit()
         db.refresh(db_sop)
 
-        # Create mappings
+        # 🔥 THEN INSERT MAPPINGS
         if provider_ids:
-             for pid in provider_ids:
-                 try:
-                     # Check if mapping already exists? No, fresh SOP
-                     db.add(SopProviderMapping(
-                         sop_id=db_sop.id, 
-                         provider_id=pid
-                     ))
-                 except Exception:
-                     # Ignore duplicates or errors for robustness
-                     pass
-             db.commit()
+            for pid in provider_ids:
+                db.add(SopProviderMapping(
+                    sop_id=db_sop.id,
+                    provider_id=pid,
+                    created_by=str(current_user.id)
+                ))
+            db.commit()
 
         return db_sop
 
@@ -490,10 +486,6 @@ class SOPService:
             exclude_sop_id=sop_id,   # 🔥 THIS IS THE FIX
         ):
             raise HTTPException(400, "Provider already has active SOP")
-
-        # -------------------------
-        # update providers
-        # -------------------------
         if "provider_ids" in sop_data:
             new_ids = set(provider_ids)
 
@@ -517,9 +509,7 @@ class SOPService:
                     sop_id=sop_id,
                     provider_id=pid
                 ))
-        # -------------------------
-        # update fields (SAFE)
-        # -------------------------
+        
 
         allowed_fields = {
             "title",
@@ -926,7 +916,7 @@ class SOPService:
             story.append(Paragraph('Payer Guidelines', section_header))
 
             for pg in sop.get('payer_guidelines', []):
-                payer = pg.get('payer_name') or pg.get('payer') or 'Unknown Payer'
+                payer = pg.get('title') or pg.get('payer') or 'Unknown Payer'
                 desc = pg.get('description', '-')
 
                 story.append(

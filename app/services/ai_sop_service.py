@@ -1,12 +1,18 @@
+import asyncio
 import json
+import os
 from fastapi import HTTPException
 from pdfminer.high_level import extract_text
 from docx import Document
 from PIL import Image
 import base64
 from io import BytesIO
-
+import pandas as pd
+from app.models.sop import SOP
+from app.models.status import Status
 from app.services.ai_client import openai_client  # adjust import path
+from openpyxl import load_workbook
+from pdfminer.high_level import extract_text as pdf_extract
 
 PASS2_SCHEMA = """
 {
@@ -38,8 +44,81 @@ class AISOPService:
     @staticmethod
     def extract_pdf_text(path: str) -> str:
         return extract_text(path)
-        
-    
+    @staticmethod    
+    def process_sop_extraction(sop_id: str, file_path: str, content_type: str):
+        from app.core.database import SessionLocal
+
+        db = SessionLocal()
+
+        try:
+            # Extract raw text
+            text = asyncio.run(
+                AISOPService.extract_text(file_path, content_type)
+            )
+
+            structured = asyncio.run(
+                AISOPService.ai_extract_sop_structured(text)
+            )
+
+            # Get ACTIVE status
+            active_status = db.query(Status).filter(
+                Status.code == "ACTIVE",
+                Status.type == "GENERAL"
+            ).first()
+
+            sop = db.query(SOP).filter(SOP.id == sop_id).first()
+
+            if not sop:
+                return
+            provider_info_raw = structured.get("provider_information") or {}
+
+            normalized_provider_info = {
+                "providerName": provider_info_raw.get("billing_provider_name"),
+                "billingProviderName": provider_info_raw.get("billing_provider_name"),
+                "billingProviderNPI": provider_info_raw.get("billing_provider_npi"),
+                "providerTaxID": provider_info_raw.get("provider_tax_id"),
+                "billingAddress": provider_info_raw.get("billing_address"),
+                "software": provider_info_raw.get("software"),
+                "clearinghouse": provider_info_raw.get("clearinghouse"),
+            }
+            workflow_raw = structured.get("workflow_process") or {}
+
+            normalized_workflow = {
+                "description": workflow_raw.get("workflow_description"),
+                "eligibility_verification_portals": workflow_raw.get("eligibility_verification_portals", []),
+                "posting_charges_rules": workflow_raw.get("posting_charges_rules", [])
+            }
+            # Update SOP fields
+            sop.title = structured.get("basic_information", {}).get("sop_title") or sop.title
+            sop.category = structured.get("basic_information", {}).get("category") or sop.category
+            sop.provider_info = normalized_provider_info
+            sop.workflow_process = normalized_workflow
+            sop.billing_guidelines = structured.get("billing_guidelines")
+            sop.payer_guidelines = structured.get("payer_guidelines")
+            sop.coding_rules_cpt = structured.get("coding_rules_cpt")
+            sop.coding_rules_icd = structured.get("coding_rules_icd")
+
+            sop.status_id = active_status.id if active_status else sop.status_id
+
+            db.commit()
+
+        except Exception as e:
+            # Mark FAILED
+            failed_status = db.query(Status).filter(
+                Status.code == "FAILED",
+                Status.type == "GENERAL"
+            ).first()
+
+            sop = db.query(SOP).filter(SOP.id == sop_id).first()
+
+            if sop and failed_status:
+                sop.status_id = failed_status.id
+                db.commit()
+
+        finally:
+            db.close()
+            if os.path.exists(file_path):
+                os.remove(file_path)
     @staticmethod
     async def extract_image_text(path: str) -> str:
         """
@@ -114,20 +193,129 @@ class AISOPService:
 
 
     @staticmethod
-    async def extract_text(path: str, content_type: str) -> str:
-        if content_type == "application/pdf":
-            return AISOPService.extract_pdf_text(path)
+    def extract_excel_text(path: str) -> str:
+        try:
+            ext = os.path.splitext(path)[1].lower()
 
-        if content_type in ("image/png", "image/jpeg"):
-            return await AISOPService.extract_image_text(path)
+            # Handle .xls (old Excel)
+            if ext == ".xls":
+                df_dict = pd.read_excel(path, sheet_name=None, engine="xlrd")
 
-        if content_type == (
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ):
-            return AISOPService.extract_docx_text(path)
+            # Handle .xlsx
+            elif ext in [".xlsx", ".xlsm", ".xltx", ".xltm"]:
+                df_dict = pd.read_excel(path, sheet_name=None, engine="openpyxl")
 
-        raise ValueError("Unsupported file type")
+            else:
+                raise ValueError(f"Unsupported Excel extension: {ext}")
 
+            full_text = ""
+
+            for sheet_name, df in df_dict.items():
+                full_text += f"\n--- Sheet: {sheet_name} ---\n"
+                full_text += df.fillna("").astype(str).to_string(index=False)
+
+            return full_text
+
+        except Exception as e:
+            raise Exception(f"Excel extraction failed: {str(e)}")
+    @staticmethod
+    async def extract_text(path: str) -> str:
+        """
+        Universal extractor for:
+        - PDF
+        - DOCX
+        - XLSX / XLS
+        - Images
+        """
+
+        ext = os.path.splitext(path)[1].lower()
+
+        # ---------------- PDF ----------------
+        if ext == ".pdf":
+            return pdf_extract(path)
+
+        # ---------------- DOCX ----------------
+        if ext == ".docx":
+            doc = Document(path)
+            parts = []
+
+            for p in doc.paragraphs:
+                if p.text.strip():
+                    parts.append(p.text.strip())
+
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = " | ".join(
+                        cell.text.strip() for cell in row.cells if cell.text
+                    )
+                    if row_text:
+                        parts.append(row_text)
+
+            return "\n".join(parts)
+
+        # ---------------- EXCEL ----------------
+        if ext in [".xlsx", ".xlsm", ".xltx", ".xltm"]:
+            wb = load_workbook(path, data_only=True)
+            parts = []
+
+            for sheet in wb.worksheets:
+                parts.append(f"\n--- SHEET: {sheet.title} ---")
+                for row in sheet.iter_rows(values_only=True):
+                    row_text = " | ".join(
+                        str(cell) for cell in row if cell is not None
+                    )
+                    if row_text.strip():
+                        parts.append(row_text)
+
+            return "\n".join(parts)
+
+        # ---------------- OLD XLS ----------------
+        if ext == ".xls":
+            df_dict = pd.read_excel(path, sheet_name=None, engine="xlrd")
+            parts = []
+
+            for sheet_name, df in df_dict.items():
+                parts.append(f"\n--- SHEET: {sheet_name} ---")
+                parts.append(df.fillna("").astype(str).to_string(index=False))
+
+            return "\n".join(parts)
+
+        # ---------------- IMAGE ----------------
+        if ext in [".png", ".jpg", ".jpeg"]:
+            with Image.open(path) as img:
+                buffered = BytesIO()
+                img.convert("RGB").save(buffered, format="JPEG")
+                image_bytes = buffered.getvalue()
+
+            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+
+            response = await openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Extract all visible text exactly as-is."
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Extract text."},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_base64}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                temperature=0,
+                max_tokens=4000
+            )
+
+            return response.choices[0].message.content.strip()
+
+        raise ValueError(f"Unsupported file type: {ext}")
     @staticmethod
     def normalize_ai_sop(data: dict) -> dict:
         category = data.get("category")
@@ -145,12 +333,12 @@ class AISOPService:
         for pg in payer_guidelines:
             if isinstance(pg, str):
                 normalized_payers.append({
-                    "payer_name": "Unknown",
+                    "title": "Unknown",
                     "description": pg
                 })
             elif isinstance(pg, dict):
                 normalized_payers.append({
-                    "payer_name": pg.get("payer_name") or pg.get("payer") or "Unknown",
+                    "payer_name": pg.get("payer_name") or pg.get("title") or pg.get("payer") or "Unknown",
                     "description": pg.get("description") or ""
                 })
 
@@ -200,7 +388,6 @@ class AISOPService:
             raise ValueError(f"Invalid JSON from AI:\n{raw[:1000]}")
 
     # ---------- AI EXTRACTION ----------
-
     @staticmethod
     async def _call_ai(prompt: str) -> dict:
         response = await openai_client.chat.completions.create(
@@ -244,22 +431,28 @@ class AISOPService:
 
         You are NOT summarizing.
         You are extracting EXACT TEXT.
+        Provider information may appear in header, footer, letterhead, signature blocks, or table rows.
+        Search entire document before leaving any provider field empty.
+        ------------------------------------------------
+        BILLING GUIDELINES
+        ------------------------------------------------
+        Billing guidelines contain ONLY operational or documentation rules.
 
-        --------------------------------
-        BILLING GUIDELINES (VERY IMPORTANT)
-        --------------------------------
+        Examples:
+        - Documentation requirements
+        - Authorization requirements
+        - Claim submission process
+        - Timely filing rules
+        - General insurance behavior rules
 
-        Billing guidelines MUST be GROUPED.
+        DO NOT include any rule that contains:
+        - CPT codes
+        - HCPCS codes
+        - ICD codes
+        - Modifiers tied to specific CPT codes
 
-        A "group" represents a FAMILY of rules such as:
-        - CPT Code Replacements
-        - Modifier Usage
-        - ICD Code Restrictions
-        - Telehealth Billing
-        - Admin Code Usage
-        - Insurance-Specific Rules
-        - Any other logical heading found in the document
-
+        If a rule contains a CPT or ICD code,
+        it MUST be placed in coding_rules_cpt or coding_rules_icd.
         Rules:
         - You MUST infer the category name from surrounding headings or repeated phrases
         - Each group MUST have:
@@ -280,10 +473,27 @@ class AISOPService:
         "BCBS requires..."
         "Do not bill X to Aetna"
         "Medicaid does not allow..."
+        The following items MUST ALWAYS be placed inside payer_guidelines:
 
+        1. ERA setup status
+        2. EDI setup information
+        3. Claim mailing address
+        4. Network / Credentialing status (INN / OON / NA)
+        5. Start and End dates for network participation
+        6. Timely Filing Limits (TFL)
+        7. Payer ID numbers
+        8. Claim routing instructions
+        9. Remarks specific to a named insurance
+
+        These are NOT billing guidelines.
+
+        Each insurance must be a separate payer_guideline object.
+
+        If a section contains a payer name (Aetna, BCBS, UHC, Medicare, Medicaid, etc.)
+        it MUST be categorized as payer_guidelines.
         Rules:
         - EACH payer guideline must be a separate object
-        - payer_name MUST be extracted explicitly from the text
+        - title MUST be extracted explicitly from the text
         - description MUST preserve original wording
         - If payer-specific rules exist, payer_guidelines MUST NOT be empty
         - DO NOT mix payer rules into billing_guidelines
@@ -365,17 +575,32 @@ class AISOPService:
         - CPT codes MUST go ONLY into coding_rules_cpt
         - ICD codes MUST go ONLY into coding_rules_icd
         - DO NOT mix CPT and ICD in the same array
-        - If unsure, OMIT the rule
+        - If a code matches CPT or ICD format, extract it.
         - Do NOT guess
+
+        STRICT SECTION BOUNDARY RULE:
+
+        1. billing_guidelines MUST NEVER contain CPT or ICD codes.
+        2. If a rule contains:
+        - A numeric CPT code → it MUST go to coding_rules_cpt.
+        - A letter-based ICD-10 code (e.g., M54.50, Z79.899) → it MUST go to coding_rules_icd.
+        3. billing_guidelines must contain ONLY operational workflow or insurance process rules.
+        4. If a rule contains a diagnosis code, it is NOT a billing guideline.
+        5. Never duplicate the same rule across sections.
         --------------------------------
-        OUTPUT FORMAT (STRICT)
+        OUTPUT FORMAT (STRICT JSON)
         --------------------------------
+
+        Return ONLY valid JSON in this exact structure.
+        Do NOT wrap in markdown.
+        Do NOT add explanations.
 
         {
         "basic_information": {
             "sop_title": "",
             "category": ""
         },
+
         "provider_information": {
             "billing_provider_name": "",
             "billing_provider_npi": "",
@@ -384,26 +609,29 @@ class AISOPService:
             "software": "",
             "clearinghouse": ""
         },
+
         "workflow_process": {
-            "workflow_description": ",
+            "workflow_description": "",
             "eligibility_verification_portals": [],
             "posting_charges_rules": []
         },
-    "billing_guidelines": [
-        {
+
+        "billing_guidelines": [
+            {
             "category": "",
             "rules": [
-            { "description": "" }
+                { "description": "" }
             ]
-        }
-        ]
+            }
+        ],
+
         "payer_guidelines": [
-        {
-        "payer_name": "",
-        "description": ""
-        }
-    ],
-        {
+            {
+            "title": "",
+            "description": ""
+            }
+        ],
+
         "coding_rules_cpt": [
             {
             "cptCode": "",
@@ -415,6 +643,7 @@ class AISOPService:
             "replacementCPT": ""
             }
         ],
+
         "coding_rules_icd": [
             {
             "icdCode": "",
@@ -423,8 +652,6 @@ class AISOPService:
             }
         ]
         }
-        }
-
         DOCUMENT:
     """+ text
     #     prompt = f"""

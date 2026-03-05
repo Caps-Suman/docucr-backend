@@ -13,7 +13,7 @@ class SOP(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
 
     title = Column(String, nullable=False)
-    category = Column(String, nullable=False)
+    category = Column(String, nullable=True)
     provider_type = Column(String, nullable=False)  # new | existing
 
     client_id = Column(UUID(as_uuid=True), ForeignKey("docucr.client.id"), nullable=True)

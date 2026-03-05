@@ -1,7 +1,7 @@
 import os
 import tempfile
 import uuid
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any, Dict
@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from uuid import UUID
 import io
 from app.models.sop import SOP
+from app.models.sop_provider_mapping import SopProviderMapping
 from app.models.status import Status
 from app.services.activity_service import ActivityService
 from fastapi import Request, BackgroundTasks
@@ -30,7 +31,7 @@ class BillingGuidelineGroup(BaseModel):
 
 
 class PayerGuideline(BaseModel):
-    payer_name:str
+    payerName:str
     description:str
 class SOPBase(BaseModel):
     title: str
@@ -167,24 +168,43 @@ def check_providers(
     )
 
     return {"blocked_provider_ids": blocked}
-@router.post("/check-client-sop/{client_id}")
+
+from uuid import UUID
+
+@router.post("/check-client-sop")
 def check_client_sop(
-    client_id: str,
+    client_id: UUID = Body(...),
+    provider_ids: List[UUID] = Body(...),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("SOPs", "CREATE")),
-    current_user = Depends(get_current_user)
+    current_user :User =Depends(get_current_user)
 ):
+    if not provider_ids:
+        return {"exists": False, "blocked_provider_ids": []}
+
     active_status_id = db.query(Status.id).filter(
         Status.code == "ACTIVE",
         Status.type == "GENERAL"
     ).scalar()
 
-    exists = db.query(SOP.id).filter(
-        SOP.client_id == client_id,
-        SOP.status_id == active_status_id
-    ).first() is not None
+    blocked = (
+        db.query(SopProviderMapping.provider_id)
+        .join(SOP, SopProviderMapping.sop_id == SOP.id)
+        .filter(
+            SOP.client_id == client_id,
+            SOP.status_id == active_status_id,
+            SOP.organisation_id == current_user.organisation_id,
+            SopProviderMapping.provider_id.in_(provider_ids)
+        )
+        .all()
+    )
 
-    return {"exists": exists}
+    blocked_ids = [str(p[0]) for p in blocked]
+
+    return {
+        "exists": len(blocked_ids) > 0,
+        "blocked_provider_ids": blocked_ids
+    }
 @router.get("/stats", response_model=SOPStatsResponse)
 def get_sop_stats(
     db: Session = Depends(get_db),
@@ -230,7 +250,9 @@ async def ai_extract_sop(
         "application/pdf",
         "image/png",
         "image/jpeg",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+        "application/vnd.ms-excel",  # .xls
     }
 
     if file.content_type not in allowed_types:
@@ -240,9 +262,11 @@ async def ai_extract_sop(
 
     try:
         # ✅ OS-safe temp file
+        file_ext = os.path.splitext(file.filename)[1]
+
         with tempfile.NamedTemporaryFile(
             delete=False,
-            suffix=f"_{uuid.uuid4().hex}"
+            suffix=file_ext
         ) as tmp:
             temp_file_path = tmp.name
             tmp.write(await file.read())
@@ -250,7 +274,6 @@ async def ai_extract_sop(
         # ---- extract raw text ----
         text = await AISOPService.extract_text(
             temp_file_path,
-            file.content_type
         )
 
         if not text.strip():
@@ -271,6 +294,177 @@ async def ai_extract_sop(
         # ✅ guaranteed cleanup
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
+
+@router.post("/background/ai/extract-sop", status_code=202)
+async def ai_extract_sop_background(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    provider_type: str = Form(...),
+    client_id: UUID = Form(...),
+    provider_ids: List[UUID] = Form(None),
+    db: Session = Depends(get_db),
+    current_user :User= Depends(get_current_user)
+):
+    allowed_types = {
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+        "application/vnd.ms-excel",  # .xls
+    }
+
+    if file.content_type not in allowed_types:
+        raise HTTPException(400, "Unsupported file type")
+
+    # Get EXTRACTING status
+    extracting_status = db.query(Status).filter(
+        Status.code == "EXTRACTING",
+        Status.type == "GENERAL"
+    ).first()
+
+    if not extracting_status:
+        raise HTTPException(500, "EXTRACTING status not configured")
+
+    # Create empty SOP row immediately
+    new_sop = SOP(
+        title=file.filename,
+        provider_type=provider_type,   # ✅ FIX
+        category="Uncategorized",       # ✅ FIX - default category
+        client_id=client_id,           # ✅ FIX
+        coding_rules_cpt=[],
+        coding_rules_icd=[],
+        status_id=extracting_status.id,
+        created_by=current_user.id,
+        organisation_id=current_user.organisation_id,
+    )
+    db.add(new_sop)
+    db.commit()
+    db.refresh(new_sop)
+    # 🔥 LINK PROVIDERS HERE
+    if provider_ids:
+        for pid in provider_ids:
+            db.add(SopProviderMapping(
+                sop_id=new_sop.id,
+                provider_id=pid,
+                created_by=str(current_user.id)
+            ))
+
+        db.commit()
+    # Save file temporarily
+    file_ext = os.path.splitext(file.filename)[1]
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+        temp_file_path = tmp.name
+        tmp.write(await file.read())
+    # Run background processing
+    background_tasks.add_task(
+        AISOPService.process_sop_extraction,
+        new_sop.id,
+        temp_file_path,
+        file.content_type
+    )
+
+    return {"sop_id": str(new_sop.id)}
+
+@router.post("/ai/extract-sop-foreground", status_code=200)
+async def ai_extract_sop_foreground(
+    file: UploadFile = File(...)
+):
+    file_ext = os.path.splitext(file.filename)[1]
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+        temp_file_path = tmp.name
+        content = await file.read()
+        tmp.write(content)
+
+    try:
+        text = await AISOPService.extract_text(
+            temp_file_path,
+        )
+
+        structured = await AISOPService.ai_extract_sop_structured(text)
+
+        return {
+            "extracted_data": structured
+        }
+
+    finally:
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+@router.post("/background/ai/from-extracted", status_code=202)
+def create_sop_from_extracted(
+    extracted_data: dict = Body(...),
+    provider_type: str = Body(...),
+    client_id: UUID = Body(...),
+    provider_ids: List[UUID] = Body(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    extracting_status = db.query(Status).filter(
+        Status.code == "EXTRACTING",
+        Status.type == "GENERAL"
+    ).first()
+
+    new_sop = SOP(
+        title="Processing...",
+        provider_type=provider_type,
+        category="Uncategorized",
+        client_id=client_id,
+        status_id=extracting_status.id,
+        created_by=current_user.id,
+        organisation_id=current_user.organisation_id,
+    )
+
+    db.add(new_sop)
+    db.commit()
+    db.refresh(new_sop)
+
+    # Link providers
+    if provider_ids:
+        for pid in provider_ids:
+            db.add(SopProviderMapping(
+                sop_id=new_sop.id,
+                provider_id=pid,
+                created_by=str(current_user.id)
+            ))
+        db.commit()
+
+    # ---- Apply extracted data ----
+    basic = extracted_data.get("basic_information", {})
+    workflow = extracted_data.get("workflow_process", {})
+
+    new_sop.title = basic.get("sop_title", "Untitled SOP")
+    new_sop.category = basic.get("category", "Uncategorized")
+
+    new_sop.workflow_process = {
+        "description": workflow.get("description"),
+        "posting_charges_rules": workflow.get("posting_charges_rules"),
+        "eligibility_verification_portals": workflow.get(
+            "eligibility_verification_portals", []
+        )
+    }
+
+    new_sop.billing_guidelines = extracted_data.get("billing_guidelines", [])
+    new_sop.payer_guidelines = extracted_data.get("payer_guidelines", [])
+    new_sop.coding_rules_cpt = extracted_data.get("coding_rules_cpt", [])
+    new_sop.coding_rules_icd = extracted_data.get("coding_rules_icd", [])
+
+    # Set ACTIVE
+    active_status = db.query(Status).filter(
+        Status.code == "ACTIVE",
+        Status.type == "GENERAL"
+    ).first()
+
+    if active_status:
+        new_sop.status_id = active_status.id
+
+    db.commit()
+    db.refresh(new_sop)
+
+    return {"sop_id": str(new_sop.id)}
 @router.get("/{sop_id}", response_model=SOPResponse)
 def get_sop(
     sop_id: str,
