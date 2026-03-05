@@ -13,11 +13,14 @@ from app.models.sop_provider_mapping import SopProviderMapping
 from app.models.status import Status
 from app.services.activity_service import ActivityService
 from fastapi import Request, BackgroundTasks
+from sqlalchemy import or_, desc
 
 from app.core.database import get_db
 from app.models.user import User
+from app.models.client import Client
 from app.services.ai_sop_service import AISOPService
 from app.services.sop_service import SOPService
+from app.services.s3_service import s3_service
 from app.core.security import get_current_user
 from app.core.permissions import Permission
 
@@ -317,6 +320,9 @@ async def ai_extract_sop_background(
     if file.content_type not in allowed_types:
         raise HTTPException(400, "Unsupported file type")
 
+    # ✅ Read content once to avoid "closed file" issues during multiple reads
+    file_content = await file.read()
+
     # Get EXTRACTING status
     extracting_status = db.query(Status).filter(
         Status.code == "EXTRACTING",
@@ -327,20 +333,44 @@ async def ai_extract_sop_background(
         raise HTTPException(500, "EXTRACTING status not configured")
 
     # Create empty SOP row immediately
+    org_id = current_user.organisation_id
+    if not org_id:
+        # If Super Admin creates, inherit from client
+        client = db.query(Client).filter(Client.id == client_id).first()
+        org_id = client.organisation_id if client else None
+
     new_sop = SOP(
         title=file.filename,
-        provider_type=provider_type,   # ✅ FIX
-        category="Uncategorized",       # ✅ FIX - default category
-        client_id=client_id,           # ✅ FIX
+        provider_type=provider_type,
+        category="Uncategorized",
+        client_id=client_id,
         coding_rules_cpt=[],
         coding_rules_icd=[],
         status_id=extracting_status.id,
         created_by=current_user.id,
-        organisation_id=current_user.organisation_id,
+        organisation_id=org_id,
     )
     db.add(new_sop)
     db.commit()
     db.refresh(new_sop)
+
+    # Save file to S3 permanently
+    try:
+        s3_key = f"sops/{new_sop.id}/{file.filename}"
+        await s3_service.upload_file(
+            io.BytesIO(file_content),
+            file.filename,
+            file.content_type,
+            s3_key=s3_key
+        )
+        new_sop.s3_key = s3_key
+        db.commit()
+    except Exception as e:
+        failed_status = db.query(Status).filter(Status.code == "FAILED", Status.type == "DOCUMENT").first()
+        new_sop.status_id = failed_status.id if failed_status else new_sop.status_id
+        db.commit()
+        raise HTTPException(500, f"Failed to upload to S3: {str(e)}")
+
     # 🔥 LINK PROVIDERS HERE
     if provider_ids:
         for pid in provider_ids:
@@ -351,12 +381,13 @@ async def ai_extract_sop_background(
             ))
 
         db.commit()
-    # Save file temporarily
-    file_ext = os.path.splitext(file.filename)[1]
 
+    # Save file temporarily for immediate processing
+    file_ext = os.path.splitext(file.filename)[1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
         temp_file_path = tmp.name
-        tmp.write(await file.read())
+        tmp.write(file_content)
+
     # Run background processing
     background_tasks.add_task(
         AISOPService.process_sop_extraction,
@@ -366,6 +397,76 @@ async def ai_extract_sop_background(
     )
 
     return {"sop_id": str(new_sop.id)}
+
+@router.post("/sops/{sop_id}/reanalyse", status_code=202)
+async def reanalyse_sop(
+    sop_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    sop = db.query(SOP).filter(SOP.id == sop_id).first()
+    if not sop:
+        raise HTTPException(404, "SOP not found")
+    
+    if not sop.s3_key:
+        raise HTTPException(400, "SOP source file not found in S3. Please re-upload.")
+
+    # Get EXTRACTING status
+    extracting_status = db.query(Status).filter(
+        Status.code == "EXTRACTING",
+        Status.type == "GENERAL"
+    ).first()
+
+    if not extracting_status:
+        raise HTTPException(500, "EXTRACTING status not configured")
+
+    # Update status to extracting
+    sop.status_id = extracting_status.id
+    db.commit()
+
+    # Determine content type from filename (simplified)
+    content_type = "application/pdf" # default
+    if sop.s3_key.endswith(".docx"):
+        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif sop.s3_key.endswith(".xlsx"):
+        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    elif sop.s3_key.endswith((".png", ".jpg", ".jpeg")):
+        content_type = "image/png" if sop.s3_key.endswith(".png") else "image/jpeg"
+
+    # Background task will need to handle downloading from S3
+    background_tasks.add_task(
+        AISOPService.process_sop_extraction,
+        sop.id,
+        None, # No local file path yet
+        content_type,
+        s3_key=sop.s3_key
+    )
+
+    return {"message": "Reanalysis started", "sop_id": str(sop.id)}
+
+@router.post("/sops/{sop_id}/stop", status_code=200)
+async def stop_sop(
+    sop_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    sop = db.query(SOP).filter(SOP.id == sop_id).first()
+    if not sop:
+        raise HTTPException(404, "SOP not found")
+    
+    failed_status = db.query(Status).filter(
+        Status.code == "FAILED",
+        Status.type == "DOCUMENT"
+    ).first()
+
+    if not failed_status:
+        raise HTTPException(500, "FAILED status not configured")
+
+    sop.status_id = failed_status.id
+    db.commit()
+
+    return {"message": "Extraction stopped", "sop_id": str(sop.id)}
 
 @router.post("/ai/extract-sop-foreground", status_code=200)
 async def ai_extract_sop_foreground(

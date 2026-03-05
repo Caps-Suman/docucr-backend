@@ -45,12 +45,28 @@ class AISOPService:
     def extract_pdf_text(path: str) -> str:
         return extract_text(path)
     @staticmethod    
-    def process_sop_extraction(sop_id: str, file_path: str, content_type: str):
+    def process_sop_extraction(sop_id: str, file_path: str = None, content_type: str = None, s3_key: str = None):
         from app.core.database import SessionLocal
+        from app.services.s3_service import s3_service
+        import tempfile
 
         db = SessionLocal()
+        temp_file_to_remove = None
 
         try:
+            # 📁 Handle S3 download if local path is missing (Reanalysis flow)
+            if s3_key and not file_path:
+                file_extension = s3_key.split('.')[-1] if '.' in s3_key else ''
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_extension}" if file_extension else "") as tmp:
+                    # Use asyncio.run since this is a background task (usually sync but we need async S3)
+                    file_data = asyncio.run(s3_service.download_file(s3_key))
+                    tmp.write(file_data)
+                    file_path = tmp.name
+                    temp_file_to_remove = file_path
+
+            if not file_path:
+                raise Exception("No file source provided for extraction")
+
             # Extract raw text
             text = asyncio.run(
                 AISOPService.extract_text(file_path, content_type)
@@ -103,10 +119,12 @@ class AISOPService:
             db.commit()
 
         except Exception as e:
+            print(f"Error in background extraction: {e}")
             # Mark FAILED
+            # FIX: In this DB, FAILED is type 'DOCUMENT'
             failed_status = db.query(Status).filter(
                 Status.code == "FAILED",
-                Status.type == "GENERAL"
+                Status.type == "DOCUMENT"
             ).first()
 
             sop = db.query(SOP).filter(SOP.id == sop_id).first()
@@ -117,8 +135,14 @@ class AISOPService:
 
         finally:
             db.close()
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            # Cleanup
+            target_path = temp_file_to_remove or file_path
+            if target_path and os.path.exists(target_path):
+                try:
+                    os.remove(target_path)
+                except:
+                    pass
+
     @staticmethod
     async def extract_image_text(path: str) -> str:
         """

@@ -25,6 +25,7 @@ class SOP(Base):
     coding_rules = Column(JSONB, nullable=True)
     coding_rules_cpt = Column(JSONB, nullable=True, default=list)
     coding_rules_icd = Column(JSONB, nullable=True, default=list)
+    s3_key = Column(String, nullable=True)     # ☁️ S3 storage for reanalysis
 
     # 🔒 Lifecycle status (ONLY ACTIVE / INACTIVE)
     status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)

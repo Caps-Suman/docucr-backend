@@ -2,7 +2,7 @@ from importlib.resources import path
 import uuid
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, defer, joinedload
-from sqlalchemy import desc, func, or_
+from sqlalchemy import desc, func, or_, select
 from typing import Optional, List, Dict, Tuple, Any
 from app.models.sop import SOP
 from app.models.client import Client
@@ -49,11 +49,12 @@ class SOPService:
     #     return db.query(SOP).filter(SOP.status_id.in_(allowed_ids))
     @staticmethod
     def _base_visible_sops_query(db: Session):
-        general_status_ids = db.query(Status.id).filter(
-            Status.type == "GENERAL"
-        ).subquery()
-
-        return db.query(SOP).filter(SOP.status_id.in_(general_status_ids))
+        return db.query(SOP).join(Status, Status.id == SOP.status_id).filter(
+            or_(
+                Status.type == "GENERAL",
+                Status.code.in_(["FAILED", "AI_FAILED"])
+            )
+        )
 
     @staticmethod
     def check_sop_exists(
@@ -115,7 +116,9 @@ class SOPService:
         )
         org_id = SOPService._get_org_id(current_user)
 
-        query = query.filter(SOP.organisation_id == org_id)
+        if org_id:
+            query = query.filter(SOP.organisation_id == org_id)
+
         # --- Additional Filters ---
         if status_code:
             status = db.query(Status).filter(
@@ -175,7 +178,9 @@ class SOPService:
 
         q = (
             db.query(
-                func.count(SOP.id).label("total"),
+                func.count(SOP.id)
+                    .filter(or_(Status.type == "GENERAL", Status.code.in_(["FAILED", "AI_FAILED"])))
+                    .label("total"),
                 func.count(SOP.id)
                     .filter(Status.code == "ACTIVE")
                     .label("active"),
@@ -183,12 +188,14 @@ class SOPService:
                     .filter(Status.code == "INACTIVE")
                     .label("inactive"),
             )
+            .select_from(SOP)
             .join(Status, Status.id == SOP.status_id)
-            .filter(Status.type == "GENERAL")
+            .filter(or_(Status.type == "GENERAL", Status.code.in_(["FAILED", "AI_FAILED"])))
         )
         org_id = SOPService._get_org_id(current_user)
-
-        q = q.filter(SOP.organisation_id == org_id)
+        if org_id:
+            q = q.filter(SOP.organisation_id == org_id)
+        
         row = q.one()
 
         return {
@@ -288,7 +295,7 @@ class SOPService:
 
 
         # 🔥 BACKWARD COMPAT FIX
-        if sop.billing_guidelines:
+        if sop.billing_guidelines and len(sop.billing_guidelines) > 0:
             first = sop.billing_guidelines[0]
             if isinstance(first, dict) and "title" in first and "rules" not in first:
                 sop.billing_guidelines = SOPService.upgrade_flat_billing_guidelines(
@@ -550,13 +557,18 @@ class SOPService:
         
         org_id = SOPService._get_org_id(current_user)
 
-        db_sop = db.query(SOP).filter(
-            SOP.id == sop_id,
-            SOP.organisation_id == org_id
-        ).first()
+        query = db.query(SOP).filter(SOP.id == sop_id)
+        if org_id:
+            query = query.filter(SOP.organisation_id == org_id)
+
+        db_sop = query.first()
         if not db_sop:
             return False
         
+        # 1. Clear provider mappings to avoid ForeignKeyViolation
+        db.query(SopProviderMapping).filter(SopProviderMapping.sop_id == sop_id).delete()
+        
+        # 2. Finally delete the SOP
         db.delete(db_sop)
         db.commit()
         return True
