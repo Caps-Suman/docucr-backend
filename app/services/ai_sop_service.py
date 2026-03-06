@@ -69,7 +69,7 @@ class AISOPService:
 
             # Extract raw text
             text = asyncio.run(
-                AISOPService.extract_text(file_path, content_type)
+                AISOPService.extract_text(file_path)
             )
 
             structured = asyncio.run(

@@ -74,6 +74,8 @@ class SOPDocumentResponse(BaseModel):
     category: str
     s3_key: str
     created_at: Any
+    extracted_data: Optional[Dict[str, Any]] = None
+    processed: Optional[bool] = False
 
     class Config:
         from_attributes = True
@@ -184,31 +186,53 @@ def check_providers(
 
     return {"blocked_provider_ids": blocked}
 
-from uuid import UUID
-
 @router.post("/check-client-sop")
 def check_client_sop(
     client_id: UUID = Body(...),
-    provider_ids: List[UUID] = Body(...),
+    provider_ids: List[UUID] = Body(default=[]),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("SOPs", "CREATE")),
-    current_user :User =Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
-    if not provider_ids:
-        return {"exists": False, "blocked_provider_ids": []}
+
+    org_id = current_user.organisation_id
 
     active_status_id = db.query(Status.id).filter(
         Status.code == "ACTIVE",
         Status.type == "GENERAL"
     ).scalar()
 
+    extracting_status_id = db.query(Status.id).filter(
+        Status.code == "EXTRACTING",
+        Status.type == "GENERAL"
+    ).scalar()
+
+    # -----------------------------
+    # CASE 1 → No providers selected
+    # -----------------------------
+    if not provider_ids:
+
+        existing_sop = db.query(SOP).filter(
+            SOP.client_id == client_id,
+            SOP.organisation_id == org_id,
+            SOP.status_id.in_([active_status_id, extracting_status_id])
+        ).first()
+
+        return {
+            "exists": existing_sop is not None,
+            "blocked_provider_ids": []
+        }
+
+    # -----------------------------
+    # CASE 2 → Providers selected
+    # -----------------------------
     blocked = (
         db.query(SopProviderMapping.provider_id)
         .join(SOP, SopProviderMapping.sop_id == SOP.id)
         .filter(
             SOP.client_id == client_id,
-            SOP.status_id == active_status_id,
-            SOP.organisation_id == current_user.organisation_id,
+            SOP.organisation_id == org_id,
+            SOP.status_id.in_([active_status_id, extracting_status_id]),
             SopProviderMapping.provider_id.in_(provider_ids)
         )
         .all()
@@ -335,22 +359,53 @@ async def ai_extract_sop_background(
     # ✅ Read content once to avoid "closed file" issues during multiple reads
     file_content = await file.read()
 
-    # Get EXTRACTING status
-    extracting_status = db.query(Status).filter(
-        Status.code == "EXTRACTING",
-        Status.type == "GENERAL"
-    ).first()
-
-    if not extracting_status:
-        raise HTTPException(500, "EXTRACTING status not configured")
-
     # Create empty SOP row immediately
     org_id = current_user.organisation_id
     if not org_id:
         # If Super Admin creates, inherit from client
         client = db.query(Client).filter(Client.id == client_id).first()
         org_id = client.organisation_id if client else None
+        # Check if client already has an SOP
+    active_status = db.query(Status.id).filter(
+        Status.code == "ACTIVE",
+        Status.type == "GENERAL"
+    ).scalar()
 
+    extracting_status = db.query(Status.id).filter(
+        Status.code == "EXTRACTING",
+        Status.type == "GENERAL"
+    ).scalar()
+
+    existing_sop = db.query(SOP).filter(
+        SOP.client_id == client_id,
+        SOP.organisation_id == org_id,
+        SOP.status_id.in_([active_status, extracting_status])
+    ).first()
+
+    if existing_sop:
+        raise HTTPException(
+            status_code=400,
+            detail="This client already has an SOP."
+        )
+    if provider_ids:
+
+        existing_provider = (
+            db.query(SopProviderMapping)
+            .join(SOP, SopProviderMapping.sop_id == SOP.id)
+            .filter(
+                SOP.client_id == client_id,
+                SOP.organisation_id == org_id,
+                SOP.status_id.in_([active_status, extracting_status]),
+                SopProviderMapping.provider_id.in_(provider_ids)
+            )
+            .first()
+        )
+
+        if existing_provider:
+            raise HTTPException(
+                status_code=400,
+                detail="One or more providers already have an SOP."
+            )
     new_sop = SOP(
         title=file.filename,
         provider_type=provider_type,
@@ -358,7 +413,7 @@ async def ai_extract_sop_background(
         client_id=client_id,
         coding_rules_cpt=[],
         coding_rules_icd=[],
-        status_id=extracting_status.id,
+        status_id=extracting_status,
         created_by=current_user.id,
         organisation_id=org_id,
     )

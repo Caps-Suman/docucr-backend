@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, Integer
+from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -66,7 +66,8 @@ class SOPDocument(Base):
     name = Column(String, nullable=False)
     category = Column(String, nullable=False) # e.g. "SOURCE_FILE"
     s3_key = Column(String, nullable=False)
-    
+    extracted_data = Column(JSONB, nullable=True)
+    processed = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

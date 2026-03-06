@@ -1,10 +1,12 @@
+import asyncio
 from importlib.resources import path
+import tempfile
 import uuid
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, defer, joinedload
 from sqlalchemy import desc, func, or_, select
 from typing import Optional, List, Dict, Tuple, Any
-from app.models.sop import SOP
+from app.models.sop import SOP, SOPDocument
 from app.models.client import Client
 from app.models.status import Status
 from app.models.sop_provider_mapping import SopProviderMapping
@@ -17,6 +19,8 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
 from io import BytesIO
+
+from app.services.ai_sop_service import AISOPService
 class SOPService:
 
     @staticmethod
@@ -236,7 +240,9 @@ class SOPService:
                     "name": doc.name,
                     "category": doc.category,
                     "s3_key": doc.s3_key,
-                    "created_at": doc.created_at
+                    "created_at": doc.created_at,
+                    "extracted_data": doc.extracted_data,
+                    "processed": doc.processed
                 }
                 for doc in sop.documents
             ] if sop.documents else [],
@@ -324,13 +330,6 @@ class SOPService:
                 if "payer_name" in pg:
                     normalized.append({
                         "payerName": pg.get("payer_name"),
-                        "description": pg.get("description", "")
-                    })
-
-                # OLD STRUCTURE (already correct)
-                elif "title" in pg:
-                    normalized.append({
-                        "title": pg.get("title"),
                         "description": pg.get("description", "")
                     })
 
@@ -472,7 +471,136 @@ class SOPService:
             db.commit()
 
         return db_sop
+    @staticmethod
+    def process_extra_document(
+        document_id,
+        sop_id,
+        file_content,
+        content_type,
+        category
+    ):
 
+        from app.core.database import SessionLocal
+
+        db = SessionLocal()
+
+        try:
+
+            # temp file
+            suffix = ".tmp"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(file_content)
+                path = tmp.name
+
+            text = asyncio.run(
+                AISOPService.extract_text(path, content_type)
+            )
+
+            structured = asyncio.run(
+                AISOPService.ai_extract_sop_structured(text)
+            )
+
+            doc = db.query(SOPDocument).filter(SOPDocument.id == document_id).first()
+            sop = db.query(SOP).filter(SOP.id == sop_id).first()
+
+            if not doc or not sop:
+                return
+
+            # store extracted result
+            doc.extracted_data = structured
+
+            # apply based on category
+            if category == "Workflow Process":
+                sop.workflow_process = structured.get("workflow_process")
+
+            elif category == "Billing Guidelines":
+                sop.billing_guidelines = structured.get("billing_guidelines")
+
+            elif category == "Posting Charges Rules":
+                wf = sop.workflow_process or {}
+                wf["posting_charges_rules"] = structured.get("workflow_process", {}).get("posting_charges_rules")
+                sop.workflow_process = wf
+
+            db.commit()
+
+        except Exception as e:
+            print("Extra doc extraction failed:", e)
+
+        finally:
+            db.close()
+    @staticmethod
+    def apply_extraction_to_sop(sop, category, extracted):
+
+        if category == "Workflow Process":
+            sop.workflow_process = extracted.get("workflow_process")
+
+        elif category == "Posting Charges Rules":
+            wf = sop.workflow_process or {}
+            wf["posting_charges_rules"] = extracted.get("workflow_process", {}).get(
+                "posting_charges_rules"
+            )
+            sop.workflow_process = wf
+
+        elif category == "Eligibility Verification Portals":
+            wf = sop.workflow_process or {}
+            wf["eligibility_verification_portals"] = extracted.get(
+                "workflow_process", {}
+            ).get("eligibility_verification_portals")
+            sop.workflow_process = wf
+
+        elif category == "Payer Guidelines":
+
+            extracted_rules = extracted.get("payer_guidelines", [])
+
+            if not extracted_rules:
+                return
+
+            existing = sop.payer_guidelines or []
+
+            existing_titles = {r.get("title") for r in existing}
+
+            for rule in extracted_rules:
+                if rule.get("title") not in existing_titles:
+                    existing.append(rule)
+
+            sop.payer_guidelines = existing
+        elif category == "Coding Guidelines":
+
+            # CPT
+            cpt = extracted.get("coding_rules_cpt", [])
+            if cpt:
+                existing = sop.coding_rules_cpt or []
+                existing.extend(cpt)
+                sop.coding_rules_cpt = existing
+
+            # ICD
+            icd = extracted.get("coding_rules_icd", [])
+            if icd:
+                existing = sop.coding_rules_icd or []
+                existing.extend(icd)
+                sop.coding_rules_icd = existing
+    @staticmethod
+    def extract_from_document(doc):
+
+        from app.services.s3_service import s3_service
+        import tempfile
+        import os
+
+        file_data = asyncio.run(s3_service.download_file(doc.s3_key))
+
+        ext = os.path.splitext(doc.name)[1]
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(file_data)
+            path = tmp.name
+
+        text = asyncio.run(AISOPService.extract_text(path))
+
+        structured = asyncio.run(
+            AISOPService.ai_extract_sop_structured(text)
+        )
+
+        return structured
     @staticmethod
     def update_sop(sop_id: str, sop_data: Dict, db: Session, current_user: User):
 
@@ -482,10 +610,57 @@ class SOPService:
             SOP.id == sop_id,
             SOP.organisation_id == org_id
         ).first()
-
         if not db_sop:
             return None
+        extra_docs = db.query(SOPDocument).filter(
+            SOPDocument.sop_id == sop_id,
+            SOPDocument.category != "Source file",
+            SOPDocument.processed == False
+        ).all()
 
+        for doc in extra_docs:
+
+            try:
+                extracted = SOPService.extract_from_document(doc)
+
+                # Filter extracted data by category
+                if doc.category == "Payer Guidelines":
+                    extracted = {
+                        "payer_guidelines": extracted.get("payer_guidelines", [])
+                    }
+
+                elif doc.category == "Billing Guidelines":
+                    extracted = {
+                        "billing_guidelines": extracted.get("billing_guidelines", [])
+                    }
+
+                elif doc.category == "Coding Guidelines":
+                    extracted = {
+                        "coding_rules_cpt": extracted.get("coding_rules_cpt", []),
+                        "coding_rules_icd": extracted.get("coding_rules_icd", [])
+                    }
+
+                elif doc.category == "Workflow Process":
+                    extracted = {
+                        "workflow_process": extracted.get("workflow_process", {})
+                    }
+
+                if not extracted:
+                    print(f"No extraction result for {doc.name}")
+                    continue
+
+                doc.extracted_data = extracted
+
+                SOPService.apply_extraction_to_sop(
+                    sop=db_sop,
+                    category=doc.category,
+                    extracted=extracted
+                )
+
+                doc.processed = True
+
+            except Exception as e:
+                print(f"Extraction failed for {doc.name}: {e}")
         # 🔥 handle providers correctly
         provider_ids = sop_data.get("provider_ids")
 
@@ -612,6 +787,7 @@ class SOPService:
             }
             for category, rules in grouped.items()
         ]
+    
     @staticmethod
     def _build_coding_table(
     story,
