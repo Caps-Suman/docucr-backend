@@ -645,7 +645,7 @@ class DocumentService:
 
                 active_template_map[normalized_name] = template_obj
 
-            print("FINAL SCHEMAS:", schemas)
+            # print("FINAL SCHEMAS:", schemas)
             # Define Cancellation Check Callback
             async def check_cancelled():
                 # We need a fresh check
@@ -669,7 +669,7 @@ class DocumentService:
             )
             # Process Findings
             documents = analysis_result.get("findings", [])
-            print("AI RESULT:", json.dumps(analysis_result, indent=2) if analysis_result else "No AI result")
+            # print("AI RESULT:", json.dumps(analysis_result, indent=2) if analysis_result else "No AI result")
             def normalize_fields(raw_fields):
                 if isinstance(raw_fields, dict):
                     return raw_fields
@@ -843,8 +843,8 @@ class DocumentService:
                     str((db.query(Document).filter(Document.id == document_id).first()).created_by) if db.query(Document).filter(Document.id == document_id).first() else "Unknown",
                     SessionLocal
                 ))
-            print("AI RESULT:", json.dumps(analysis_result, indent=2))
-            print(f"AI Analysis {'Cancelled' if is_cancelled else 'Failed'} for {document_id}: {e}")
+            # print("AI RESULT:", json.dumps(analysis_result, indent=2))
+            # print(f"AI Analysis {'Cancelled' if is_cancelled else 'Failed'} for {document_id}: {e}")
         finally:
             db.close()
 

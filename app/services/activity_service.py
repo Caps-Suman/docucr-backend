@@ -386,7 +386,9 @@ class ActivityService:
                 "entity_type": log.entity_type,
                 "entity_id": log.entity_id,
                 "created_at": log.created_at.isoformat() if log.created_at else None,
-                "details": log.details
+                "details": log.details,
+                "ip_address": log.ip_address,
+                "user_agent": log.user_agent,
             })
 
 
