@@ -570,6 +570,8 @@ class ClientService:
                         provider_obj.state_name = p_item.get("state_name", provider_obj.state_name)
                         provider_obj.country = p_item.get("country", provider_obj.country)
                         provider_obj.zip_code = p_item.get("zip_code", provider_obj.zip_code)
+                        provider_obj.specialty = p_item.get("specialty", provider_obj.specialty)
+                        provider_obj.specialty_code = p_item.get("specialty_code", provider_obj.specialty_code)
 
                         if str(provider_obj.id) in mapping_map:
                             mapping_map[str(provider_obj.id)].location_id = location_id
@@ -597,6 +599,8 @@ class ClientService:
                             state_name=p_item.get("state_name"),
                             country=p_item.get("country"),
                             zip_code=p_item.get("zip_code"),
+                            specialty=p_item.get("specialty"),
+                            specialty_code=p_item.get("specialty_code"),
                             created_by=client.created_by
                         )
                         db.add(new_prov)
@@ -850,7 +854,9 @@ class ClientService:
                     "state_name": p.state_name,
                     "country": p.country,
                     "zip_code": p.zip_code,
-                    "location_id": m.location_id, # Fetch from mapping
+                    "location_id": str(m.location_id) if m and m.location_id else None,
+                    "specialty": p.specialty,
+                    "specialty_code": p.specialty_code,
                     "created_at": p.created_at,
                 }
                 for p, m in provider_rows
@@ -864,7 +870,7 @@ class ClientService:
 
             locations = [
                 {
-                    "id": loc.id,
+                    "id": str(loc.id),
                     "address_line_1": loc.address_line_1,
                     "address_line_2": loc.address_line_2,
                     "city": loc.city,
@@ -896,6 +902,8 @@ class ClientService:
             "status_id": client.status_id,
             "status_code": status_code,
             "description": client.description,
+            "specialty": client.specialty,
+            "specialty_code": client.specialty_code,
             "created_at": client.created_at,
             "updated_at": client.updated_at,
             "organisation_name": organisation_name,
@@ -932,7 +940,7 @@ class ClientService:
         skip = (page - 1) * page_size
         
         query = (
-            db.query(Provider)
+            db.query(Provider, ProviderClientMapping)
             .join(ProviderClientMapping, Provider.id == ProviderClientMapping.provider_id)
             .filter(ProviderClientMapping.client_id == client_id)
         )
@@ -967,9 +975,10 @@ class ClientService:
                 "state_name": p.state_name,
                 "country": p.country,
                 "zip_code": p.zip_code,
+                "location_id": str(m.location_id) if m and m.location_id else None,
                 "created_at": p.created_at
             }
-            for p in providers
+            for p, m in providers
         ]
         
         return formatted_providers, total

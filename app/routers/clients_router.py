@@ -49,6 +49,8 @@ class ProviderCreate(BaseModel):
     state_name: Optional[str] = None
     country: Optional[str] = None
     zip_code: Optional[str] = None
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
 
 class ClientLocationCreate(BaseModel):
     id: Optional[UUID] = None # Added for updates
@@ -75,6 +77,8 @@ class ClientCreate(BaseModel):
     primary_temp_id: Optional[str] = None
     status_id: Optional[str] = None
     description: Optional[str] = None
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
 
     # NEW ADDRESS FIELDS
     address_line_1: Optional[str] = Field(None, max_length=250)
@@ -124,6 +128,8 @@ class ClientUpdate(BaseModel):
     type: Optional[str] = None
     status_id: Optional[str] = None
     description: Optional[str] = None
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
     
     # NESTED UPDATE FIELDS
     locations: Optional[List[ClientLocationCreate]] = None
@@ -185,11 +191,8 @@ class ProviderResponse(BaseModel):
     address_line_1: Optional[str] = None
     address_line_2: Optional[str] = None
     city: Optional[str] = None
-    state_code: Optional[str] = None
-    state_name: Optional[str] = None
-    country: Optional[str] = None
+    specialty: Optional[str] = None
     zip_code: Optional[str] = None
-    location_id: Optional[UUID] = None
     
     created_at: Optional[datetime]
 
@@ -228,6 +231,8 @@ class ClientResponse(BaseModel):
     statusCode: Optional[str] = None
     status_code: Optional[str] = None
     description: Optional[str]
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
     organisation_name: Optional[str] = None
 
     # Address fields (NPA1 only)
@@ -268,6 +273,9 @@ class ProviderCreateSchema(BaseModel):
     state_name: Optional[str]=None
     country: Optional[str] = "United States"
     zip_code: Optional[str]
+    location_id: Optional[str]=None
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
 
     @field_validator("zip_code")
     @classmethod
@@ -276,8 +284,22 @@ class ProviderCreateSchema(BaseModel):
             raise ValueError("ZIP code must be in format 11111-1111")
         return v
 
-
-
+class ProviderUpdateSchema(BaseModel):
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None
+    last_name: Optional[str] = None
+    npi: Optional[str] = None
+    address_line_1: Optional[str] = None
+    address_line_2: Optional[str] = None
+    city: Optional[str] = None
+    state_code: Optional[str] = None
+    zip_code: Optional[str] = None
+    country: Optional[str] = None
+    location_id: Optional[str] = None
+    state_name: Optional[str] = None
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
+    
 class ClientListResponse(BaseModel):
     clients: List[ClientResponse]
     total: int
@@ -510,7 +532,8 @@ def add_providers(
         if existing_provider:
             provider_obj = existing_provider
         else:
-            provider_obj = Provider(**provider.model_dump())
+            provider_data = provider.model_dump(exclude={"location_id"})
+            provider_obj = Provider(**provider_data)
             db.add(provider_obj)
             db.flush()  # get ID
 
@@ -518,6 +541,7 @@ def add_providers(
         mapping = ProviderClientMapping(
             provider_id=provider_obj.id,
             client_id=client.id,
+            location_id=provider.location_id,
             created_by=client.created_by
         )
 
@@ -542,7 +566,7 @@ def add_location(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # 🔥 If new location is primary → demote existing primary
+    # If new location is primary → demote existing primary
     if location.is_primary:
         db.query(ClientLocation).filter(
             ClientLocation.client_id == client.id,
@@ -592,6 +616,52 @@ def get_client_providers(
         page=page,
         page_size=page_size
     )
+
+@router.put("/{client_id}/providers/{provider_id}",
+            dependencies=[Depends(Permission("clients", "UPDATE"))])
+def update_provider(
+    client_id: str,
+    provider_id: str,
+    provider_data: ProviderUpdateSchema,
+    db: Session = Depends(get_db),
+):
+    client = db.query(Client).filter(
+        Client.id == client_id,
+        Client.deleted_at.is_(None)
+    ).first()
+
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    mapping = db.query(ProviderClientMapping).filter(
+        ProviderClientMapping.client_id == client.id,
+        ProviderClientMapping.provider_id == provider_id
+    ).first()
+
+    if not mapping:
+        raise HTTPException(status_code=404, detail="Provider not found for this client")
+
+    provider = db.query(Provider).filter(
+        Provider.id == provider_id
+    ).first()
+
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found")
+
+    update_dict = provider_data.model_dump(exclude_unset=True)
+    
+    new_location_id = update_dict.pop("location_id", None)
+    
+    if new_location_id is not None:
+        mapping.location_id = new_location_id
+
+    for field, value in update_dict.items():
+        setattr(provider, field, value)
+
+    db.commit()
+
+    return {"success": True}
+
 @router.put("/{client_id}/locations/{location_id}",
             dependencies=[Depends(Permission("clients", "UPDATE"))])
 def update_location(

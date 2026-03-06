@@ -330,7 +330,7 @@ async def ai_extract_sop(
         raise HTTPException(500, str(e))
 
     finally:
-        # ✅ guaranteed cleanup
+        # guaranteed cleanup
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 

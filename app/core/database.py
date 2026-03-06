@@ -9,7 +9,7 @@ load_dotenv()
 DATABASE_URL = os.getenv('DATABASE_URL')
 DB_SCHEMA = os.getenv('DB_SCHEMA', 'docucr')
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600, pool_size=10, max_overflow=20)
 print(engine.url)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
