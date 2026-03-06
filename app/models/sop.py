@@ -25,7 +25,6 @@ class SOP(Base):
     coding_rules = Column(JSONB, nullable=True)
     coding_rules_cpt = Column(JSONB, nullable=True, default=list)
     coding_rules_icd = Column(JSONB, nullable=True, default=list)
-    s3_key = Column(String, nullable=True)     # ☁️ S3 storage for reanalysis
 
     # 🔒 Lifecycle status (ONLY ACTIVE / INACTIVE)
     status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)
@@ -43,6 +42,7 @@ class SOP(Base):
     client = relationship("Client", backref="sops")
     creator = relationship("User", foreign_keys=[created_by], backref="created_sops")
     organisation = relationship("Organisation", foreign_keys=[organisation_id], backref="sops")
+    documents = relationship("SOPDocument", back_populates="sop", cascade="all, delete-orphan")
 
     lifecycle_status = relationship(
         "Status",
@@ -55,3 +55,19 @@ class SOP(Base):
         foreign_keys=[workflow_status_id],
         lazy="joined"
     )
+
+class SOPDocument(Base):
+    __tablename__ = "sop_document"
+    __table_args__ = {"schema": "docucr"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    sop_id = Column(UUID(as_uuid=True), ForeignKey("docucr.sop.id", ondelete="CASCADE"), nullable=False)
+    
+    name = Column(String, nullable=False)
+    category = Column(String, nullable=False) # e.g. "SOURCE_FILE"
+    s3_key = Column(String, nullable=False)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    sop = relationship("SOP", back_populates="documents")

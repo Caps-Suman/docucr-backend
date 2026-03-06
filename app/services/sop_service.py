@@ -163,7 +163,8 @@ class SOPService:
             joinedload(SOP.creator),
             joinedload(SOP.organisation),
             joinedload(SOP.client),
-            joinedload(SOP.lifecycle_status)
+            joinedload(SOP.lifecycle_status),
+            joinedload(SOP.documents)
         ).all()
         
         formatted_sops = [SOPService._format_sop(sop) for sop in sops]
@@ -229,6 +230,16 @@ class SOPService:
             "coding_rules": sop.coding_rules,
             "coding_rules_cpt": sop.coding_rules_cpt,
             "coding_rules_icd": sop.coding_rules_icd,
+            "documents": [
+                {
+                    "id": str(doc.id),
+                    "name": doc.name,
+                    "category": doc.category,
+                    "s3_key": doc.s3_key,
+                    "created_at": doc.created_at
+                }
+                for doc in sop.documents
+            ] if sop.documents else [],
             "status": {
                 "id": sop.lifecycle_status.id,
                 "code": sop.lifecycle_status.code,
@@ -287,7 +298,8 @@ class SOPService:
             joinedload(SOP.creator),
             joinedload(SOP.organisation),
             joinedload(SOP.client),
-            joinedload(SOP.lifecycle_status)
+            joinedload(SOP.lifecycle_status),
+            joinedload(SOP.documents)
         ).first()
 
         if not sop:

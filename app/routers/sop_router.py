@@ -8,7 +8,7 @@ from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
 from uuid import UUID
 import io
-from app.models.sop import SOP
+from app.models.sop import SOP, SOPDocument
 from app.models.sop_provider_mapping import SopProviderMapping
 from app.models.status import Status
 from app.services.activity_service import ActivityService
@@ -68,6 +68,16 @@ class StatusInfo(BaseModel):
     class Config:
         from_attributes = True
 
+class SOPDocumentResponse(BaseModel):
+    id: UUID
+    name: str
+    category: str
+    s3_key: str
+    created_at: Any
+
+    class Config:
+        from_attributes = True
+
 class SOPShortResponse(BaseModel):
     id: UUID
     title: str
@@ -82,6 +92,7 @@ class SOPShortResponse(BaseModel):
     client_id: Optional[UUID] = None
     client_name: Optional[str] = None
     client_npi: Optional[str] = None
+    documents: List[SOPDocumentResponse] = []
     updated_at: Any
 
     class Config:
@@ -100,6 +111,7 @@ class SOPResponse(SOPBase):
     organisation_name: Optional[str] = None
     client_name: Optional[str] = None
     client_npi: Optional[str] = None
+    documents: List[SOPDocumentResponse] = []
     created_at: Any
     updated_at: Any
     providers: Optional[List[Dict[str, Any]]] = None
@@ -363,7 +375,14 @@ async def ai_extract_sop_background(
             file.content_type,
             s3_key=s3_key
         )
-        new_sop.s3_key = s3_key
+        
+        # Create SOPDocument record for the source file
+        db.add(SOPDocument(
+            sop_id=new_sop.id,
+            name=file.filename,
+            category="Source file",
+            s3_key=s3_key
+        ))
         db.commit()
     except Exception as e:
         failed_status = db.query(Status).filter(Status.code == "FAILED", Status.type == "DOCUMENT").first()
@@ -409,8 +428,11 @@ async def reanalyse_sop(
     if not sop:
         raise HTTPException(404, "SOP not found")
     
-    if not sop.s3_key:
-        raise HTTPException(400, "SOP source file not found in S3. Please re-upload.")
+    # Find the "Source file" document
+    source_doc = next((doc for doc in sop.documents if doc.category == "Source file"), None)
+    
+    if not source_doc:
+        raise HTTPException(400, "SOP source file not found. Please re-upload.")
 
     # Get EXTRACTING status
     extracting_status = db.query(Status).filter(
@@ -426,13 +448,14 @@ async def reanalyse_sop(
     db.commit()
 
     # Determine content type from filename (simplified)
+    s3_key = source_doc.s3_key
     content_type = "application/pdf" # default
-    if sop.s3_key.endswith(".docx"):
+    if s3_key.endswith(".docx"):
         content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    elif sop.s3_key.endswith(".xlsx"):
+    elif s3_key.endswith(".xlsx"):
         content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    elif sop.s3_key.endswith((".png", ".jpg", ".jpeg")):
-        content_type = "image/png" if sop.s3_key.endswith(".png") else "image/jpeg"
+    elif s3_key.endswith((".png", ".jpg", ".jpeg")):
+        content_type = "image/png" if s3_key.endswith(".png") else "image/jpeg"
 
     # Background task will need to handle downloading from S3
     background_tasks.add_task(
@@ -440,7 +463,7 @@ async def reanalyse_sop(
         sop.id,
         None, # No local file path yet
         content_type,
-        s3_key=sop.s3_key
+        s3_key=s3_key
     )
 
     return {"message": "Reanalysis started", "sop_id": str(sop.id)}
@@ -669,6 +692,72 @@ def delete_sop(
     )
 
     return None
+@router.post("/{sop_id}/documents", status_code=status.HTTP_201_CREATED)
+async def upload_sop_document(
+    sop_id: UUID,
+    file: UploadFile = File(...),
+    category: str = Form("Source file"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(Permission("SOPs", "UPDATE"))
+):
+    sop = db.query(SOP).filter(SOP.id == sop_id).first()
+    if not sop:
+        raise HTTPException(404, "SOP not found")
+
+    file_content = await file.read()
+    s3_key = f"sops/{sop.id}/{file.filename}"
+    
+    try:
+        await s3_service.upload_file(
+            io.BytesIO(file_content),
+            file.filename,
+            file.content_type,
+            s3_key=s3_key
+        )
+        
+        new_doc = SOPDocument(
+            sop_id=sop.id,
+            name=file.filename,
+            category=category,
+            s3_key=s3_key
+        )
+        db.add(new_doc)
+        db.commit()
+        db.refresh(new_doc)
+        
+        return new_doc
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"Failed to upload document: {str(e)}")
+
+@router.delete("/{sop_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_sop_document(
+    sop_id: UUID,
+    document_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(Permission("SOPs", "UPDATE"))
+):
+    doc = db.query(SOPDocument).filter(
+        SOPDocument.id == document_id,
+        SOPDocument.sop_id == sop_id
+    ).first()
+    
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    
+    try:
+        # Delete from S3
+        await s3_service.delete_file(doc.s3_key)
+        
+        # Delete from database
+        db.delete(doc)
+        db.commit()
+        
+        return None
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"Failed to delete document: {str(e)}")
+
 @router.get("/{sop_id}/pdf")
 def download_sop_pdf(
     sop_id: str,
@@ -701,3 +790,41 @@ def download_sop_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={filename}.pdf"}
     )
+
+@router.get("/{sop_id}/source-file")
+async def download_sop_source_file(
+    sop_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    sop = SOPService.get_sop_by_id(sop_id, db, current_user)
+    if not sop:
+        raise HTTPException(404, "SOP not found")
+    
+    # Find the "Source file" document
+    source_doc = next((doc for doc in sop.get("documents", []) if doc.get("category") == "Source file"), None)
+    
+    if not source_doc:
+        raise HTTPException(404, "Source file not found for this SOP")
+    
+    s3_key = source_doc.get("s3_key")
+    try:
+        file_content = await s3_service.download_file(s3_key)
+        filename = source_doc.get("name") or os.path.basename(s3_key)
+        
+        # Determine media type based on extension
+        media_type = "application/octet-stream"
+        if filename.endswith(".pdf"):
+            media_type = "application/pdf"
+        elif filename.endswith(".docx"):
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif filename.endswith((".png", ".jpg", ".jpeg")):
+            media_type = f"image/{filename.split('.')[-1]}"
+            
+        return StreamingResponse(
+            io.BytesIO(file_content),
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Failed to download source file: {str(e)}")
