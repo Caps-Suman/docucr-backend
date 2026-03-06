@@ -566,7 +566,7 @@ def add_location(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # 🔥 If new location is primary → demote existing primary
+    # If new location is primary → demote existing primary
     if location.is_primary:
         db.query(ClientLocation).filter(
             ClientLocation.client_id == client.id,
