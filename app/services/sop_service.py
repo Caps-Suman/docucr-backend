@@ -19,7 +19,6 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
 from io import BytesIO
-
 from app.services.ai_sop_service import AISOPService
 class SOPService:
 
@@ -213,7 +212,7 @@ class SOPService:
     def _format_sop(sop: SOP) -> Dict:
         """Helper to format SOP data with descriptive names."""
         from sqlalchemy.orm import attributes
-        
+        from app.services.s3_service import s3_service
         # Start with model attributes
         data = {
             "id": sop.id,
@@ -240,6 +239,10 @@ class SOPService:
                     "name": doc.name,
                     "category": doc.category,
                     "s3_key": doc.s3_key,
+                    "document_url": s3_service.generate_presigned_url(
+                        doc.s3_key,
+                        response_content_disposition=f'inline; filename="{doc.name}"'
+                    ),
                     "created_at": doc.created_at,
                     "extracted_data": doc.extracted_data,
                     "processed": doc.processed
@@ -603,7 +606,6 @@ class SOPService:
         return structured
     @staticmethod
     def update_sop(sop_id: str, sop_data: Dict, db: Session, current_user: User):
-
         org_id = SOPService._get_org_id(current_user)
 
         db_sop = db.query(SOP).filter(
@@ -612,56 +614,7 @@ class SOPService:
         ).first()
         if not db_sop:
             return None
-        extra_docs = db.query(SOPDocument).filter(
-            SOPDocument.sop_id == sop_id,
-            SOPDocument.category != "Source file",
-            SOPDocument.processed == False
-        ).all()
 
-        for doc in extra_docs:
-
-            try:
-                extracted = SOPService.extract_from_document(doc)
-
-                # Filter extracted data by category
-                if doc.category == "Payer Guidelines":
-                    extracted = {
-                        "payer_guidelines": extracted.get("payer_guidelines", [])
-                    }
-
-                elif doc.category == "Billing Guidelines":
-                    extracted = {
-                        "billing_guidelines": extracted.get("billing_guidelines", [])
-                    }
-
-                elif doc.category == "Coding Guidelines":
-                    extracted = {
-                        "coding_rules_cpt": extracted.get("coding_rules_cpt", []),
-                        "coding_rules_icd": extracted.get("coding_rules_icd", [])
-                    }
-
-                elif doc.category == "Workflow Process":
-                    extracted = {
-                        "workflow_process": extracted.get("workflow_process", {})
-                    }
-
-                if not extracted:
-                    print(f"No extraction result for {doc.name}")
-                    continue
-
-                doc.extracted_data = extracted
-
-                SOPService.apply_extraction_to_sop(
-                    sop=db_sop,
-                    category=doc.category,
-                    extracted=extracted
-                )
-
-                doc.processed = True
-
-            except Exception as e:
-                print(f"Extraction failed for {doc.name}: {e}")
-        # 🔥 handle providers correctly
         provider_ids = sop_data.get("provider_ids")
 
         if provider_ids is None:
@@ -672,21 +625,19 @@ class SOPService:
                 .all()
             ]
 
-        # 🔥 validation excluding self
         if SOPService.check_sop_exists(
             client_id=db_sop.client_id,
             provider_ids=provider_ids,
             db=db,
-            exclude_sop_id=sop_id,   # 🔥 THIS IS THE FIX
+            exclude_sop_id=sop_id,
         ):
             raise HTTPException(400, "Provider already has active SOP")
+
         if "provider_ids" in sop_data:
             new_ids = set(provider_ids)
-
             existing = db.query(SopProviderMapping).filter(
                 SopProviderMapping.sop_id == sop_id
             ).all()
-
             existing_ids = {str(m.provider_id) for m in existing}
 
             to_add = new_ids - existing_ids
@@ -699,11 +650,7 @@ class SOPService:
                 ).delete(synchronize_session=False)
 
             for pid in to_add:
-                db.add(SopProviderMapping(
-                    sop_id=sop_id,
-                    provider_id=pid
-                ))
-        
+                db.add(SopProviderMapping(sop_id=sop_id, provider_id=pid))
 
         allowed_fields = {
             "title",
@@ -720,14 +667,11 @@ class SOPService:
         }
 
         for k, v in sop_data.items():
-
             if k == "provider_ids":
                 continue
-
             if k not in allowed_fields:
-                continue   # ignore unknown keys completely
+                continue
 
-            # 🔥 special handling for workflow JSON merge
             if k == "workflow_process" and isinstance(v, dict):
                 existing = db_sop.workflow_process or {}
                 existing.update(v)

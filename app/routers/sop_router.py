@@ -75,6 +75,7 @@ class SOPDocumentResponse(BaseModel):
     s3_key: str
     created_at: Any
     extracted_data: Optional[Dict[str, Any]] = None
+    document_url: Optional[str] = None
     processed: Optional[bool] = False
 
     class Config:
@@ -185,6 +186,102 @@ def check_providers(
     )
 
     return {"blocked_provider_ids": blocked}
+
+@router.post("/{sop_id}/documents/process", status_code=202)
+async def process_extra_documents(
+    sop_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(Permission("SOPs", "UPDATE"))
+):
+    """
+    Triggers background extraction for all unprocessed extra documents
+    belonging to this SOP. Returns immediately (202 Accepted).
+    The client should poll GET /{sop_id} to check document.processed status.
+    """
+    sop = db.query(SOP).filter(SOP.id == sop_id).first()
+    if not sop:
+        raise HTTPException(404, "SOP not found")
+
+    unprocessed = db.query(SOPDocument).filter(
+        SOPDocument.sop_id == sop_id,
+        SOPDocument.category != "Source file",
+        SOPDocument.processed == False
+    ).all()
+
+    if not unprocessed:
+        return {"message": "No unprocessed documents found", "queued": 0}
+
+    # Run extraction for each doc independently in background
+    # so one failure doesn't block others
+    for doc in unprocessed:
+        background_tasks.add_task(
+            _extract_single_document,
+            doc_id=str(doc.id),
+            sop_id=str(sop_id),
+        )
+
+    return {
+        "message": f"Extraction queued for {len(unprocessed)} document(s)",
+        "queued": len(unprocessed),
+        "document_ids": [str(doc.id) for doc in unprocessed]
+    }
+
+
+def _extract_single_document(doc_id: str, sop_id: str):
+    """
+    Background task: extract a single extra document and apply to SOP.
+    Runs in a separate thread via FastAPI BackgroundTasks.
+    """
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        doc = db.query(SOPDocument).filter(SOPDocument.id == doc_id).first()
+        db_sop = db.query(SOP).filter(SOP.id == sop_id).first()
+
+        if not doc or not db_sop:
+            print(f"[extraction] Doc {doc_id} or SOP {sop_id} not found")
+            return
+
+        # Download from S3 and extract text + structure
+        extracted = SOPService.extract_from_document(doc)
+
+        # Filter extracted data to only the relevant section for this doc's category
+        category = doc.category or ""
+
+        if "Payer" in category:
+            extracted = {"payer_guidelines": extracted.get("payer_guidelines", [])}
+        elif "Billing" in category:
+            extracted = {"billing_guidelines": extracted.get("billing_guidelines", [])}
+        elif "Coding" in category or "CPT" in category or "ICD" in category:
+            extracted = {
+                "coding_rules_cpt": extracted.get("coding_rules_cpt", []),
+                "coding_rules_icd": extracted.get("coding_rules_icd", []),
+            }
+        elif "Workflow" in category:
+            extracted = {"workflow_process": extracted.get("workflow_process", {})}
+
+        # Persist extracted_data on the document record
+        doc.extracted_data = extracted
+
+        # Merge extracted data into the SOP fields
+        SOPService.apply_extraction_to_sop(
+            sop=db_sop,
+            category=category,
+            extracted=extracted,
+        )
+
+        doc.processed = True
+        db.commit()
+        print(f"[extraction] ✅ Doc {doc_id} processed successfully")
+
+    except Exception as e:
+        print(f"[extraction] ❌ Doc {doc_id} failed: {e}")
+        # Don't mark as processed so it can be retried
+
+    finally:
+        db.close()
 
 @router.post("/check-client-sop")
 def check_client_sop(
