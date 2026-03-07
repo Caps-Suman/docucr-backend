@@ -291,7 +291,6 @@ def check_client_sop(
     permission: bool = Depends(Permission("SOPs", "CREATE")),
     current_user: User = Depends(get_current_user)
 ):
-
     org_id = current_user.organisation_id
 
     active_status_id = db.query(Status.id).filter(
@@ -304,42 +303,57 @@ def check_client_sop(
         Status.type == "GENERAL"
     ).scalar()
 
-    # -----------------------------
-    # CASE 1 → No providers selected
-    # -----------------------------
-    if not provider_ids:
+    allowed_statuses = [s for s in [active_status_id, extracting_status_id] if s]
 
-        existing_sop = db.query(SOP).filter(
-            SOP.client_id == client_id,
-            SOP.organisation_id == org_id,
-            SOP.status_id.in_([active_status_id, extracting_status_id])
-        ).first()
-
-        return {
-            "exists": existing_sop is not None,
-            "blocked_provider_ids": []
-        }
-
-    # -----------------------------
-    # CASE 2 → Providers selected
-    # -----------------------------
-    blocked = (
-        db.query(SopProviderMapping.provider_id)
-        .join(SOP, SopProviderMapping.sop_id == SOP.id)
+    client_sops = (
+        db.query(SOP.id)
         .filter(
             SOP.client_id == client_id,
             SOP.organisation_id == org_id,
-            SOP.status_id.in_([active_status_id, extracting_status_id]),
-            SopProviderMapping.provider_id.in_(provider_ids)
+            SOP.status_id.in_(allowed_statuses),
+        )
+        .all()
+    )
+    client_sop_ids = [row[0] for row in client_sops]
+
+    if not provider_ids:
+        if not client_sop_ids:
+            return {"exists": False, "blocked_provider_ids": []}
+
+        sop_ids_with_providers = (
+            db.query(SopProviderMapping.sop_id)
+            .filter(SopProviderMapping.sop_id.in_(client_sop_ids))
+            .distinct()
+            .all()
+        )
+        sop_ids_with_providers = {row[0] for row in sop_ids_with_providers}
+
+        client_level_sop_exists = any(
+            sid not in sop_ids_with_providers for sid in client_sop_ids
+        )
+
+        return {
+            "exists": client_level_sop_exists,
+            "blocked_provider_ids": [],
+        }
+
+    if not client_sop_ids:
+        return {"exists": False, "blocked_provider_ids": []}
+
+    blocked = (
+        db.query(SopProviderMapping.provider_id)
+        .filter(
+            SopProviderMapping.sop_id.in_(client_sop_ids),
+            SopProviderMapping.provider_id.in_(provider_ids),
         )
         .all()
     )
 
-    blocked_ids = [str(p[0]) for p in blocked]
+    blocked_ids = [str(row[0]) for row in blocked]
 
     return {
         "exists": len(blocked_ids) > 0,
-        "blocked_provider_ids": blocked_ids
+        "blocked_provider_ids": blocked_ids,
     }
 @router.get("/stats", response_model=SOPStatsResponse)
 def get_sop_stats(
