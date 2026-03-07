@@ -202,7 +202,7 @@ class SOPService:
             "workflow_process": sop.workflow_process,
             "billing_guidelines": sop.billing_guidelines,
             "payer_guidelines": sop.payer_guidelines,
-            "coding_rules": sop.coding_rules,
+            # "coding_rules": sop.coding_rules,
             "coding_rules_cpt": sop.coding_rules_cpt,
             "coding_rules_icd": sop.coding_rules_icd,
             "documents": [

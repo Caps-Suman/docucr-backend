@@ -22,14 +22,14 @@ class SOP(Base):
     workflow_process = Column(JSONB, nullable=True)
     billing_guidelines = Column(JSONB, nullable=True)
     payer_guidelines=Column(JSONB, nullable=True)
-    coding_rules = Column(JSONB, nullable=True)
+    # coding_rules = Column(JSONB, nullable=True)
     coding_rules_cpt = Column(JSONB, nullable=True, default=list)
     coding_rules_icd = Column(JSONB, nullable=True, default=list)
 
-    # 🔒 Lifecycle status (ONLY ACTIVE / INACTIVE)
+    # Lifecycle status (ACTIVE / INACTIVE)
     status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)
 
-    # 🔁 Workflow / processing status
+    # Workflow / processing status
     workflow_status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)
 
     created_by = Column(String, ForeignKey("docucr.user.id"), nullable=True)
