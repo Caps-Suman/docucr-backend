@@ -857,6 +857,7 @@ class ClientService:
                     "location_id": str(m.location_id) if m and m.location_id else None,
                     "specialty": p.specialty,
                     "specialty_code": p.specialty_code,
+                    "ptan_id": p.ptan_id,
                     "created_at": p.created_at,
                 }
                 for p, m in provider_rows
