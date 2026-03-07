@@ -24,6 +24,7 @@ class Provider(Base):
     middle_name = Column(String)
     last_name = Column(String)
     npi = Column(String,unique=True, index=True)
+    ptan_id = Column(String, unique=True, index=True)
     
     # --- Address ---
     address_line_1 = Column(String(250), nullable=True)

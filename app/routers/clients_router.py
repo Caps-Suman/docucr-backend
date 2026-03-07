@@ -51,7 +51,7 @@ class ProviderCreate(BaseModel):
     zip_code: Optional[str] = None
     specialty: Optional[str] = None
     specialty_code: Optional[str] = None
-
+    ptan_id: Optional[str] = None
 class ClientLocationCreate(BaseModel):
     id: Optional[UUID] = None # Added for updates
     address_line_1: str
@@ -276,6 +276,7 @@ class ProviderCreateSchema(BaseModel):
     location_id: Optional[str]=None
     specialty: Optional[str] = None
     specialty_code: Optional[str] = None
+    ptan_id: Optional[str] = None
 
     @field_validator("zip_code")
     @classmethod
@@ -299,6 +300,7 @@ class ProviderUpdateSchema(BaseModel):
     state_name: Optional[str] = None
     specialty: Optional[str] = None
     specialty_code: Optional[str] = None
+    ptan_id:Optional[str] = None
     
 class ClientListResponse(BaseModel):
     clients: List[ClientResponse]
