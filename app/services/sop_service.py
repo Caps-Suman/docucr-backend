@@ -186,6 +186,22 @@ class SOPService:
         from sqlalchemy.orm import attributes
         from app.services.s3_service import s3_service
 
+        # Helper for adding source to manual entries
+        def add_manual_source(items, source_name="Manual"):
+            if not items: return items if items else []
+            if isinstance(items, list):
+                if items and isinstance(items[0], dict) and "rules" in items[0]:
+                    # billing_guidelines structure
+                    for cat in items:
+                        for rule in cat.get("rules", []):
+                            if "source" not in rule:
+                                rule["source"] = source_name
+                else:
+                    for item in items:
+                        if isinstance(item, dict) and "source" not in item:
+                            item["source"] = source_name
+            return items
+
         data = {
             "id": sop.id,
             "title": sop.title,
@@ -200,23 +216,26 @@ class SOPService:
             "updated_at": sop.updated_at,
             "provider_info": sop.provider_info,
             "workflow_process": sop.workflow_process,
-            "billing_guidelines": sop.billing_guidelines,
-            "payer_guidelines": sop.payer_guidelines,
-            # "coding_rules": sop.coding_rules,
-            "coding_rules_cpt": sop.coding_rules_cpt,
-            "coding_rules_icd": sop.coding_rules_icd,
+            "billing_guidelines": add_manual_source(sop.billing_guidelines),
+            "payer_guidelines": add_manual_source(sop.payer_guidelines),
+            "coding_rules_cpt": add_manual_source(sop.coding_rules_cpt),
+            "coding_rules_icd": add_manual_source(sop.coding_rules_icd),
             "documents": [
                 {
                     "id": str(doc.id),
                     "name": doc.name,
                     "category": doc.category,
                     "s3_key": doc.s3_key,
+                    # Include the new structured fields
+                    "billing_guidelines": doc.billing_guidelines,
+                    "payer_guidelines": doc.payer_guidelines,
+                    "coding_rules_cpt": doc.coding_rules_cpt,
+                    "coding_rules_icd": doc.coding_rules_icd,
                     "document_url": s3_service.generate_presigned_url(
                         doc.s3_key,
                         response_content_disposition=f'inline; filename="{doc.name}"'
                     ),
                     "created_at": doc.created_at,
-                    "extracted_data": doc.extracted_data,
                     "processed": doc.processed
                 }
                 for doc in sop.documents
@@ -431,7 +450,6 @@ class SOPService:
             if not doc or not sop:
                 return
 
-            doc.extracted_data = structured
 
             if category == "Workflow Process":
                 sop.workflow_process = structured.get("workflow_process")
@@ -449,7 +467,32 @@ class SOPService:
             db.close()
 
     @staticmethod
-    def apply_extraction_to_sop(sop, category, extracted):
+    def apply_extraction_to_sop(sop, doc, category, extracted):
+        # 1. Update document-specific fields
+        if doc:
+            source_name = "source_file" if doc.category == "Source file" else (doc.name or category or "Document")
+            
+            def inject_source(items):
+                if not items: return items
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            item["source"] = source_name
+                            if "rules" in item and isinstance(item["rules"], list): # billing guidelines category
+                                for r in item.get("rules", []):
+                                    if isinstance(r, dict):
+                                        r["source"] = source_name
+                return items
+
+            if "Billing" in category:
+                doc.billing_guidelines = inject_source(extracted.get("billing_guidelines"))
+            elif "Payer" in category:
+                doc.payer_guidelines = inject_source(extracted.get("payer_guidelines"))
+            elif "Coding" in category or "CPT" in category or "ICD" in category:
+                doc.coding_rules_cpt = inject_source(extracted.get("coding_rules_cpt"))
+                doc.coding_rules_icd = inject_source(extracted.get("coding_rules_icd"))
+
+        # 2. Update SOP shared fields (Workflow, category, title)
         if category == "Workflow Process":
             sop.workflow_process = extracted.get("workflow_process")
 
@@ -462,30 +505,6 @@ class SOPService:
             wf = sop.workflow_process or {}
             wf["eligibility_verification_portals"] = extracted.get("workflow_process", {}).get("eligibility_verification_portals")
             sop.workflow_process = wf
-
-        elif category == "Payer Guidelines":
-            extracted_rules = extracted.get("payer_guidelines", [])
-            if not extracted_rules:
-                return
-            existing = sop.payer_guidelines or []
-            existing_titles = {r.get("title") for r in existing}
-            for rule in extracted_rules:
-                if rule.get("title") not in existing_titles:
-                    existing.append(rule)
-            sop.payer_guidelines = existing
-
-        elif category in ("Coding Guidelines", "CPT Coding Rules", "ICD Coding Rules"):
-            cpt = extracted.get("coding_rules_cpt", [])
-            if cpt:
-                existing = sop.coding_rules_cpt or []
-                existing.extend(cpt)
-                sop.coding_rules_cpt = existing
-
-            icd = extracted.get("coding_rules_icd", [])
-            if icd:
-                existing = sop.coding_rules_icd or []
-                existing.extend(icd)
-                sop.coding_rules_icd = existing
 
     @staticmethod
     def extract_from_document(doc):
@@ -542,10 +561,10 @@ class SOPService:
             elif "Eligibility" in category:
                 extracted = {"workflow_process": extracted.get("workflow_process", {})}
 
-            doc.extracted_data = extracted
 
             SOPService.apply_extraction_to_sop(
                 sop=db_sop,
+                doc=doc,
                 category=category,
                 extracted=extracted,
             )
@@ -560,6 +579,88 @@ class SOPService:
 
         finally:
             db.close()
+
+    @staticmethod
+    def _sync_guidelines(db_sop: SOP, sop_data: Dict):
+        """
+        Synchronizes guidelines (billing, payer, cpt, icd) across the main SOP table 
+        and its associated SOPDocument records. 
+        Items with source='Manual' are saved to the SOP table.
+        Items with other sources are saved to their respective SOPDocument records.
+        If a document exists but no items are provided for it in the payload, 
+        its respective guideline field is cleared (supporting deletions).
+        """
+        guideline_keys = ["billing_guidelines", "payer_guidelines", "coding_rules_cpt", "coding_rules_icd"]
+        
+        for key in guideline_keys:
+            if key in sop_data and sop_data[key] is not None:
+                merged_items = sop_data[key]
+                
+                # 1. Split items by source
+                manual_items_final = []
+                doc_groups = {} # {source_name: [items]}
+                
+                if key == "billing_guidelines":
+                    # Special handling for nested category structure
+                    for cat_group in merged_items:
+                        if not isinstance(cat_group, dict): continue
+                        cat_name = cat_group.get("category", "Uncategorized")
+                        rules = cat_group.get("rules", [])
+                        
+                        # Process Manual rules for this category
+                        manual_rules = [r for r in rules if r.get("source") == "Manual" or not r.get("source")]
+                        if manual_rules:
+                            manual_items_final.append({
+                                "category": cat_name,
+                                "rules": [{"description": r.get("description")} for r in manual_rules]
+                            })
+                        
+                        # Process Extracted rules for this category
+                        for r in rules:
+                            src = r.get("source")
+                            if src and src != "Manual":
+                                if src not in doc_groups: doc_groups[src] = {}
+                                if cat_name not in doc_groups[src]: doc_groups[src][cat_name] = []
+                                doc_groups[src][cat_name].append(r)
+                    
+                    # Convert doc_groups from dict-of-dicts to list-of-dicts
+                    for src in doc_groups:
+                        doc_groups[src] = [
+                            {"category": cat, "rules": rules} 
+                            for cat, rules in doc_groups[src].items()
+                        ]
+                
+                else:
+                    # Flat lists (payer_guidelines, coding_rules_*)
+                    for item in merged_items:
+                        if not isinstance(item, dict): continue
+                        src = item.get("source")
+                        if src == "Manual" or not src:
+                            # Clean up manual item (remove source and temporary IDs)
+                            clean_item = item.copy()
+                            clean_item.pop("source", None)
+                            if key == "payer_guidelines":
+                                if "id" in clean_item and isinstance(clean_item["id"], str) and clean_item["id"].startswith("pg_"):
+                                    clean_item.pop("id", None)
+                            manual_items_final.append(clean_item)
+                        else:
+                            if src not in doc_groups: doc_groups[src] = []
+                            doc_groups[src].append(item)
+
+                # 2. Update SOP table (Manual entries)
+                setattr(db_sop, key, manual_items_final)
+                
+                # 3. Update SOPDocuments (Extracted entries)
+                for doc in db_sop.documents:
+                    source_name = "source_file" if doc.category == "Source file" else doc.name
+                    if source_name in doc_groups:
+                        setattr(doc, key, doc_groups[source_name])
+                    else:
+                        # Clear field if document exists but no items were sent for it (Deletions)
+                        # Only clear if the source name was actually present in the extraction pool elsewhere
+                        # (to avoid clearing when some unrelated source is being updated)
+                        # Actually, since handleSave sends the WHOLE state, if it's not in doc_groups, it's gone.
+                        setattr(doc, key, [] if key.startswith("coding_rules") else None)
 
     @staticmethod
     def update_sop(sop_id: str, sop_data: Dict, db: Session, current_user: User):
@@ -612,7 +713,11 @@ class SOPService:
             for pid in to_add:
                 db.add(SopProviderMapping(sop_id=sop_id, provider_id=pid))
 
-        # ── Field updates ──────────────────────────────────────────────────────
+        # ── Unified Guideline Sync ─────────────────────────────────────────────
+        SOPService._sync_guidelines(db_sop, sop_data)
+
+        # ── Remaining Field updates ───────────────────────────────────────────
+        guideline_fields = {"billing_guidelines", "payer_guidelines", "coding_rules_cpt", "coding_rules_icd"}
         allowed_fields = {
             "title",
             "category",
@@ -620,15 +725,11 @@ class SOPService:
             "client_id",
             "provider_info",
             "workflow_process",
-            "billing_guidelines",
-            "payer_guidelines",
-            "coding_rules_cpt",
-            "coding_rules_icd",
             "status_id",
         }
 
         for k, v in sop_data.items():
-            if k == "provider_ids":
+            if k == "provider_ids" or k in guideline_fields:
                 continue
             if k not in allowed_fields:
                 continue

@@ -66,7 +66,13 @@ class SOPDocument(Base):
     name = Column(String, nullable=False)
     category = Column(String, nullable=False) # e.g. "SOURCE_FILE"
     s3_key = Column(String, nullable=False)
-    extracted_data = Column(JSONB, nullable=True)
+    
+    # Structured Extracted Fields
+    billing_guidelines = Column(JSONB, nullable=True)
+    payer_guidelines = Column(JSONB, nullable=True)
+    coding_rules_cpt = Column(JSONB, nullable=True, default=list)
+    coding_rules_icd = Column(JSONB, nullable=True, default=list)
+    
     processed = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

@@ -109,10 +109,47 @@ class AISOPService:
             sop.category = structured.get("basic_information", {}).get("category") or sop.category
             sop.provider_info = normalized_provider_info
             sop.workflow_process = normalized_workflow
-            sop.billing_guidelines = structured.get("billing_guidelines")
-            sop.payer_guidelines = structured.get("payer_guidelines")
-            sop.coding_rules_cpt = structured.get("coding_rules_cpt")
-            sop.coding_rules_icd = structured.get("coding_rules_icd")
+            
+            # Find the document and update its extracted fields
+            from app.models.sop import SOPDocument
+            doc = db.query(SOPDocument).filter(
+                SOPDocument.sop_id == sop_id,
+                SOPDocument.s3_key == s3_key if s3_key else None
+            ).first()
+
+            # If s3_key wasn't provided, try to find the one with this file_path basename or something
+            # But usually it's better to rely on s3_key or find the 'SOURCE_FILE'
+            if not doc:
+                doc = db.query(SOPDocument).filter(
+                    SOPDocument.sop_id == sop_id,
+                    SOPDocument.category == "Source file"
+                ).first()
+
+            if doc:
+                # Add document-specific source tracking
+                source_name = "source_file" if doc.category == "Source file" else (doc.name or "Source File")
+                
+                def inject_source(items):
+                    if not items: return items
+                    if isinstance(items, list):
+                        for item in items:
+                            if isinstance(item, dict):
+                                if "rules" in item: # billing guidelines category
+                                    for r in item["rules"]:
+                                        r["source"] = source_name
+                                else:
+                                    item["source"] = source_name
+                    return items
+
+                doc.billing_guidelines = inject_source(structured.get("billing_guidelines"))
+                doc.payer_guidelines = inject_source(structured.get("payer_guidelines"))
+                doc.coding_rules_cpt = inject_source(structured.get("coding_rules_cpt"))
+                doc.coding_rules_icd = inject_source(structured.get("coding_rules_icd"))
+                doc.processed = True
+            
+            # We intentionally DO NOT clear the manual fields in the SOP table here.
+            # This ensures that any manually entered data is preserved even if a source file
+            # is uploaded or re-processed later.
 
             sop.status_id = active_status.id if active_status else sop.status_id
 
@@ -344,43 +381,69 @@ class AISOPService:
     def normalize_ai_sop(data: dict) -> dict:
         category = data.get("category")
         if isinstance(category, dict):
-                data["category"] = category.get("title", "")
+            data["category"] = category.get("title", "")
         elif category is None:
             data["category"] = ""
 
+        # Default source for AI extracted data
+        source = "AI Extracted"
+
+        # Normalize Billing Guidelines
         guidelines = data.get("billing_guidelines", [])
-        payer_guidelines = data.get("payer_guidelines", [])
-
-        normalized = []
-        normalized_payers = []
-
-        for pg in payer_guidelines:
-            if isinstance(pg, str):
-                normalized_payers.append({
-                    "title": "Unknown",
-                    "description": pg
-                })
-            elif isinstance(pg, dict):
-                normalized_payers.append({
-                    "payer_name": pg.get("payer_name") or pg.get("title") or pg.get("payer") or "Unknown",
-                    "description": pg.get("description") or ""
-                })
-
-        data["payer_guidelines"] = normalized_payers
+        normalized_guidelines = []
         for group in guidelines:
             if not isinstance(group, dict):
                 continue
 
-            normalized.append({
+            normalized_guidelines.append({
                 "category": group.get("category", "Guidelines"),
                 "rules": [
-                    {"description": r.get("description", "")}
+                    {
+                        "description": r.get("description", ""),
+                        "source": source
+                    }
                     for r in group.get("rules", [])
                     if isinstance(r, dict)
                 ]
             })
+        data["billing_guidelines"] = normalized_guidelines
 
-        data["billing_guidelines"] = normalized
+        # Normalize Payer Guidelines
+        payer_guidelines = data.get("payer_guidelines", [])
+        normalized_payers = []
+        for pg in payer_guidelines:
+            if isinstance(pg, str):
+                normalized_payers.append({
+                    "payer_name": "Unknown",
+                    "description": pg,
+                    "source": source
+                })
+            elif isinstance(pg, dict):
+                normalized_payers.append({
+                    "payer_name": pg.get("payer_name") or pg.get("title") or pg.get("payer") or "Unknown",
+                    "description": pg.get("description") or "",
+                    "source": source
+                })
+        data["payer_guidelines"] = normalized_payers
+
+        # Normalize Coding Rules CPT
+        cpt_rules = data.get("coding_rules_cpt", [])
+        normalized_cpt = []
+        for r in cpt_rules:
+            if isinstance(r, dict):
+                r["source"] = source
+                normalized_cpt.append(r)
+        data["coding_rules_cpt"] = normalized_cpt
+
+        # Normalize Coding Rules ICD
+        icd_rules = data.get("coding_rules_icd", [])
+        normalized_icd = []
+        for r in icd_rules:
+            if isinstance(r, dict):
+                r["source"] = source
+                normalized_icd.append(r)
+        data["coding_rules_icd"] = normalized_icd
+
         return data
 
     @staticmethod

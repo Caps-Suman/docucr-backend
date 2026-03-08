@@ -27,6 +27,7 @@ from app.core.permissions import Permission
 router = APIRouter()
 class BillingRule(BaseModel):
     description: str
+    source: Optional[str] = None
 
 class BillingGuidelineGroup(BaseModel):
     category: str
@@ -36,6 +37,7 @@ class BillingGuidelineGroup(BaseModel):
 class PayerGuideline(BaseModel):
     payerName:str
     description:str
+    source: Optional[str] = None
 class SOPBase(BaseModel):
     title: str
     category: str
@@ -74,9 +76,12 @@ class SOPDocumentResponse(BaseModel):
     category: str
     s3_key: str
     created_at: Any
-    extracted_data: Optional[Dict[str, Any]] = None
     document_url: Optional[str] = None
     processed: Optional[bool] = False
+    billing_guidelines: Optional[List[Dict[str, Any]]] = None
+    payer_guidelines: Optional[List[Dict[str, Any]]] = None
+    coding_rules_cpt: Optional[List[Dict[str, Any]]] = None
+    coding_rules_icd: Optional[List[Dict[str, Any]]] = None
 
     class Config:
         from_attributes = True
@@ -268,6 +273,7 @@ def _extract_single_document(doc_id: str, sop_id: str):
         # Merge extracted data into the SOP fields
         SOPService.apply_extraction_to_sop(
             sop=db_sop,
+            doc=doc,
             category=category,
             extracted=extracted,
         )
@@ -737,10 +743,37 @@ def create_sop_from_extracted(
         )
     }
 
-    new_sop.billing_guidelines = extracted_data.get("billing_guidelines", [])
-    new_sop.payer_guidelines = extracted_data.get("payer_guidelines", [])
-    new_sop.coding_rules_cpt = extracted_data.get("coding_rules_cpt", [])
-    new_sop.coding_rules_icd = extracted_data.get("coding_rules_icd", [])
+    new_sop.billing_guidelines = []
+    new_sop.payer_guidelines = []
+    new_sop.coding_rules_cpt = []
+    new_sop.coding_rules_icd = []
+
+    # Create a document record to hold the extracted data
+    source_name = "AI Extracted Data"
+    def inject_source(items):
+        if not items: return items
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict):
+                    if "rules" in item:
+                        for r in item["rules"]:
+                            r["source"] = source_name
+                    else:
+                        item["source"] = source_name
+        return items
+
+    source_doc = SOPDocument(
+        sop_id=new_sop.id,
+        name=source_name,
+        category="Source file",
+        s3_key="",  # No physical file in this specific flow
+        processed=True,
+        billing_guidelines=inject_source(extracted_data.get("billing_guidelines", [])),
+        payer_guidelines=inject_source(extracted_data.get("payer_guidelines", [])),
+        coding_rules_cpt=inject_source(extracted_data.get("coding_rules_cpt", [])),
+        coding_rules_icd=inject_source(extracted_data.get("coding_rules_icd", []))
+    )
+    db.add(source_doc)
 
     # Set ACTIVE
     active_status = db.query(Status).filter(
@@ -863,6 +896,7 @@ async def upload_sop_document(
     sop_id: UUID,
     file: UploadFile = File(...),
     category: str = Form("Source file"),
+    extracted_data: str = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(Permission("SOPs", "UPDATE"))
 ):
@@ -887,6 +921,34 @@ async def upload_sop_document(
             category=category,
             s3_key=s3_key
         )
+        
+        if extracted_data:
+            import json
+            try:
+                parsed_data = json.loads(extracted_data)
+                
+                def inject_source(items, source_name):
+                    if not items: return []
+                    for item in items:
+                        if isinstance(item, dict):
+                            item['source'] = source_name
+                            if 'rules' in item and isinstance(item['rules'], list):
+                                for rule in item['rules']:
+                                    if isinstance(rule, dict):
+                                        rule['source'] = source_name
+                    return items
+                
+                doc_source_name = "source_file" if category == "Source file" else file.filename
+                new_doc.billing_guidelines = inject_source(parsed_data.get('billing_guidelines', []), doc_source_name)
+                new_doc.payer_guidelines = inject_source(parsed_data.get('payer_guidelines', []), doc_source_name)
+                new_doc.coding_rules_cpt = inject_source(parsed_data.get('coding_rules_cpt', []), doc_source_name)
+                new_doc.coding_rules_icd = inject_source(parsed_data.get('coding_rules_icd', []), doc_source_name)
+                
+                new_doc.status = "COMPLETED"
+                new_doc.processed = True
+            except json.JSONDecodeError:
+                raise HTTPException(400, "Invalid JSON in extracted_data")
+        
         db.add(new_doc)
         db.commit()
         db.refresh(new_doc)
