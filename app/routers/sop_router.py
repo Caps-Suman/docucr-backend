@@ -255,22 +255,21 @@ def _extract_single_document(doc_id: str, sop_id: str):
         # Filter extracted data to only the relevant section for this doc's category
         category = doc.category or ""
 
+        # Mapping to SOPDocument fields (category-based filtering)
         if "Payer" in category:
-            extracted = {"payer_guidelines": extracted.get("payer_guidelines", [])}
+            doc.payer_guidelines = extracted.get("payer_guidelines", [])
         elif "Billing" in category:
-            extracted = {"billing_guidelines": extracted.get("billing_guidelines", [])}
+            doc.billing_guidelines = extracted.get("billing_guidelines", [])
         elif "Coding" in category or "CPT" in category or "ICD" in category:
-            extracted = {
-                "coding_rules_cpt": extracted.get("coding_rules_cpt", []),
-                "coding_rules_icd": extracted.get("coding_rules_icd", []),
-            }
-        elif "Workflow" in category:
-            extracted = {"workflow_process": extracted.get("workflow_process", {})}
-
-        # Persist extracted_data on the document record
-        doc.extracted_data = extracted
+            doc.coding_rules_cpt = extracted.get("coding_rules_cpt", [])
+            doc.coding_rules_icd = extracted.get("coding_rules_icd", [])
+        elif "Workflow" in category or "Eligibility" in category:
+            # Note: SOPDocument doesn't have workflow_process fields yet, 
+            # but we still apply it to the main SOP below.
+            pass
 
         # Merge extracted data into the SOP fields
+        # (This updates the main SOP table fields while keeping sources separate)
         SOPService.apply_extraction_to_sop(
             sop=db_sop,
             doc=doc,
@@ -908,6 +907,20 @@ async def upload_sop_document(
     s3_key = f"sops/{sop.id}/{file.filename}"
     
     try:
+        # If this is a "Source file", delete existing ones first (ensure only 1 source file)
+        if category == "Source file":
+            old_docs = db.query(SOPDocument).filter(
+                SOPDocument.sop_id == sop.id,
+                SOPDocument.category == "Source file"
+            ).all()
+            for old_doc in old_docs:
+                try:
+                    await s3_service.delete_file(old_doc.s3_key)
+                except:
+                    pass
+                db.delete(old_doc)
+            db.flush()
+
         await s3_service.upload_file(
             io.BytesIO(file_content),
             file.filename,
