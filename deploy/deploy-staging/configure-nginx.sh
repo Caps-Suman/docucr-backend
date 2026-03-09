@@ -28,8 +28,16 @@ scp -o StrictHostKeyChecking=no -i ~/.ssh/docu-cr-backend-key.pem nginx-backend.
 # Configure Nginx on EC2
 echo -e "${GREEN}🔧 Applying Nginx configuration...${NC}"
 ssh -o StrictHostKeyChecking=no -i ~/.ssh/docu-cr-backend-key.pem ec2-user@$EC2_IP << 'ENDSSH'
+  # Create WebSocket map config
+  sudo tee /etc/nginx/conf.d/websocket-map.conf > /dev/null << 'EOF'
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+EOF
+  
   sudo mv /tmp/backend.conf /etc/nginx/conf.d/backend.conf
-  sudo mv /etc/nginx/conf.d/app.conf /etc/nginx/conf.d/app.conf.disabled 2>/dev/null || true
+  sudo rm -f /etc/nginx/conf.d/app.conf
   sudo nginx -t && sudo systemctl reload nginx
   echo "✅ Nginx configured successfully"
 ENDSSH

@@ -59,7 +59,7 @@ OPENAI_API_KEY=$(echo $SECRETS | jq -r '.OPENAI_API_KEY')
 
 # Deploy to EC2
 echo -e "${GREEN}🚀 Deploying to EC2...${NC}"
-ssh -o StrictHostKeyChecking=no -i ~/.ssh/docu-cr-backend-key.pem ec2-user@$EC2_IP << ENDSSH
+ssh -o StrictHostKeyChecking=no -i ~/Documents/fhrm/fhrm-pem-key/ivr-staging-key.pem ec2-user@$EC2_IP << ENDSSH
   set -e
   
   # Create app directory if not exists

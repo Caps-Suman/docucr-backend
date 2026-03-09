@@ -7,7 +7,17 @@ cd ..
 
 echo "🔧 Configuring Nginx with WebSocket support..."
 
-ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@$EC2_IP << 'ENDSSH'
+ssh -i ~/Documents/fhrm/fhrm-pem-key/ivr-staging-key.pem ec2-user@$EC2_IP << 'ENDSSH'
+# Remove conflicting config
+sudo rm -f /etc/nginx/conf.d/app.conf
+
+sudo tee /etc/nginx/conf.d/websocket-map.conf > /dev/null << 'EOF'
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+EOF
+
 sudo tee /etc/nginx/conf.d/backend.conf > /dev/null << 'EOF'
 upstream backend {
     server 127.0.0.1:8000;
@@ -40,7 +50,7 @@ server {
         # WebSocket support
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 86400;
     }
 }

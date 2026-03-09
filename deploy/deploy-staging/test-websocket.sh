@@ -18,12 +18,12 @@ echo ""
 
 # Check Nginx WebSocket headers
 echo -e "${YELLOW}2. Checking Nginx WebSocket configuration:${NC}"
-ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@18.211.1.245 "sudo nginx -t" 2>&1 | grep -i "successful" && echo -e "${GREEN}✅ Nginx config valid${NC}" || echo -e "${RED}❌ Nginx config invalid${NC}"
+ssh -i ~/Documents/fhrm/fhrm-pem-key/ivr-staging-key.pem ec2-user@18.211.1.245 "sudo nginx -t" 2>&1 | grep -i "successful" && echo -e "${GREEN}✅ Nginx config valid${NC}" || echo -e "${RED}❌ Nginx config invalid${NC}"
 echo ""
 
 # Check if WebSocket upgrade headers are configured
 echo -e "${YELLOW}3. Verifying WebSocket headers in Nginx:${NC}"
-ssh -i ~/.ssh/docu-cr-backend-key.pem ec2-user@18.211.1.245 "sudo grep -A 5 'WebSocket' /etc/nginx/conf.d/backend.conf" && echo -e "${GREEN}✅ WebSocket headers configured${NC}" || echo -e "${RED}❌ WebSocket headers missing${NC}"
+ssh -i ~/Documents/fhrm/fhrm-pem-key/ivr-staging-key.pem ec2-user@18.211.1.245 "sudo grep -A 5 'WebSocket' /etc/nginx/conf.d/backend.conf" && echo -e "${GREEN}✅ WebSocket headers configured${NC}" || echo -e "${RED}❌ WebSocket headers missing${NC}"
 echo ""
 
 echo -e "${YELLOW}4. Test from browser console:${NC}"

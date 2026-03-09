@@ -1,7 +1,0 @@
-aws_region = "us-east-1"
-project_name = "docu-cr-backend"
-environment = "prod"
-container_image = "288373392300.dkr.ecr.us-east-1.amazonaws.com/docu-cr-backend:latest"
-db_username = "docucr_user"
-db_name = "docucr_db"
-db_schema = "docucr"
