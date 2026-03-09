@@ -428,13 +428,24 @@ class AISOPService:
                 normalized_payers.append({
                     "payerName": "Unknown",
                     "description": pg,
+                    "payerId": "",
+                    "eraStatus": "",
+                    "tfl": "",
+                    "networkStatus": "",
+                    "mailingAddress": "",
                     "source": source
                 })
             elif isinstance(pg, dict):
                 normalized_payers.append({
                     "payerName": pg.get("payerName") or pg.get("payer_name") or pg.get("title") or pg.get("payer") or "Unknown",
                     "description": pg.get("description") or "",
-                    "source": source
+                    "payerId": pg.get("payerId") or pg.get("payer_id") or "",
+                    "eraStatus": pg.get("eraStatus") or pg.get("era_status") or "",
+                    "ediStatus": pg.get("ediStatus") or pg.get("edi_status") or "",
+                    "tfl": pg.get("tfl") or "",
+                    "networkStatus": pg.get("networkStatus") or pg.get("network_status") or "",
+                    "mailingAddress": pg.get("mailingAddress") or pg.get("mailing_address") or pg.get("address") or "",
+                    "source": pg.get("source") or source
                 })
         data["payer_guidelines"] = normalized_payers
 
@@ -574,21 +585,33 @@ class AISOPService:
         "Medicaid does not allow..."
         The following items MUST ALWAYS be placed inside payer_guidelines:
 
-        1. ERA setup status
+        1. ERA setup status / ERA Status update (e.g. "Completed", "Form Submitted", "Use Portal")
         2. EDI setup information
-        3. Claim mailing address
+        3. Claim mailing address / Claim Mailing address
         4. Network / Credentialing status (INN / OON / NA)
         5. Start and End dates for network participation
-        6. Timely Filing Limits (TFL)
-        7. Payer ID numbers
+        6. Timely Filing Limits (TFL) / TFL List
+        7. Payer ID numbers / Payor ID
         8. Claim routing instructions
         9. Remarks specific to a named insurance
+        
+        STRICT MERGING RULE:
+        The document may contain multiple tables or sections mentioning the same payer (e.g., Aetna).
+        You MUST consolidate ALL information for a single payer into ONE object in the payer_guidelines array.
+        For example, if Aetna appears in a TFL table, a Credentialing table, and an ERA status table,
+        you MUST create ONE Aetna object with all fields (tfl, networkStatus, eraStatus, etc.) populated.
 
         These are NOT billing guidelines.
 
         Each insurance must be a separate payer_guideline object.
+        
+        STRICT ASSOCIATION RULE:
+        - Only associate data (payerId, tfl, mailingAddress, etc.) with a payer if it is EXPLICITLY listed for that payer in a table or sentence.
+        - DO NOT guess associations based on proximity if the names are different.
+        - If "ERA set up status" line appears near a payer, extract the status (e.g., date received, "Completed").
+        - Any entity that has a "Claim Mailing address" MUST be treated as a payer and added to payer_guidelines.
 
-        If a section contains a payer name (Aetna, BCBS, UHC, Medicare, Medicaid, etc.)
+        If a section contains a payer name (Aetna, BCBS, UHC, Medicare, Medicaid, Community Behavioral Health, etc.)
         it MUST be categorized as payer_guidelines.
         Rules:
         - EACH payer guideline must be a separate object
@@ -727,7 +750,13 @@ class AISOPService:
         "payer_guidelines": [
             {
             "title": "",
-            "description": ""
+            "description": "",
+            "payerId": "",
+            "eraStatus": "",
+            "ediStatus": "",
+            "tfl": "",
+            "networkStatus": "",
+            "mailingAddress": ""
             }
         ],
 
@@ -752,238 +781,9 @@ class AISOPService:
         ]
         }
         DOCUMENT:
-    """+ text
-    #     prompt = f"""
-    # You are a medical SOP data extraction engine.
-
-    # You are NOT summarizing.
-    # You are NOT interpreting.
-    # You are extracting EXACT structured data.
-
-    # Return ONLY valid JSON.
-    # Do not include markdown.
-    # Do not include explanations.
-
-    # ====================================================
-    # OUTPUT JSON STRUCTURE (STRICT)
-    # ====================================================
-
-    # {{
-    # "basic_information": {{
-    #     "sop_title": "",
-    #     "category": ""
-    # }},
-
-    # "provider_information": {{
-    #     "billing_provider_name": "",
-    #     "billing_provider_npi": "",
-    #     "provider_tax_id": "",
-    #     "billing_address": "",
-    #     "software": "",
-    #     "clearinghouse": ""
-    # }},
-
-    # "workflow_process": {{
-    #     "description": "",
-    #     "eligibility_portals": []
-    # }},
-
-    # "billing_guidelines": [
-    #     {{
-    #     "category": "",
-    #     "rules": [
-    #         {{ "description": "" }}
-    #     ]
-    #     }}
-    # ],
-
-    # "payer_guidelines": [
-    #     {{
-    #     "payer_name": "",
-    #     "description": ""
-    #     }}
-    # ],
-
-    # "coding_rules_cpt": [
-    #     {{
-    #     "cptCode": "",
-    #     "description": "",
-    #     "ndcCode": "",
-    #     "units": "",
-    #     "chargePerUnit": "",
-    #     "modifier": "",
-    #     "replacementCPT": ""
-    #     }}
-    # ],
-
-    # "coding_rules_icd": [
-    #     {{
-    #     "icdCode": "",
-    #     "description": "",
-    #     "ndcCode": "",
-    #     "units": "",
-    #     "chargePerUnit": "",
-    #     "modifier": "",
-    #     "replacementCPT": ""
-    #     }}
-    # ]
-    # }}
-
-    # ====================================================
-    # GENERAL EXTRACTION RULES
-    # ====================================================
-
-    # • Extract only what exists in the document  
-    # • Preserve wording  
-    # • Do NOT invent data  
-    # • If a section is missing → return empty array  
-    # • Do NOT merge CPT and ICD  
-    # • Do NOT drop rules  
-    # ====================================================
-    # WORKFLOW PROCESS EXTRACTION (STRICT SPLIT RULES)
-    # ====================================================
-
-    # The workflow section often contains TWO different things:
-
-    # 1. Workflow narrative
-    # 2. Eligibility portals list
-
-    # These MUST be separated.
-
-    # --------------------------------
-    # WORKFLOW DESCRIPTION
-    # --------------------------------
-
-    # The workflow description must contain ONLY operational steps such as:
-    # - how superbills arrive
-    # - how charges are posted
-    # - provider grouping rules
-    # - internal workflow instructions
-
-    # Include ALL workflow text unless a clear eligibility portal section exists.
-
-    # DO NOT remove text from description unless a line explicitly lists portals.
-
-    # --------------------------------
-    # ELIGIBILITY PORTALS
-    # --------------------------------
-
-    # Extract portals ONLY if the document clearly contains a portal section.
-
-    # Examples of portal lines:
-    # "Eligibility portals:"
-    # "Check eligibility in:"
-    # "Use Availity / UHC portal"
-
-    # If no portal section exists:
-    # → return empty array
-    # → keep full workflow text inside description
-
-    # DO NOT guess portals.
-    # DO NOT move workflow text into portals.
-
-
-    # ====================================================
-    # BILLING GUIDELINES
-    # ====================================================
-
-    # Billing guidelines must be grouped by category.
-
-    # Each group:
-    # - category name inferred from heading or context
-    # - rules array with original wording
-
-    # Examples of categories:
-    # - CPT Replacement Rules
-    # - Modifier Rules
-    # - Telehealth Billing
-    # - Insurance Restrictions
-    # - Drug Billing
-    # - X-ray Billing
-
-    # Never create empty categories.
-
-    # ====================================================
-    # PAYER GUIDELINES
-    # ====================================================
-
-    # Extract rules that apply to a specific payer:
-    # Medicare, Medicaid, Aetna, BCBS, UHC, etc.
-
-    # Each payer rule must be separate:
-    # payer_name + description
-
-    # Never mix payer rules into billing_guidelines.
-
-    # ====================================================
-    # CPT CODING RULES
-    # ====================================================
-
-    # Extract CPT / HCPCS rules ONLY.
-
-    # CPT codes:
-    # Numeric format
-    # Examples:
-    # 99213
-    # 73502
-    # J0129
-
-    # Include:
-    # - replacement rules
-    # - NDC mappings
-    # - units
-    # - modifiers
-    # - charge rules
-    # - tables
-
-    # Each row = one object.
-
-    # ====================================================
-    # ICD CODING RULES (CRITICAL)
-    # ====================================================
-
-    # ICD rules are often written inside sentences.
-
-    # You MUST extract ICD rules even when embedded in text.
-
-    # ICD pattern:
-    # Letter + numbers + optional decimal  
-    # Examples:
-    # M17.0  
-    # M54.50  
-    # L93.0  
-
-    # Extract from:
-    # • replacement rules  
-    # • “do not bill together”  
-    # • exclusions  
-    # • pairing restrictions  
-    # • bilateral rules  
-    # • “use instead”  
-    # • “only when”  
-
-    # Even if multiple ICD codes appear in one sentence:
-    # create separate objects.
-
-    # NEVER omit ICD rules.
-
-    # ====================================================
-    # STRICT SEPARATION RULE
-    # ====================================================
-
-    # If numeric → CPT  
-    # If starts with letter → ICD  
-
-    # Never mix.
-
-    # ====================================================
-    # DOCUMENT
-    # ====================================================
-
-    # {text}
-    # """
-
-
+        """ + text
+        
+        # print(f"DEBUG: type(text) is {type(text)}")
         return await AISOPService._call_ai(prompt)
 
     @staticmethod

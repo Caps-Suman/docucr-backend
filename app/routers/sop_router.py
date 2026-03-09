@@ -35,8 +35,14 @@ class BillingGuidelineGroup(BaseModel):
 
 
 class PayerGuideline(BaseModel):
-    payerName:str
-    description:str
+    payerName: str
+    description: str
+    payerId: Optional[str] = None
+    eraStatus: Optional[str] = None
+    ediStatus: Optional[str] = None
+    tfl: Optional[str] = None
+    networkStatus: Optional[str] = None
+    mailingAddress: Optional[str] = None
     source: Optional[str] = None
 class SOPBase(BaseModel):
     title: str
@@ -893,6 +899,8 @@ def delete_sop(
 @router.post("/{sop_id}/documents", status_code=status.HTTP_201_CREATED)
 async def upload_sop_document(
     sop_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     category: str = Form("Source file"),
     extracted_data: str = Form(None),
@@ -966,6 +974,21 @@ async def upload_sop_document(
         db.commit()
         db.refresh(new_doc)
         
+        ActivityService.log(
+            db=db,
+            action="upload",
+            entity_type="SOP Document",
+            entity_id=str(new_doc.id),
+            current_user=current_user,
+            details={
+                "sop_id": str(sop.id),
+                "filename": file.filename,
+                "category": category,
+                "sop_title": sop.title
+            },
+            request=request
+        )
+        
         return new_doc
     except Exception as e:
         db.rollback()
@@ -975,6 +998,7 @@ async def upload_sop_document(
 async def delete_sop_document(
     sop_id: UUID,
     document_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(Permission("SOPs", "UPDATE"))
 ):
@@ -992,6 +1016,21 @@ async def delete_sop_document(
         
         # Delete from database
         db.delete(doc)
+        db.commit()
+
+        ActivityService.log(
+            db=db,
+            action="delete",
+            entity_type="SOP Document",
+            entity_id=str(document_id),
+            current_user=current_user,
+            details={
+                "sop_id": str(sop_id),
+                "filename": doc.name,
+                "category": doc.category
+            },
+            request=request
+        )
         db.commit()
         
         return None
