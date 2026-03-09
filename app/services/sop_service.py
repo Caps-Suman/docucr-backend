@@ -1,5 +1,5 @@
 import asyncio
-from importlib.resources import path
+import copy
 import tempfile
 import uuid
 from fastapi import HTTPException
@@ -13,13 +13,12 @@ from app.models.sop_provider_mapping import SopProviderMapping
 from app.models.user import User
 from app.models.organisation import Organisation
 from app.models.user_client import UserClient
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib import colors
 from io import BytesIO
 from app.services.ai_sop_service import AISOPService
+from jinja2 import Environment, FileSystemLoader
+from weasyprint import HTML
+import datetime
+import os
 
 
 class SOPService:
@@ -251,6 +250,16 @@ class SOPService:
 
         if sop.client:
             data["client_npi"] = sop.client.npi
+            data["client_specialty"] = sop.client.specialty
+            addr_parts = [
+                sop.client.address_line_1,
+                sop.client.address_line_2,
+                sop.client.city,
+                sop.client.state_code,
+                sop.client.zip_code
+            ]
+            data["client_address"] = ", ".join([p for p in addr_parts if p]).strip()
+            
             if sop.client.business_name:
                 data["client_name"] = sop.client.business_name
             else:
@@ -259,6 +268,8 @@ class SOPService:
         else:
             data["client_name"] = None
             data["client_npi"] = None
+            data["client_specialty"] = None
+            data["client_address"] = None
 
         if sop.creator:
             names = [sop.creator.first_name, sop.creator.middle_name, sop.creator.last_name]
@@ -267,6 +278,33 @@ class SOPService:
             data["created_by_name"] = sop.organisation.name
         else:
             data["created_by_name"] = None
+
+        # Providers
+        p_info = sop.provider_info or {}
+        client_name = data.get("client_name")
+        client_npi = data.get("client_npi")
+
+        data["providers"] = [
+            {
+                "id": str(m.provider.id),
+                "name": f"{m.provider.first_name} {m.provider.middle_name or ''} {m.provider.last_name}".strip().replace("  ", " "),
+                "first_name": m.provider.first_name,
+                "last_name": m.provider.last_name,
+                "npi": m.provider.npi,
+                "type": "Individual",
+                "software": p_info.get("software", ""),
+                "practiceName": client_name,
+                "providerName": p_info.get("providerName", ""),
+                "clearinghouse": p_info.get("clearinghouse", ""),
+                "providerTaxID": p_info.get("providerTaxID", ""),
+                "billingAddress": p_info.get("billingAddress", ""),
+                "billingProviderNPI": p_info.get("billingProviderNPI", ""),
+                "billingProviderName": p_info.get("billingProviderName", ""),
+                "client_name": client_name,
+                "client_npi": client_npi
+            }
+            for m in sop.provider_mappings if m.provider
+        ] if hasattr(sop, 'provider_mappings') and sop.provider_mappings else []
 
         data["provider_name"] = None
         if sop.provider_info:
@@ -287,7 +325,8 @@ class SOPService:
             joinedload(SOP.organisation),
             joinedload(SOP.client),
             joinedload(SOP.lifecycle_status),
-            joinedload(SOP.documents)
+            joinedload(SOP.documents),
+            joinedload(SOP.provider_mappings).joinedload(SopProviderMapping.provider)
         ).first()
 
         if not sop:
@@ -305,51 +344,17 @@ class SOPService:
             for pg in sop.payer_guidelines:
                 if not isinstance(pg, dict):
                     continue
-                if "payer_name" in pg:
+                
+                # Support both snake_case and camelCase during migration
+                name = pg.get("payerName") or pg.get("payer_name")
+                if name:
                     normalized.append({
-                        "payerName": pg.get("payer_name"),
+                        "payerName": name,
                         "description": pg.get("description", "")
                     })
             sop.payer_guidelines = normalized
 
-        from app.models.provider import Provider
-        from app.models.sop_provider_mapping import SopProviderMapping
-
-        linked_providers = (
-            db.query(Provider)
-            .join(SopProviderMapping, SopProviderMapping.provider_id == Provider.id)
-            .filter(SopProviderMapping.sop_id == sop.id)
-            .all()
-        )
-
-        formatted_sop = SOPService._format_sop(sop)
-
-        p_info = sop.provider_info or {}
-        client_name = formatted_sop.get("client_name")
-        client_npi = formatted_sop.get("client_npi")
-
-        formatted_sop["providers"] = [
-            {
-                "id": str(p.id),
-                "name": f"{p.first_name} {p.middle_name or ''} {p.last_name}".strip().replace("  ", " "),
-                "first_name": p.first_name,
-                "last_name": p.last_name,
-                "npi": p.npi,
-                "type": "Individual",
-                "software": p_info.get("software", ""),
-                "practiceName": client_name,
-                "providerName": p_info.get("providerName", ""),
-                "clearinghouse": p_info.get("clearinghouse", ""),
-                "providerTaxID": p_info.get("providerTaxID", ""),
-                "billingAddress": p_info.get("billingAddress", ""),
-                "billingProviderNPI": p_info.get("billingProviderNPI", ""),
-                "billingProviderName": p_info.get("billingProviderName", ""),
-                "client_name": client_name,
-                "client_npi": client_npi
-            }
-            for p in linked_providers
-        ]
-        return formatted_sop
+        return SOPService._format_sop(sop)
 
     @staticmethod
     def get_blocked_providers(client_id, provider_ids, db, exclude_sop_id=None):
@@ -781,27 +786,6 @@ class SOPService:
         ]
 
     @staticmethod
-    def _build_coding_table(story, title, headers, rows, field_map, styles, colors_cfg):
-        if not rows:
-            return
-
-        story.append(Paragraph(title, styles["section_header"]))
-
-        header_row = [Paragraph(f"<b>{h}</b>", styles["th"]) for h in headers]
-        table_data = [header_row]
-
-        for r in rows:
-            table_data.append([
-                Paragraph(str(r.get(f, "") or ""), styles["td"])
-                for f in field_map
-            ])
-
-        table = Table(table_data, repeatRows=1)
-        table.setStyle(colors_cfg)
-        story.append(table)
-        story.append(Spacer(1, 0.2 * inch))
-
-    @staticmethod
     def generate_sop_pdf(sop: Any) -> bytes:
         import copy
         if not isinstance(sop, dict):
@@ -809,18 +793,63 @@ class SOPService:
         sop = copy.deepcopy(sop)
 
         # ── Pre-compute extracted doc groups (mirrors SOPReadOnlyView logic) ────
+        from app.services.s3_service import s3_service
         all_docs = sop.get("documents", [])
-        extracted_docs = [d for d in all_docs if d.get("extracted_data")]
-
-        def _ext_by_doc(key, filter_fn):
+        
+        def _ext_by_doc(field_name, filter_fn):
             result = []
-            for doc in extracted_docs:
-                items = [x for x in (doc["extracted_data"].get(key) or []) if filter_fn(x)]
-                if items:
+            image_extensions = ('.png', '.jpg', '.jpeg', '.webp')
+            
+            for doc in all_docs:
+                items = doc.get(field_name) or []
+                filtered_items = [x for x in items if filter_fn(x)]
+                
+                if filtered_items:
+                    doc_name = doc.get("name", "")
+                    s3_key = doc.get("s3_key")
+                    doc_url = s3_service.generate_presigned_url(
+                        s3_key,
+                        response_content_disposition=f'inline; filename="{doc_name}"'
+                    )
+                    
+                    is_image = doc_name.lower().endswith(image_extensions)
+                    image_data = None
+                    
+                    if is_image and s3_key:
+                        try:
+                            # Synchronous S3 fetch for PDF generation context
+                            import boto3
+                            import base64
+                            from botocore.config import Config
+                            
+                            s3_client = boto3.client(
+                                's3',
+                                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+                                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+                                region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                                config=Config(signature_version='s3v4')
+                            )
+                            response = s3_client.get_object(Bucket=os.getenv('AWS_S3_BUCKET'), Key=s3_key)
+                            binary_data = response['Body'].read()
+                            
+                            mime_type = "image/png"
+                            if doc_name.lower().endswith(('.jpg', '.jpeg')):
+                                mime_type = "image/jpeg"
+                            elif doc_name.lower().endswith('.webp'):
+                                mime_type = "image/webp"
+                                
+                            base64_str = base64.b64encode(binary_data).decode('utf-8')
+                            image_data = f"data:{mime_type};base64,{base64_str}"
+                        except Exception as e:
+                            print(f"Error fetching image for PDF: {e}")
+                            is_image = False # Fallback to link if fetch fails
+                    
                     result.append({
-                        "name": doc.get("name", ""),
-                        "url":  doc.get("document_url") or doc.get("s3_key") or "",
-                        "items": items,
+                        "name": doc_name,
+                        "url":  doc_url,
+                        "data_items": filtered_items,
+                        "is_image": is_image,
+                        "image_data": image_data
                     })
             return result
 
@@ -829,324 +858,20 @@ class SOPService:
         ext_cpt     = _ext_by_doc("coding_rules_cpt",   lambda r: r.get("cptCode") or r.get("description"))
         ext_icd     = _ext_by_doc("coding_rules_icd",   lambda r: r.get("icdCode") or r.get("description"))
 
-        # ── PDF setup ────────────────────────────────────────────────────────────
+        # ── HTML/PDF setup ───────────────────────────────────────────────────────
+        template_dir = os.path.join(os.path.dirname(__file__), "..", "templates")
+        env = Environment(loader=FileSystemLoader(template_dir))
+        template = env.get_template("sop_pdf.html")
+
+        html_content = template.render(
+            sop=sop,
+            ext_billing=ext_billing,
+            ext_payer=ext_payer,
+            ext_cpt=ext_cpt,
+            ext_icd=ext_icd,
+            current_date=datetime.datetime.now().strftime("%B %d, %Y")
+        )
+
         buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=letter,
-            topMargin=0.5*inch, bottomMargin=0.5*inch,
-            leftMargin=0.75*inch, rightMargin=0.75*inch)
-        base_styles = getSampleStyleSheet()
-        story = []
-
-        primary_color = colors.HexColor('#0c4a6e')
-        accent_color  = colors.HexColor('#0ea5e9')
-        header_bg     = colors.HexColor('#e0f2fe')
-        source_bg     = colors.HexColor('#eff6ff')
-        source_border = colors.HexColor('#bfdbfe')
-        text_color    = colors.HexColor('#334155')
-        label_color   = colors.HexColor('#64748b')
-        cat_color     = colors.HexColor('#1e40af')
-        bs = base_styles['BodyText']
-
-        section_header = ParagraphStyle('SectionHeader', parent=base_styles['Heading2'],
-            fontSize=14, textColor=primary_color, spaceBefore=14, spaceAfter=6)
-        sub_header = ParagraphStyle('SubHeader', parent=base_styles['Heading3'],
-            fontSize=11, textColor=primary_color, spaceBefore=8, spaceAfter=3)
-        cat_style = ParagraphStyle('Category', parent=bs,
-            fontSize=11, textColor=accent_color, spaceAfter=6, alignment=1)
-
-        pdf_styles = {
-            "section_header": section_header,
-            "th": ParagraphStyle('TH', parent=bs, textColor=primary_color,
-                alignment=1, fontSize=10, fontName='Helvetica-Bold'),
-            "td": ParagraphStyle('TD', parent=bs, textColor=text_color, fontSize=9),
-        }
-
-        table_styles = TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), header_bg),
-            ('LINEBELOW', (0,0), (-1,0), 1, accent_color),
-            ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('PADDING', (0,0), (-1,-1), 6),
-        ])
-
-        def mk_field(label, value):
-            return Paragraph(
-                f"<font color='{label_color.hexval()}'><b>{label}</b></font>"
-                f"<br/><font color='{text_color.hexval()}'>{value or '-'}</font>", bs)
-
-        def source_badge(name, url=""):
-            """
-            Renders a pill mirroring DocSourceBadge.
-            Left cell: 'Extracted from: filename'
-            Right cell: clickable 'View Document →' if a URL is available.
-            """
-            link_style = ParagraphStyle(
-                'SourceLink', parent=bs,
-                fontSize=9, textColor=colors.HexColor('#2563eb'),
-                alignment=2,  # right-align
-            )
-            badge_style = ParagraphStyle(
-                'SourceBadge', parent=bs,
-                fontSize=9, textColor=colors.HexColor('#1d4ed8'),
-            )
-
-            left_cell = Paragraph(
-                f'<font color="#1d4ed8"><b>&#9679; Extracted from: {name}</b></font>',
-                badge_style,
-            )
-
-            if url:
-                right_cell = Paragraph(
-                    f'<link href="{url}"><font color="#2563eb"><u>View Document &#8594;</u></font></link>',
-                    link_style,
-                )
-            else:
-                right_cell = Paragraph("", link_style)
-
-            t = Table(
-                [[left_cell, right_cell]],
-                colWidths=[5.2*inch, 1.8*inch],
-            )
-            t.setStyle(TableStyle([
-                ('BACKGROUND',   (0,0), (-1,-1), source_bg),
-                ('BOX',          (0,0), (-1,-1), 0.75, source_border),
-                ('ROUNDEDCORNERS', [4]),
-                ('VALIGN',       (0,0), (-1,-1), 'MIDDLE'),
-                ('PADDING',      (0,0), (-1,-1), 5),
-                ('TOPPADDING',   (0,0), (-1,-1), 6),
-                ('BOTTOMPADDING',(0,0), (-1,-1), 6),
-            ]))
-            return t
-
-        # ── Title ────────────────────────────────────────────────────────────────
-        story.append(Paragraph(sop.get('title', 'SOP'),
-            ParagraphStyle('MainTitle', parent=base_styles['Title'],
-                fontSize=24, textColor=primary_color, spaceAfter=8, leading=28)))
-        story.append(Paragraph(sop.get('category', '-'), cat_style))
-        story.append(Spacer(1, 4))
-        story.append(Table([['']], colWidths=[7.0*inch],
-            style=[('LINEBELOW', (0,0), (-1,-1), 1, accent_color)]))
-        story.append(Spacer(1, 0.3*inch))
-
-        # ── Practice Information ─────────────────────────────────────────────────
-        story.append(Paragraph('Practice Information', section_header))
-        t_client = Table(
-            [[mk_field('Name', sop.get('client_name')), mk_field('NPI', sop.get('client_npi'))]],
-            colWidths=[3.5*inch]*2)
-        t_client.setStyle(TableStyle([
-            ('VALIGN', (0,0), (-1,-1), 'TOP'), ('PADDING', (0,0), (-1,-1), 8),
-            ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')),
-            ('BACKGROUND', (0,0), (-1,-1), colors.white),
-        ]))
-        story.append(t_client)
-        story.append(Spacer(1, 0.2*inch))
-
-        # ── Associated Providers ─────────────────────────────────────────────────
-        providers = sop.get('providers', [])
-        if providers:
-            story.append(Paragraph('Associated Providers', section_header))
-            prov_data = [[Paragraph('<b>Provider Name</b>', pdf_styles['th']),
-                          Paragraph('<b>NPI</b>', pdf_styles['th'])]]
-            for p in providers:
-                prov_data.append([
-                    Paragraph(p.get('name', '-'), pdf_styles['td']),
-                    Paragraph(p.get('npi', '-'),  pdf_styles['td'])
-                ])
-            t_prov = Table(prov_data, colWidths=[4.5*inch, 2.5*inch])
-            t_prov.setStyle(table_styles)
-            story.append(t_prov)
-            story.append(Spacer(1, 0.2*inch))
-
-        # ── Billing Information ──────────────────────────────────────────────────
-        story.append(Paragraph('Billing Information', section_header))
-        p_info = sop.get('provider_info') or {}
-        bi_data = [
-            [mk_field('Provider Name', p_info.get('providerName')),
-             mk_field('Tax ID',        p_info.get('providerTaxID')),
-             mk_field('NPI',           p_info.get('billingProviderNPI'))],
-            [mk_field('Billing Provider', p_info.get('billingProviderName')),
-             mk_field('Practice Name',    sop.get('client_name')),
-             mk_field('Software',         p_info.get('software'))],
-            [mk_field('Address',      p_info.get('billingAddress')),
-             mk_field('Clearinghouse', p_info.get('clearinghouse')),
-             mk_field('Status',        (sop.get('status') or {}).get('code', 'Active'))],
-        ]
-        t_bi = Table(bi_data, colWidths=[2.333*inch]*3)
-        t_bi.setStyle(TableStyle([
-            ('VALIGN', (0,0), (-1,-1), 'TOP'), ('PADDING', (0,0), (-1,-1), 8),
-            ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')),
-            ('BACKGROUND', (0,0), (-1,-1), colors.white),
-        ]))
-        story.append(t_bi)
-        story.append(Spacer(1, 0.2*inch))
-
-        # ── Workflow Process ─────────────────────────────────────────────────────
-        workflow = sop.get("workflow_process") or {}
-        if workflow:
-            story.append(Paragraph("Workflow Process", section_header))
-            description = workflow.get("description") or workflow.get("superbill_source") or "-"
-            story.append(Paragraph(description,
-                ParagraphStyle("WorkflowBody", parent=bs,
-                    textColor=text_color, fontSize=10, leading=14)))
-
-            posting_rules = workflow.get("posting_charges_rules") or []
-            if isinstance(posting_rules, str):
-                posting_rules = [posting_rules]
-            if posting_rules:
-                story.append(Spacer(1, 8))
-                story.append(Paragraph("<b>Posting Charges Rules:</b>",
-                    ParagraphStyle("PostingHeader", parent=bs,
-                        textColor=primary_color, spaceAfter=4)))
-                for rule in posting_rules:
-                    story.append(Paragraph(f"• {rule}",
-                        ParagraphStyle("PostingRule", parent=bs,
-                            leftIndent=12, textColor=text_color, spaceAfter=3)))
-
-            portals = (workflow.get("eligibility_verification_portals")
-                       or workflow.get("eligibilityPortals") or [])
-            if portals:
-                story.append(Spacer(1, 8))
-                story.append(Paragraph("<b>Eligibility Verification Portals:</b>",
-                    ParagraphStyle("PortalHeader", parent=bs,
-                        textColor=primary_color, spaceAfter=4)))
-                for portal in portals:
-                    story.append(Paragraph(f"• {portal}",
-                        ParagraphStyle("Portal", parent=bs,
-                            leftIndent=12, textColor=text_color, spaceAfter=3,
-                            backColor=header_bg, borderPadding=3)))
-            story.append(Spacer(1, 0.2*inch))
-
-        # ── Billing Guidelines ───────────────────────────────────────────────────
-        base_billing = sop.get('billing_guidelines') or []
-        if base_billing or ext_billing:
-            story.append(Paragraph('Billing Guidelines', section_header))
-
-            # Base
-            for group in base_billing:
-                story.append(Paragraph(group.get("category", "Guidelines"), sub_header))
-                for rule in (group.get("rules") or []):
-                    desc = rule.get("description", "")
-                    if desc:
-                        story.append(Paragraph(f"• {desc}",
-                            ParagraphStyle('BGRule', parent=bs,
-                                leftIndent=14, textColor=text_color,
-                                fontSize=10, spaceAfter=4)))
-
-            # Extracted from documents
-            for entry in ext_billing:
-                story.append(Spacer(1, 6))
-                story.append(source_badge(entry["name"], entry.get("url", "")))
-                story.append(Spacer(1, 4))
-                for group in entry["items"]:
-                    story.append(Paragraph(group.get("category", "Guidelines"), sub_header))
-                    for rule in (group.get("rules") or []):
-                        desc = rule.get("description", "")
-                        if desc:
-                            story.append(Paragraph(f"• {desc}",
-                                ParagraphStyle('ExtBGRule', parent=bs,
-                                    leftIndent=14, textColor=text_color,
-                                    fontSize=10, spaceAfter=4)))
-
-            story.append(Spacer(1, 0.15*inch))
-
-        # ── Payer Guidelines ─────────────────────────────────────────────────────
-        base_payer = sop.get('payer_guidelines') or []
-        if base_payer or ext_payer:
-            story.append(Paragraph('Payer Guidelines', section_header))
-
-            # Base
-            for pg in base_payer:
-                payer = pg.get('title') or pg.get('payerName') or pg.get('payer') or 'Unknown Payer'
-                desc  = pg.get('description', '-')
-                story.append(Paragraph(f"<b>{payer}</b>",
-                    ParagraphStyle('PayerTitle', parent=bs,
-                        textColor=primary_color, fontSize=11, spaceAfter=2)))
-                story.append(Paragraph(desc,
-                    ParagraphStyle('PayerDesc', parent=bs,
-                        textColor=text_color, leftIndent=10, spaceAfter=8)))
-
-            # Extracted from documents
-            for entry in ext_payer:
-                story.append(Spacer(1, 6))
-                story.append(source_badge(entry["name"], entry.get("url", "")))
-                story.append(Spacer(1, 4))
-                for pg in entry["items"]:
-                    payer = pg.get('title') or pg.get('payerName') or pg.get('payer') or 'Unknown Payer'
-                    desc  = pg.get('description', '-')
-                    story.append(Paragraph(f"<b>{payer}</b>",
-                        ParagraphStyle('ExtPayerTitle', parent=bs,
-                            textColor=primary_color, fontSize=11, spaceAfter=2)))
-                    story.append(Paragraph(desc,
-                        ParagraphStyle('ExtPayerDesc', parent=bs,
-                            textColor=text_color, leftIndent=10, spaceAfter=8)))
-
-            story.append(Spacer(1, 0.15*inch))
-
-        # ── CPT Coding Guidelines ────────────────────────────────────────────────
-        base_cpt = sop.get('coding_rules_cpt') or []
-        if base_cpt or ext_cpt:
-            story.append(Paragraph('CPT Coding Guidelines', section_header))
-
-            if base_cpt:
-                SOPService._build_coding_table(
-                    story=story, title="",
-                    headers=["CPT", "Description", "NDC", "Units", "Charge", "Modifier", "Replace"],
-                    rows=base_cpt,
-                    field_map=["cptCode","description","ndcCode","units",
-                               "chargePerUnit","modifier","replacementCPT"],
-                    styles=pdf_styles, colors_cfg=table_styles,
-                )
-
-            for entry in ext_cpt:
-                story.append(Spacer(1, 6))
-                story.append(source_badge(entry["name"], entry.get("url", "")))
-                story.append(Spacer(1, 4))
-                SOPService._build_coding_table(
-                    story=story, title="",
-                    headers=["CPT", "Description", "NDC", "Units", "Charge", "Modifier", "Replace"],
-                    rows=entry["items"],
-                    field_map=["cptCode","description","ndcCode","units",
-                               "chargePerUnit","modifier","replacementCPT"],
-                    styles=pdf_styles, colors_cfg=table_styles,
-                )
-
-        # ── ICD Coding Guidelines ────────────────────────────────────────────────
-        base_icd = sop.get('coding_rules_icd') or []
-        if base_icd or ext_icd:
-            story.append(Paragraph('ICD Coding Guidelines', section_header))
-
-            if base_icd:
-                SOPService._build_coding_table(
-                    story=story, title="",
-                    headers=["ICD Code", "Description", "Notes"],
-                    rows=base_icd,
-                    field_map=["icdCode", "description", "notes"],
-                    styles=pdf_styles, colors_cfg=table_styles,
-                )
-
-            for entry in ext_icd:
-                story.append(Spacer(1, 6))
-                story.append(source_badge(entry["name"], entry.get("url", "")))
-                story.append(Spacer(1, 4))
-                SOPService._build_coding_table(
-                    story=story, title="",
-                    headers=["ICD Code", "Description", "Notes"],
-                    rows=entry["items"],
-                    field_map=["icdCode", "description", "notes"],
-                    styles=pdf_styles, colors_cfg=table_styles,
-                )
-
-        # ── Footer ───────────────────────────────────────────────────────────────
-        def add_footer(canvas, doc):
-            canvas.saveState()
-            canvas.setStrokeColor(colors.HexColor('#e2e8f0'))
-            canvas.line(0.75*inch, 0.6*inch, letter[0]-0.75*inch, 0.6*inch)
-            canvas.setFont('Helvetica-Bold', 9)
-            canvas.setFillColor(colors.HexColor('#94a3b8'))
-            canvas.drawRightString(letter[0] - 0.75*inch, 0.35*inch, "docucr")
-            canvas.setFont('Helvetica', 9)
-            canvas.drawString(0.75*inch, 0.35*inch, f"Page {doc.page}")
-            canvas.restoreState()
-
-        doc.build(story, onFirstPage=add_footer, onLaterPages=add_footer)
+        HTML(string=html_content).write_pdf(buffer)
         return buffer.getvalue()

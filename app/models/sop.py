@@ -56,6 +56,8 @@ class SOP(Base):
         lazy="joined"
     )
 
+    provider_mappings = relationship("SopProviderMapping", backref="sop_backref")
+
 class SOPDocument(Base):
     __tablename__ = "sop_document"
     __table_args__ = {"schema": "docucr"}

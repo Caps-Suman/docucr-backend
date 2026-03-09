@@ -117,7 +117,7 @@ terraform apply
 **Upgrade EC2 Instance Type:**
 ```bash
 # Edit terraform.tfvars
-instance_type = "t3.medium"
+instance_type = "t3.small"
 
 terraform apply
 ```

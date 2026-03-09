@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ sop.title }}</title>
+    <style>
+        @page {
+            size: A3 portrait;
+            margin: 2cm;
+            @bottom-right {
+                content: "Page " counter(page) " of " counter(pages);
+                font-family: 'Outfit', sans-serif;
+                font-size: 10pt;
+                color: #94a3b8;
+            }
+            @bottom-left {
+                content: "docucr";
+                font-family: 'Outfit', sans-serif;
+                font-weight: bold;
+                font-size: 10pt;
+                color: #0c4a6e;
+            }
+        }
+
+        @font-face {
+            font-family: 'Outfit';
+            src: url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+        }
+
+        body {
+            font-family: 'Outfit', -apple-system, blinkmacsystemfont, "Segoe UI", roboto, helvetica, arial, sans-serif;
+            color: #1e293b;
+            line-height: 1.5;
+            margin: 0;
+            padding: 0;
+            background: white;
+        }
+
+        h1, h2, h3, h4 {
+            color: #0c4a6e;
+            margin-top: 0;
+        }
+
+        .header {
+            border-bottom: 2px solid #0ea5e9;
+            padding-bottom: 1rem;
+            margin-bottom: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }
+
+        .title-group h1 {
+            font-size: 32pt;
+            margin-bottom: 0.2rem;
+            font-weight: 700;
+        }
+
+        .category-badge {
+            display: inline-block;
+            background: #e0f2fe;
+            color: #0369a1;
+            padding: 4pt 12pt;
+            border-radius: 20pt;
+            font-size: 12pt;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .section {
+            margin-bottom: 2.5rem;
+        }
+
+        .section-title {
+            font-size: 16pt;
+            font-weight: 700;
+            border-left: 5pt solid #0ea5e9;
+            padding: 8pt 12pt;
+            margin-bottom: 1.5rem;
+            background: #f8fafc;
+            color: #0c4a6e;
+            display: block;
+            line-height: 24pt;
+        }
+
+        .section-title i {
+            display: inline-block;
+            width: 24pt;
+            height: 24pt;
+            background: #e0f2fe;
+            border-radius: 6pt;
+            color: #0ea5e9;
+            text-align: center;
+            vertical-align: middle;
+            margin-right: 10pt;
+            line-height: 24pt;
+        }
+
+        .section-title i svg {
+            width: 14pt;
+            height: 14pt;
+            vertical-align: middle;
+            margin-top: -2pt;
+            fill: none !important;
+            stroke: currentColor;
+            stroke-width: 2.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .header-icon {
+            width: 32pt;
+            height: 32pt;
+            color: #0ea5e9;
+            margin-right: 12pt;
+            vertical-align: middle;
+        }
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .info-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 8pt;
+            padding: 12pt;
+            box-shadow: 0 2pt 4pt rgba(0,0,0,0.02);
+        }
+
+        .label {
+            font-size: 9pt;
+            color: #64748b;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 4pt;
+        }
+
+        .value {
+            font-size: 11pt;
+            color: #334155;
+            font-weight: 500;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1.5rem;
+            border-radius: 8pt;
+            overflow: hidden;
+            border: 1px solid #e2e8f0;
+        }
+
+        .source-badge + table, .manual-badge + table, .source-content + table {
+            margin-top: 0;
+            border-top-left-radius: 0;
+            border-top-right-radius: 0;
+            border-top: none;
+        }
+
+        th {
+            background: #f1f5f9;
+            color: #475569;
+            font-weight: 600;
+            text-align: left;
+            padding: 10pt 12pt;
+            font-size: 10pt;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        td {
+            padding: 10pt 12pt;
+            font-size: 10pt;
+            border-bottom: 1px solid #f1f5f9;
+            vertical-align: top;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .source-badge, .manual-badge {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8pt 8pt 0 0;
+            padding: 10pt 12pt;
+            margin-top: 1.5rem;
+            margin-bottom: 0;
+            display: block;
+            line-height: normal;
+            border-bottom: none;
+        }
+
+        .manual-badge {
+            background: #f0f9ff;
+            border-color: #bae6fd;
+        }
+
+        .source-name, .manual-name {
+            color: #475569;
+            font-weight: 700;
+            font-size: 10pt;
+            display: inline-block;
+            vertical-align: middle;
+            letter-spacing: 0.05em;
+        }
+
+        .manual-name {
+            color: #0369a1;
+        }
+
+        .source-link {
+            float: right;
+            vertical-align: middle;
+        }
+
+        .source-link a {
+            color: #0ea5e9;
+            text-decoration: none;
+            font-size: 9pt;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+        }
+
+        .source-content {
+            border: 1px solid #e2e8f0;
+            border-top: none;
+            padding: 0;
+            margin-bottom: 0;
+            background: #ffffff;
+            overflow: hidden;
+        }
+
+        .source-content-inner {
+            padding: 0 12pt 0pt 12pt;
+        }
+
+        .source-image {
+            max-width: 100%;
+            display: block;
+            margin: 0;
+            border: none;
+            box-shadow: none;
+        }
+
+        .source-content .sub-category:first-of-type {
+            margin-top: 10pt;
+        }
+
+        .guideline-item {
+            padding-left: 1.5rem;
+            position: relative;
+            margin-bottom: 0.8rem;
+        }
+
+        .guideline-item::before {
+            content: "•";
+            position: absolute;
+            left: 0.5rem;
+            color: #0ea5e9;
+            font-weight: bold;
+        }
+
+        .sub-category {
+            font-size: 11pt;
+            font-weight: 700;
+            color: #475569;
+            margin: 1.5rem 0 0.8rem;
+            padding-bottom: 4pt;
+            border-bottom: 1px solid #f1f5f9;
+            letter-spacing: 0.02em;
+        }
+
+        .workflow-box {
+            background: #fdf2f8;
+            border-left: 4pt solid #db2777;
+            padding: 12pt 16pt;
+            border-radius: 4pt;
+            color: #831843;
+            font-size: 11pt;
+        }
+
+        .portals-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.8rem;
+            margin-left: 1rem;
+        }
+
+        .portal-item {
+            background: #f0fdf4;
+            padding: 6pt 10pt;
+            border-radius: 6pt;
+            font-size: 10pt;
+            color: #166534;
+            display: flex;
+            align-items: center;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="title-group">
+            <h2 style="display: block; line-height: 36pt;">
+                <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                <span style="vertical-align: middle;">{{ sop.title }}</span>
+            </h2>
+            <span class="category-badge">{{ sop.category or 'Uncategorized' }}</span>
+        </div>
+        <div style="text-align: right">
+            <div class="label" style="display: block; margin-bottom: 4pt;">
+                <svg style="width: 10pt; height: 10pt; vertical-align: middle; margin-right: 4pt; stroke: #64748b;" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span style="vertical-align: middle;">Date</span>
+            </div>
+            <div class="value">{{ current_date }}</div>
+        </div>
+    </div>
+
+    <!-- Practice Information -->
+    <div class="section">
+        <h2 class="section-title">
+            <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"></path><path d="M3 7v1a3 3 0 0 0 6 0V7"></path><path d="M9 8a3 3 0 0 0 6 0V7"></path><path d="M15 8a3 3 0 0 0 6 0V7"></path><path d="M4 21v-7"></path><path d="M9 21v-7"></path><path d="M14 21v-7"></path><path d="M19 21v-7"></path><path d="M12 3L2 12h20L12 3z"></path></svg></i>
+            Practice Information
+        </h2>
+        <div style="display: flex; gap: 1rem;">
+            <div class="info-card" style="flex: 1;">
+                <div class="label">Client Name</div>
+                <div class="value">{{ sop.client_name or '-' }}</div>
+            </div>
+            <div class="info-card" style="flex: 0.4;">
+                <div class="label">Client NPI</div>
+                <div class="value">{{ sop.client_npi or '-' }}</div>
+            </div>
+            <div class="info-card" style="flex: 0.6;">
+                <div class="label">Specialty</div>
+                <div class="value">{{ sop.client_specialty or '-' }}</div>
+            </div>
+        </div>
+        <div class="info-card" style="margin-top: 1rem;">
+            <div class="label">Primary Location Address</div>
+            <div class="value">{{ sop.client_address or '-' }}</div>
+        </div>
+    </div>
+
+    <!-- Associated Providers -->
+    {% if sop.providers %}
+    <div class="section">
+        <h2 class="section-title">
+            <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></i>
+            Associated Providers
+        </h2>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+            {% for provider in sop.providers %}
+            <div class="info-card" style="flex: 1; min-width: 140pt; padding: 6pt 10pt;">
+                <div class="label" style="font-size: 8pt;">{{ provider.name }}</div>
+                <div class="value" style="font-size: 9pt; color: #475569;">NPI: {{ provider.npi }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Billing Info -->
+    {% if sop.provider_info %}
+    <div class="section">
+        <h2 class="section-title">
+            <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg></i>
+            Billing Information
+        </h2>
+        <table>
+            <tr>
+                <td colspan="2">
+                    <div class="label">Practice Name</div>
+                    <div class="value">{{ sop.client_name or '-' }}</div>
+                </td>
+                <td>
+                    <div class="label">Tax ID</div>
+                    <div class="value">{{ sop.provider_info.providerTaxID or '-' }}</div>
+                </td>
+            </tr>
+            <tr>
+                <td colspan="2">
+                    <div class="label">Billing NPI</div>
+                    <div class="value">{{ sop.client_npi or '-' }}</div>
+                </td>
+                <td>
+                    <div class="label">Software</div>
+                    <div class="value">{{ sop.provider_info.software or '-' }}</div>
+                </td>
+            </tr>
+            <tr>
+                <td colspan="3">
+                    <div class="label">Billing Address</div>
+                    <div class="value">{{ sop.provider_info.billingAddress or '-' }}</div>
+                </td>
+            </tr>
+        </table>
+    </div>
+    {% endif %}
+
+    <!-- Workflow -->
+    {% if sop.workflow_process %}
+    <div class="section">
+        <h2 class="section-title">
+            <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></i>
+            Workflow Process
+        </h2>
+        <div class="workflow-box">
+            {{ sop.workflow_process.description or '-' }}
+        </div>
+        
+        {% if sop.workflow_process.posting_charges_rules %}
+        <h3 class="sub-category">Posting Charges Rules</h3>
+        {% for rule in sop.workflow_process.posting_charges_rules %}
+            <div class="guideline-item">{{ rule }}</div>
+        {% endfor %}
+        {% endif %}
+
+        {% if sop.workflow_process.eligibility_verification_portals %}
+        <h3 class="sub-category">Eligibility Verification Portals</h3>
+        <div class="portals-grid">
+            {% for portal in sop.workflow_process.eligibility_verification_portals %}
+                <div class="portal-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#166534" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 10pt; height: 10pt; vertical-align: middle; margin-right: 6pt;"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2c3.086 0 5.823 4.477 5.823 10S15.086 22 12 22s-5.823-4.477-5.823-10S8.914 2 12 2z"></path></svg>
+                    <span style="vertical-align: middle;">{{ portal }}</span>
+                </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Billing Guidelines -->
+    {% if sop.billing_guidelines or ext_billing %}
+    <div class="section">
+        <h2 class="section-title">
+            <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg></i>
+            Billing Guidelines
+        </h2>
+        
+        {% if sop.billing_guidelines %}
+            <div class="manual-badge">
+                <span class="manual-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#0369a1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 10pt; height: 10pt; vertical-align: middle; margin-right: 4pt;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                    Manual Entry
+                </span>
+            </div>
+            <div class="source-content" style="padding-top: 1px; border-top: none;">
+            <div class="source-content-inner">
+            {% for group in sop.billing_guidelines %}
+                <h3 class="sub-category" style="margin-top: 10pt;">{{ group.category or 'General' }}</h3>
+                {% for rule in group.rules %}
+                    <div class="guideline-item">{{ rule.description }}</div>
+                {% endfor %}
+            {% endfor %}
+            </div>
+            </div>
+        {% endif %}
+
+        {% for entry in ext_billing %}
+            <div class="source-badge">
+                <span class="source-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 10pt; height: 10pt; vertical-align: middle; margin-right: 4pt;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    Source: {{ entry.name }}
+                </span>
+                {% if entry.url and not entry.is_image %}
+                <span class="source-link"><a href="{{ entry.url }}">View Document →</a></span>
+                {% endif %}
+            </div>
+            <div class="source-content" style="padding-top: 1px;">
+            {% if entry.is_image %}
+                <img src="{{ entry.image_data }}" class="source-image">
+            {% endif %}
+            <div class="source-content-inner">
+            {% for item in entry.data_items %}
+                <h3 class="sub-category" style="margin-top: 10pt;">{{ item.cptCode or item.icdCode or item.category or item.title or 'General' }}</h3>
+                {% for rule in item.rules %}
+                    <div class="guideline-item">{{ rule.description }}</div>
+                {% endfor %}
+            {% endfor %}
+            </div>
+            </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Payer Guidelines -->
+    {% if sop.payer_guidelines or ext_payer %}
+    <div class="section">
+        <h2 class="section-title">
+            <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></i>
+            Payer Guidelines
+        </h2>
+        
+        {% if sop.payer_guidelines %}
+            <div class="manual-badge">
+                <span class="manual-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#0369a1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 10pt; height: 10pt; vertical-align: middle; margin-right: 4pt;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                    Manual Entry
+                </span>
+            </div>
+            <div class="source-content" style="padding-top: 1px; border-top: none;">
+            <div class="source-content-inner">
+            {% for pg in sop.payer_guidelines %}
+                <div style="margin-top: 10pt; font-size: 11pt;">
+                    <strong>{{ pg.title or pg.payerName or 'Payer' }}:</strong>
+                    <span style="color: #475569; margin-left: 4pt;">{{ pg.description or '-' }}</span>
+                </div>
+            {% endfor %}
+            </div>
+            </div>
+        {% endif %}
+
+        {% for entry in ext_payer %}
+            <div class="source-badge">
+                <span class="source-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 10pt; height: 10pt; vertical-align: middle; margin-right: 4pt;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    Source: {{ entry.name }}
+                </span>
+                {% if entry.url and not entry.is_image %}
+                <span class="source-link"><a href="{{ entry.url }}">View Document →</a></span>
+                {% endif %}
+            </div>
+            <div class="source-content" style="padding-top: 1px;">
+            {% if entry.is_image %}
+                <img src="{{ entry.image_data }}" class="source-image">
+            {% endif %}
+            <div class="source-content-inner">
+            {% for item in entry.data_items %}
+                <div style="margin-top: 10pt; font-size: 11pt;">
+                    <strong>{{ item.title or item.payerName or 'Payer' }}:</strong>
+                    <span style="color: #475569; margin-left: 4pt;">{{ item.description or '-' }}</span>
+                </div>
+            {% endfor %}
+            </div>
+            </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- CPT Guidelines -->
+    {% if sop.coding_rules_cpt or ext_cpt %}
+    <div class="section">
+        <h2 class="section-title">
+            <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="4" y1="9" x2="20" y2="9"></line><line x1="4" y1="15" x2="20" y2="15"></line><line x1="10" y1="3" x2="8" y2="21"></line><line x1="16" y1="3" x2="14" y2="21"></line></svg></i>
+            CPT Coding Guidelines
+        </h2>
+        
+        {% if sop.coding_rules_cpt %}
+        <div class="manual-badge">
+            <span class="manual-name">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#0369a1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 10pt; height: 10pt; vertical-align: middle; margin-right: 4pt;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                Manual Entry
+            </span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>CPT</th>
+                    <th>Description</th>
+                    <th>NDC</th>
+                    <th>Units</th>
+                    <th>Charge</th>
+                    <th>Modifier</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in sop.coding_rules_cpt %}
+                <tr>
+                    <td><b>{{ r.cptCode }}</b></td>
+                    <td>{{ r.description }}</td>
+                    <td>{{ r.ndcCode }}</td>
+                    <td>{{ r.units }}</td>
+                    <td>{{ r.chargePerUnit }}</td>
+                    <td>{{ r.modifier }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% for entry in ext_cpt %}
+            <div class="source-badge">
+                <span class="source-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 10pt; height: 10pt; vertical-align: middle; margin-right: 4pt;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    Source: {{ entry.name }}
+                </span>
+                {% if entry.url and not entry.is_image %}
+                <span class="source-link"><a href="{{ entry.url }}">View Document →</a></span>
+                {% endif %}
+            </div>
+            {% if entry.is_image %}
+            <div class="source-content" style="padding-top: 1px; margin-bottom: 0; border-bottom: none; border-radius: 0;">
+                <img src="{{ entry.image_data }}" class="source-image">
+            </div>
+            {% endif %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>CPT</th>
+                        <th>Description</th>
+                        <th>NDC</th>
+                        <th>Units</th>
+                        <th>Charge</th>
+                        <th>Modifier</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in entry.data_items %}
+                    <tr>
+                        <td><b>{{ r.cptCode }}</b></td>
+                        <td>{{ r.description }}</td>
+                        <td>{{ r.ndcCode }}</td>
+                        <td>{{ r.units }}</td>
+                        <td>{{ r.chargePerUnit }}</td>
+                        <td>{{ r.modifier }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- ICD Guidelines -->
+    {% if sop.coding_rules_icd or ext_icd %}
+    <div class="section">
+        <h2 class="section-title">
+            <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 2.3q.3 0 .5.2l2.3 2.3q.2.2.2.5t-.2.5q-.2.2-.5.2t-.5-.2L3.5 3.5q-.2-.2-.2-.5t.2-.5q.2-.2.5-.2zM20 2.3q.3 0 .5.2.2.2.2.5t-.2.5l-2.3 2.3q-.2.2-.5.2t-.5-.2q-.2-.2-.2-.5t.2-.5l2.3-2.3zM12 21q-3.3 0-5.7-2.3T4 13q0-3.3 2.3-5.7T12 5q3.3 0 5.7 2.3T20 13q0 3.3-2.3 5.7T12 21z"></path></svg></i>
+            ICD Coding Guidelines
+        </h2>
+        
+        {% if sop.coding_rules_icd %}
+        <div class="manual-badge">
+            <span class="manual-name">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#0369a1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 10pt; height: 10pt; vertical-align: middle; margin-right: 4pt;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                Manual Entry
+            </span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 20%">ICD Code</th>
+                    <th style="width: 40%">Description</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in sop.coding_rules_icd %}
+                <tr>
+                    <td><b>{{ r.icdCode }}</b></td>
+                    <td>{{ r.description }}</td>
+                    <td>{{ r.notes }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% for entry in ext_icd %}
+            <div class="source-badge">
+                <span class="source-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 10pt; height: 10pt; vertical-align: middle; margin-right: 4pt;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    Source: {{ entry.name }}
+                </span>
+                {% if entry.url and not entry.is_image %}
+                <span class="source-link"><a href="{{ entry.url }}">View Document →</a></span>
+                {% endif %}
+            </div>
+            {% if entry.is_image %}
+            <div class="source-content" style="padding-top: 1px; margin-bottom: 0; border-bottom: none; border-radius: 0;">
+                <img src="{{ entry.image_data }}" class="source-image">
+            </div>
+            {% endif %}
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 20%">ICD Code</th>
+                        <th style="width: 40%">Description</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in entry.data_items %}
+                    <tr>
+                        <td><b>{{ r.icdCode }}</b></td>
+                        <td>{{ r.description }}</td>
+                        <td>{{ r.notes }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+</body>
+</html>

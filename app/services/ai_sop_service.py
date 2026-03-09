@@ -86,24 +86,12 @@ class AISOPService:
 
             if not sop:
                 return
-            provider_info_raw = structured.get("provider_information") or {}
+            # Normalize all fields using the centralized normalizer
+            structured = AISOPService.normalize_ai_sop(structured)
 
-            normalized_provider_info = {
-                "providerName": provider_info_raw.get("billing_provider_name"),
-                "billingProviderName": provider_info_raw.get("billing_provider_name"),
-                "billingProviderNPI": provider_info_raw.get("billing_provider_npi"),
-                "providerTaxID": provider_info_raw.get("provider_tax_id"),
-                "billingAddress": provider_info_raw.get("billing_address"),
-                "software": provider_info_raw.get("software"),
-                "clearinghouse": provider_info_raw.get("clearinghouse"),
-            }
-            workflow_raw = structured.get("workflow_process") or {}
+            normalized_provider_info = structured.get("provider_information")
+            normalized_workflow = structured.get("workflow_process")
 
-            normalized_workflow = {
-                "description": workflow_raw.get("workflow_description"),
-                "eligibility_verification_portals": workflow_raw.get("eligibility_verification_portals", []),
-                "posting_charges_rules": workflow_raw.get("posting_charges_rules", [])
-            }
             # Update SOP fields
             sop.title = structured.get("basic_information", {}).get("sop_title") or sop.title
             sop.category = structured.get("basic_information", {}).get("category") or sop.category
@@ -379,14 +367,38 @@ class AISOPService:
         raise ValueError(f"Unsupported file type: {ext}")
     @staticmethod
     def normalize_ai_sop(data: dict) -> dict:
-        category = data.get("category")
+        category = data.get("basic_information", {}).get("category") if isinstance(data.get("basic_information"), dict) else data.get("category")
         if isinstance(category, dict):
-            data["category"] = category.get("title", "")
-        elif category is None:
-            data["category"] = ""
+            category = category.get("title", "")
+        
+        if "basic_information" not in data:
+            data["basic_information"] = {}
+        
+        data["basic_information"]["category"] = category or data.get("category", "")
+        data["category"] = data["basic_information"]["category"]
 
         # Default source for AI extracted data
         source = "AI Extracted"
+
+        # Normalize Provider Information
+        provider_info_raw = data.get("provider_information") or {}
+        data["provider_information"] = {
+            "providerName": provider_info_raw.get("billing_provider_name") or provider_info_raw.get("providerName"),
+            "billingProviderName": provider_info_raw.get("billing_provider_name") or provider_info_raw.get("billingProviderName"),
+            "billingProviderNPI": provider_info_raw.get("billing_provider_npi") or provider_info_raw.get("billingProviderNPI"),
+            "providerTaxID": provider_info_raw.get("provider_tax_id") or provider_info_raw.get("providerTaxID"),
+            "billingAddress": provider_info_raw.get("billing_address") or provider_info_raw.get("billingAddress"),
+            "software": provider_info_raw.get("software"),
+            "clearinghouse": provider_info_raw.get("clearinghouse"),
+        }
+
+        # Normalize Workflow Process
+        workflow_raw = data.get("workflow_process") or {}
+        data["workflow_process"] = {
+            "description": workflow_raw.get("workflow_description") or workflow_raw.get("description"),
+            "eligibility_verification_portals": workflow_raw.get("eligibility_verification_portals", []),
+            "posting_charges_rules": workflow_raw.get("posting_charges_rules", [])
+        }
 
         # Normalize Billing Guidelines
         guidelines = data.get("billing_guidelines", [])
@@ -414,13 +426,13 @@ class AISOPService:
         for pg in payer_guidelines:
             if isinstance(pg, str):
                 normalized_payers.append({
-                    "payer_name": "Unknown",
+                    "payerName": "Unknown",
                     "description": pg,
                     "source": source
                 })
             elif isinstance(pg, dict):
                 normalized_payers.append({
-                    "payer_name": pg.get("payer_name") or pg.get("title") or pg.get("payer") or "Unknown",
+                    "payerName": pg.get("payerName") or pg.get("payer_name") or pg.get("title") or pg.get("payer") or "Unknown",
                     "description": pg.get("description") or "",
                     "source": source
                 })
@@ -999,7 +1011,7 @@ class AISOPService:
             pass2_result.get("coding_rules_icd", [])
         )
 
-        return final_result
+        return AISOPService.normalize_ai_sop(final_result)
     
     @staticmethod
     async def extract_tables(text: str) -> dict:

@@ -1,9 +1,9 @@
 # Staging Environment - Terraform
 
-## 💰 Estimated Cost: ~$64-68/month
+## 💰 Estimated Cost: ~$49-53/month
 
 ### Cost Breakdown:
-- EC2 t3.medium: $30.37/month
+- EC2 t3.small: $15.18/month
 - RDS db.t3.small: $24.82/month
 - EBS Storage (30GB): $2.40/month
 - RDS Storage (20GB): $2.30/month
@@ -41,7 +41,7 @@ terraform-staging/
 
 ```
 Default VPC
-  ├── EC2 t3.medium (Elastic IP)
+  ├── EC2 t3.small (Elastic IP)
   │   - Docker + Docker Compose
   │   - Nginx + SSL (Certbot)
   │   - Backend App (Port 8000)

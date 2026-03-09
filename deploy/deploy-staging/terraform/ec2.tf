@@ -76,7 +76,7 @@ resource "aws_instance" "staging" {
     encrypted   = true
   }
 
-  user_data = templatefile("${path.module}/ec2-init-setup.sh", {
+  user_data = templatefile("${path.module}/../ec2-init-setup.sh", {
     app_name = var.project_name
     domain   = var.domain_name
   })
