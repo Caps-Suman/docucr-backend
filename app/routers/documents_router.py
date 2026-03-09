@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
+from urllib.parse import quote
 import json
 
 from app.models.document_form_data import DocumentFormData
@@ -593,7 +594,7 @@ async def get_document_download_url(
     from ..services.s3_service import s3_service
 
     filename = document.original_filename or document.filename
-    disposition = f'attachment; filename="{filename}"'
+    disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
 
     presigned_url = s3_service.generate_presigned_url(
         document.s3_key,
@@ -645,7 +646,7 @@ async def get_document_report_url(
     from ..services.s3_service import s3_service
 
     filename = f"analysis_report_{document.filename}.xlsx"
-    disposition = f'attachment; filename="{filename}"'
+    disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
 
     presigned_url = s3_service.generate_presigned_url(
         document.analysis_report_s3_key,

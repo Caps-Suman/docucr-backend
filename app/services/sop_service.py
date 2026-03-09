@@ -19,6 +19,7 @@ from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 import datetime
 import os
+from urllib.parse import quote
 
 
 class SOPService:
@@ -232,7 +233,7 @@ class SOPService:
                     "coding_rules_icd": doc.coding_rules_icd,
                     "document_url": s3_service.generate_presigned_url(
                         doc.s3_key,
-                        response_content_disposition=f'inline; filename="{doc.name}"'
+                        response_content_disposition=f"inline; filename*=UTF-8''{quote(doc.name)}"
                     ),
                     "created_at": doc.created_at,
                     "processed": doc.processed
@@ -809,7 +810,7 @@ class SOPService:
                     s3_key = doc.get("s3_key")
                     doc_url = s3_service.generate_presigned_url(
                         s3_key,
-                        response_content_disposition=f'inline; filename="{doc_name}"'
+                        response_content_disposition=f"inline; filename*=UTF-8''{quote(doc_name)}"
                     )
                     
                     is_image = doc_name.lower().endswith(image_extensions)

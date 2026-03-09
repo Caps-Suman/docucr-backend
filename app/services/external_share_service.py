@@ -5,6 +5,7 @@ from typing import Optional, Dict, List
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from passlib.hash import pbkdf2_sha256
+from urllib.parse import quote
 
 from app.models.external_share import ExternalShare
 from app.models.document import Document
@@ -156,7 +157,7 @@ class ExternalShareService:
         
         # Download URL with attachment disposition
         filename = doc.original_filename or doc.filename
-        disposition = f'attachment; filename="{filename}"'
+        disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
         download_url = s3_service.generate_presigned_url(
             doc.s3_key, 
             expiration=3600,
