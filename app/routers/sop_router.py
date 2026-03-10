@@ -285,10 +285,10 @@ def _extract_single_document(doc_id: str, sop_id: str):
 
         doc.processed = True
         db.commit()
-        print(f"[extraction] ✅ Doc {doc_id} processed successfully")
+        print(f"[extraction] Doc {doc_id} processed successfully")
 
     except Exception as e:
-        print(f"[extraction] ❌ Doc {doc_id} failed: {e}")
+        print(f"[extraction] Doc {doc_id} failed: {e}")
         # Don't mark as processed so it can be retried
 
     finally:
@@ -896,7 +896,7 @@ def delete_sop(
     )
 
     return None
-@router.post("/{sop_id}/documents", status_code=status.HTTP_201_CREATED)
+@router.post("/{sop_id}/documents", response_model=SOPDocumentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_sop_document(
     sop_id: UUID,
     request: Request,
@@ -989,7 +989,19 @@ async def upload_sop_document(
             request=request
         )
         
-        return new_doc
+        # Return formatted response to ensure proper serialization
+        return {
+            "id": str(new_doc.id),
+            "name": new_doc.name,
+            "category": new_doc.category,
+            "s3_key": new_doc.s3_key,
+            "created_at": new_doc.created_at,
+            "processed": new_doc.processed,
+            "billing_guidelines": new_doc.billing_guidelines,
+            "payer_guidelines": new_doc.payer_guidelines,
+            "coding_rules_cpt": new_doc.coding_rules_cpt,
+            "coding_rules_icd": new_doc.coding_rules_icd
+        }
     except Exception as e:
         db.rollback()
         raise HTTPException(500, f"Failed to upload document: {str(e)}")
