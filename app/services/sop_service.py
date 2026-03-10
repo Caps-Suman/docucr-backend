@@ -866,7 +866,7 @@ class SOPService:
             return result
 
         ext_billing = _ext_by_doc("billing_guidelines", lambda g: g.get("category") or g.get("rules"))
-        ext_payer   = _ext_by_doc("payer_guidelines",   lambda g: g.get("title") or g.get("description"))
+        ext_payer   = _ext_by_doc("payer_guidelines",   lambda g: g.get("title") or g.get("payerName") or g.get("payer_name") or g.get("description"))
         ext_cpt     = _ext_by_doc("coding_rules_cpt",   lambda r: r.get("cptCode") or r.get("description"))
         ext_icd     = _ext_by_doc("coding_rules_icd",   lambda r: r.get("icdCode") or r.get("description"))
 
