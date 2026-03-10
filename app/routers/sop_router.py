@@ -455,7 +455,6 @@ async def ai_extract_sop(
         # guaranteed cleanup
         if temp_file_path and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
-
 @router.post("/background/ai/extract-sop", status_code=202)
 async def ai_extract_sop_background(
     background_tasks: BackgroundTasks,
@@ -464,30 +463,28 @@ async def ai_extract_sop_background(
     client_id: UUID = Form(...),
     provider_ids: List[UUID] = Form(None),
     db: Session = Depends(get_db),
-    current_user :User= Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     allowed_types = {
         "application/pdf",
         "image/png",
         "image/jpeg",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
-        "application/vnd.ms-excel",  # .xls
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
     }
 
     if file.content_type not in allowed_types:
         raise HTTPException(400, "Unsupported file type")
 
-    # ✅ Read content once to avoid "closed file" issues during multiple reads
     file_content = await file.read()
 
-    # Create empty SOP row immediately
+    # Resolve org_id (super admin inherits from client)
     org_id = current_user.organisation_id
     if not org_id:
-        # If Super Admin creates, inherit from client
         client = db.query(Client).filter(Client.id == client_id).first()
         org_id = client.organisation_id if client else None
-        # Check if client already has an SOP
+
     active_status = db.query(Status.id).filter(
         Status.code == "ACTIVE",
         Status.type == "GENERAL"
@@ -498,36 +495,53 @@ async def ai_extract_sop_background(
         Status.type == "GENERAL"
     ).scalar()
 
-    existing_sop = db.query(SOP).filter(
-        SOP.client_id == client_id,
-        SOP.organisation_id == org_id,
-        SOP.status_id.in_([active_status, extracting_status])
-    ).first()
+    allowed_statuses = [s for s in [active_status, extracting_status] if s]
 
-    if existing_sop:
-        raise HTTPException(
-            status_code=400,
-            detail="This client already has an SOP."
-        )
-    if provider_ids:
+    # All active/extracting SOPs for this client in this org
+    client_sop_ids = [
+        row[0] for row in db.query(SOP.id).filter(
+            SOP.client_id == client_id,
+            SOP.organisation_id == org_id,
+            SOP.status_id.in_(allowed_statuses),
+        ).all()
+    ]
 
-        existing_provider = (
-            db.query(SopProviderMapping)
-            .join(SOP, SopProviderMapping.sop_id == SOP.id)
-            .filter(
-                SOP.client_id == client_id,
-                SOP.organisation_id == org_id,
-                SOP.status_id.in_([active_status, extracting_status]),
-                SopProviderMapping.provider_id.in_(provider_ids)
+    if not provider_ids:
+        # Creating a client-level SOP (no providers).
+        # Only block if there is already a client-level SOP (a SOP with no provider mappings).
+        if client_sop_ids:
+            sop_ids_with_providers = {
+                row[0] for row in db.query(SopProviderMapping.sop_id)
+                .filter(SopProviderMapping.sop_id.in_(client_sop_ids))
+                .distinct()
+                .all()
+            }
+            client_level_exists = any(
+                sid not in sop_ids_with_providers for sid in client_sop_ids
             )
-            .first()
-        )
-
-        if existing_provider:
-            raise HTTPException(
-                status_code=400,
-                detail="One or more providers already have an SOP."
+            if client_level_exists:
+                raise HTTPException(
+                    status_code=400,
+                    detail="This client already has a client-level SOP."
+                )
+    else:
+        # Creating a provider-linked SOP.
+        # Only block if one of the selected providers is already mapped to an active SOP for this client.
+        if client_sop_ids:
+            existing_provider = (
+                db.query(SopProviderMapping)
+                .filter(
+                    SopProviderMapping.sop_id.in_(client_sop_ids),
+                    SopProviderMapping.provider_id.in_(provider_ids),
+                )
+                .first()
             )
+            if existing_provider:
+                raise HTTPException(
+                    status_code=400,
+                    detail="One or more providers already have an active SOP for this client."
+                )
+
     new_sop = SOP(
         title=file.filename,
         provider_type=provider_type,
@@ -552,8 +566,7 @@ async def ai_extract_sop_background(
             file.content_type,
             s3_key=s3_key
         )
-        
-        # Create SOPDocument record for the source file
+
         db.add(SOPDocument(
             sop_id=new_sop.id,
             name=file.filename,
@@ -562,12 +575,13 @@ async def ai_extract_sop_background(
         ))
         db.commit()
     except Exception as e:
-        failed_status = db.query(Status).filter(Status.code == "FAILED", Status.type == "DOCUMENT").first()
+        failed_status = db.query(Status).filter(
+            Status.code == "FAILED", Status.type == "DOCUMENT"
+        ).first()
         new_sop.status_id = failed_status.id if failed_status else new_sop.status_id
         db.commit()
         raise HTTPException(500, f"Failed to upload to S3: {str(e)}")
 
-    # 🔥 LINK PROVIDERS HERE
     if provider_ids:
         for pid in provider_ids:
             db.add(SopProviderMapping(
@@ -575,16 +589,13 @@ async def ai_extract_sop_background(
                 provider_id=pid,
                 created_by=str(current_user.id)
             ))
-
         db.commit()
 
-    # Save file temporarily for immediate processing
     file_ext = os.path.splitext(file.filename)[1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
         temp_file_path = tmp.name
         tmp.write(file_content)
 
-    # Run background processing
     background_tasks.add_task(
         AISOPService.process_sop_extraction,
         new_sop.id,
