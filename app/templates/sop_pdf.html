@@ -417,8 +417,8 @@
             <i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></i>
             Workflow Process
         </h2>
-        <div class="workflow-box">
-            {{ sop.workflow_process.description or '-' }}
+        <div class="workflow-box" style="white-space: pre-line;">
+            {{ (sop.workflow_process.description or '-').replace('. ', '.\n') }}
         </div>
         
         {% if sop.workflow_process.posting_charges_rules %}
@@ -514,8 +514,14 @@
             <div class="source-content" style="padding-top: 1px; border-top: none;">
             <div class="source-content-inner">
             {% for pg in sop.payer_guidelines %}
-                <div style="margin-top: 10pt; font-size: 11pt;">
-                    <strong>{{ pg.title or pg.payerName or 'Payer' }}:</strong>
+                <div style="margin-top: 10pt; font-size: 11pt; line-height: 1.6;">
+                    <strong>{{ pg.payerName or pg.title or 'Payer' }}:</strong>
+                    {% if pg.payerId %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">ID: {{ pg.payerId }}</span>{% endif %}
+                    {% if pg.eraStatus %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">ERA: {{ pg.eraStatus }}</span>{% endif %}
+                    {% if pg.ediStatus %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">EDI: {{ pg.ediStatus }}</span>{% endif %}
+                    {% if pg.tfl %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">TFL: {{ pg.tfl }}</span>{% endif %}
+                    {% if pg.networkStatus %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">Network: {{ pg.networkStatus }}</span>{% endif %}
+                    {% if pg.mailingAddress %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">Address: {{ pg.mailingAddress }}</span>{% endif %}
                     <span style="color: #475569; margin-left: 4pt;">{{ pg.description or '-' }}</span>
                 </div>
             {% endfor %}
@@ -539,8 +545,14 @@
             {% endif %}
             <div class="source-content-inner">
             {% for item in entry.data_items %}
-                <div style="margin-top: 10pt; font-size: 11pt;">
-                    <strong>{{ item.title or item.payerName or 'Payer' }}:</strong>
+                <div style="margin-top: 10pt; font-size: 11pt; line-height: 1.6;">
+                    <strong>{{ item.payerName or item.title or 'Payer' }}:</strong>
+                    {% if item.payerId or item.payer_id %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">ID: {{ item.payerId or item.payer_id }}</span>{% endif %}
+                    {% if item.eraStatus or item.era_status %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">ERA: {{ item.eraStatus or item.era_status }}</span>{% endif %}
+                    {% if item.ediStatus or item.edi_status %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">EDI: {{ item.ediStatus or item.edi_status }}</span>{% endif %}
+                    {% if item.tfl %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">TFL: {{ item.tfl }}</span>{% endif %}
+                    {% if item.networkStatus or item.network_status %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">Network: {{ item.networkStatus or item.network_status }}</span>{% endif %}
+                    {% if item.mailingAddress or item.mailing_address %}<span style="background: #f1f5f9; color: #475569; padding: 2pt 6pt; border-radius: 4pt; font-size: 9pt; font-weight: 600; margin-left: 4pt;">Address: {{ item.mailingAddress or item.mailing_address }}</span>{% endif %}
                     <span style="color: #475569; margin-left: 4pt;">{{ item.description or '-' }}</span>
                 </div>
             {% endfor %}

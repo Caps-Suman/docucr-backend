@@ -349,10 +349,18 @@ class SOPService:
                 # Support both snake_case and camelCase during migration
                 name = pg.get("payerName") or pg.get("payer_name")
                 if name:
-                    normalized.append({
+                    # Preserve all payer guideline fields
+                    normalized_pg = {
                         "payerName": name,
-                        "description": pg.get("description", "")
-                    })
+                        "description": pg.get("description", ""),
+                        "payerId": pg.get("payerId", pg.get("payer_id", "")),
+                        "eraStatus": pg.get("eraStatus", pg.get("era_status", "")),
+                        "ediStatus": pg.get("ediStatus", pg.get("edi_status", "")),
+                        "tfl": pg.get("tfl", ""),
+                        "networkStatus": pg.get("networkStatus", pg.get("network_status", "")),
+                        "mailingAddress": pg.get("mailingAddress", pg.get("mailing_address", ""))
+                    }
+                    normalized.append(normalized_pg)
             sop.payer_guidelines = normalized
 
         return SOPService._format_sop(sop)
@@ -646,8 +654,11 @@ class SOPService:
                             clean_item = item.copy()
                             clean_item.pop("source", None)
                             if key == "payer_guidelines":
+                                # Remove temporary frontend IDs but keep all payer guideline fields
                                 if "id" in clean_item and isinstance(clean_item["id"], str) and clean_item["id"].startswith("pg_"):
                                     clean_item.pop("id", None)
+                                # Ensure all payer guideline fields are preserved
+                                # payerName, description, payerId, eraStatus, ediStatus, tfl, networkStatus, mailingAddress
                             manual_items_final.append(clean_item)
                         else:
                             if src not in doc_groups: doc_groups[src] = []
@@ -855,7 +866,7 @@ class SOPService:
             return result
 
         ext_billing = _ext_by_doc("billing_guidelines", lambda g: g.get("category") or g.get("rules"))
-        ext_payer   = _ext_by_doc("payer_guidelines",   lambda g: g.get("title") or g.get("description"))
+        ext_payer   = _ext_by_doc("payer_guidelines",   lambda g: g.get("title") or g.get("payerName") or g.get("payer_name") or g.get("description"))
         ext_cpt     = _ext_by_doc("coding_rules_cpt",   lambda r: r.get("cptCode") or r.get("description"))
         ext_icd     = _ext_by_doc("coding_rules_icd",   lambda r: r.get("icdCode") or r.get("description"))
 
