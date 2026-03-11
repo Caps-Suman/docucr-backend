@@ -405,11 +405,7 @@ class AISOPService:
                 ).first()
 
             if doc:
-                source_name = (
-                    "source_file"
-                    if doc.category == "Source file"
-                    else (doc.name or "Source File")
-                )
+                source_name = "source_file" if doc.category == "Source file" else (doc.name or "Document")
 
                 def inject_source(items):
                     if not items:
@@ -423,18 +419,20 @@ class AISOPService:
                                 item["source"] = source_name
                     return items
 
-                doc.billing_guidelines = inject_source(
-                    structured.get("billing_guidelines")
-                )
-                doc.payer_guidelines = inject_source(
-                    structured.get("payer_guidelines")
-                )
-                doc.coding_rules_cpt = inject_source(
-                    structured.get("coding_rules_cpt")
-                )
-                doc.coding_rules_icd = inject_source(
-                    structured.get("coding_rules_icd")
-                )
+                # SOURCE FILE → populate SOP fields
+                if doc.category == "Source file":
+                    sop.billing_guidelines = structured.get("billing_guidelines")
+                    sop.payer_guidelines = structured.get("payer_guidelines")
+                    sop.coding_rules_cpt = structured.get("coding_rules_cpt")
+                    sop.coding_rules_icd = structured.get("coding_rules_icd")
+
+                # EXTRA DOCUMENTS → populate document fields
+                else:
+                    doc.billing_guidelines = inject_source(structured.get("billing_guidelines"))
+                    doc.payer_guidelines = inject_source(structured.get("payer_guidelines"))
+                    doc.coding_rules_cpt = inject_source(structured.get("coding_rules_cpt"))
+                    doc.coding_rules_icd = inject_source(structured.get("coding_rules_icd"))
+
                 doc.processed = True
 
             sop.status_id = active_status.id if active_status else sop.status_id

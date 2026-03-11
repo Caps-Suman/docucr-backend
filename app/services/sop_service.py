@@ -658,20 +658,38 @@ class SOPService:
                     for item in merged_items:
                         if not isinstance(item, dict): continue
                         src = item.get("source")
-                        if src == "Manual" or not src:
-                            # Clean up manual item (remove source and temporary IDs)
+
+                        # Manual + source file stay on SOP
+                        if src in ("Manual", "source_file") or not src:
+
                             clean_item = item.copy()
                             clean_item.pop("source", None)
+
                             if key == "payer_guidelines":
-                                # Remove temporary frontend IDs but keep all payer guideline fields
                                 if "id" in clean_item and isinstance(clean_item["id"], str) and clean_item["id"].startswith("pg_"):
                                     clean_item.pop("id", None)
-                                # Ensure all payer guideline fields are preserved
-                                # payerName, description, payerId, eraStatus, ediStatus, tfl, networkStatus, mailingAddress
+
                             manual_items_final.append(clean_item)
+
                         else:
-                            if src not in doc_groups: doc_groups[src] = []
+                            if src not in doc_groups:
+                                doc_groups[src] = []
                             doc_groups[src].append(item)
+                        # src = item.get("source")
+                        # if src == "Manual" or not src:
+                        #     # Clean up manual item (remove source and temporary IDs)
+                        #     clean_item = item.copy()
+                        #     clean_item.pop("source", None)
+                        #     if key == "payer_guidelines":
+                        #         # Remove temporary frontend IDs but keep all payer guideline fields
+                        #         if "id" in clean_item and isinstance(clean_item["id"], str) and clean_item["id"].startswith("pg_"):
+                        #             clean_item.pop("id", None)
+                        #         # Ensure all payer guideline fields are preserved
+                        #         # payerName, description, payerId, eraStatus, ediStatus, tfl, networkStatus, mailingAddress
+                        #     manual_items_final.append(clean_item)
+                        # else:
+                        #     if src not in doc_groups: doc_groups[src] = []
+                        #     doc_groups[src].append(item)
 
                 # 2. Update SOP table (Manual entries)
                 setattr(db_sop, key, manual_items_final)
