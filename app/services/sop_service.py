@@ -215,7 +215,16 @@ class SOPService:
             "created_at": sop.created_at,
             "updated_at": sop.updated_at,
             "provider_info": sop.provider_info,
-            "workflow_process": sop.workflow_process,
+            "workflow_process": {
+                "description": (sop.workflow_process or {}).get("description")
+                or (sop.workflow_process or {}).get("workflow_description"),
+                "eligibility_verification_portals": (sop.workflow_process or {}).get(
+                    "eligibility_verification_portals", []
+                ),
+                "posting_charges_rules": (sop.workflow_process or {}).get(
+                    "posting_charges_rules", []
+                ),
+            },
             "billing_guidelines": add_manual_source(sop.billing_guidelines),
             "payer_guidelines": add_manual_source(sop.payer_guidelines),
             "coding_rules_cpt": add_manual_source(sop.coding_rules_cpt),
