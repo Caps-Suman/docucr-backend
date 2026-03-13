@@ -235,11 +235,13 @@ class SOPService:
                     "name": doc.name,
                     "category": doc.category,
                     "s3_key": doc.s3_key,
-                    # Include the new structured fields
-                    "billing_guidelines": doc.billing_guidelines,
-                    "payer_guidelines": doc.payer_guidelines,
-                    "coding_rules_cpt": doc.coding_rules_cpt,
-                    "coding_rules_icd": doc.coding_rules_icd,
+
+                    # Hide extracted data for source file
+                    "billing_guidelines": None if doc.category == "Source file" else doc.billing_guidelines,
+                    "payer_guidelines": None if doc.category == "Source file" else doc.payer_guidelines,
+                    "coding_rules_cpt": [] if doc.category == "Source file" else doc.coding_rules_cpt,
+                    "coding_rules_icd": [] if doc.category == "Source file" else doc.coding_rules_icd,
+
                     "document_url": s3_service.generate_presigned_url(
                         doc.s3_key,
                         response_content_disposition=f"inline; filename*=UTF-8''{quote(doc.name)}"
@@ -248,7 +250,8 @@ class SOPService:
                     "processed": doc.processed
                 }
                 for doc in sop.documents
-            ] if sop.documents else [],
+            ]
+        if sop.documents else [],
             "status": {
                 "id": sop.lifecycle_status.id,
                 "code": sop.lifecycle_status.code,
@@ -355,10 +358,8 @@ class SOPService:
                 if not isinstance(pg, dict):
                     continue
                 
-                # Support both snake_case and camelCase during migration
                 name = pg.get("payerName") or pg.get("payer_name")
                 if name:
-                    # Preserve all payer guideline fields
                     normalized_pg = {
                         "payerName": name,
                         "description": pg.get("description", ""),
@@ -491,7 +492,6 @@ class SOPService:
 
     @staticmethod
     def apply_extraction_to_sop(sop, doc, category, extracted):
-        # 1. Update document-specific fields
         if doc:
             source_name = "source_file" if doc.category == "Source file" else (doc.name or category or "Document")
             
@@ -508,12 +508,12 @@ class SOPService:
                 return items
 
             if "Billing" in category:
-                doc.billing_guidelines = inject_source(extracted.get("billing_guidelines"))
+                doc.billing_guidelines = inject_source(extracted.get("billing_guidelines") or [])
             elif "Payer" in category:
-                doc.payer_guidelines = inject_source(extracted.get("payer_guidelines"))
+                doc.payer_guidelines = inject_source(extracted.get("payer_guidelines") or [])
             elif "Coding" in category or "CPT" in category or "ICD" in category:
-                doc.coding_rules_cpt = inject_source(extracted.get("coding_rules_cpt"))
-                doc.coding_rules_icd = inject_source(extracted.get("coding_rules_icd"))
+                doc.coding_rules_cpt = inject_source(extracted.get("coding_rules_cpt") or [])
+                doc.coding_rules_icd = inject_source(extracted.get("coding_rules_icd") or [])
 
         # 2. Update SOP shared fields (Workflow, category, title)
         if category == "Workflow Process":
@@ -569,7 +569,6 @@ class SOPService:
 
             category = doc.category or ""
 
-            # Filter to only what this document's category covers
             if "Payer" in category:
                 extracted = {"payer_guidelines": extracted.get("payer_guidelines", [])}
             elif "Billing" in category:
@@ -598,7 +597,6 @@ class SOPService:
 
         except Exception as e:
             print(f"[extraction] ❌ Doc {doc_id} failed: {e}")
-            # Do NOT mark as processed — allows retry
 
         finally:
             db.close()
@@ -619,18 +617,15 @@ class SOPService:
             if key in sop_data and sop_data[key] is not None:
                 merged_items = sop_data[key]
                 
-                # 1. Split items by source
                 manual_items_final = []
-                doc_groups = {} # {source_name: [items]}
+                doc_groups = {} 
                 
                 if key == "billing_guidelines":
-                    # Special handling for nested category structure
                     for cat_group in merged_items:
                         if not isinstance(cat_group, dict): continue
                         cat_name = cat_group.get("category", "Uncategorized")
                         rules = cat_group.get("rules", [])
                         
-                        # Process Manual rules for this category
                         manual_rules = [r for r in rules if r.get("source") == "Manual" or not r.get("source")]
                         if manual_rules:
                             manual_items_final.append({
@@ -638,7 +633,6 @@ class SOPService:
                                 "rules": [{"description": r.get("description")} for r in manual_rules]
                             })
                         
-                        # Process Extracted rules for this category
                         for r in rules:
                             src = r.get("source")
                             if src and src != "Manual":
@@ -646,7 +640,6 @@ class SOPService:
                                 if cat_name not in doc_groups[src]: doc_groups[src][cat_name] = []
                                 doc_groups[src][cat_name].append(r)
                     
-                    # Convert doc_groups from dict-of-dicts to list-of-dicts
                     for src in doc_groups:
                         doc_groups[src] = [
                             {"category": cat, "rules": rules} 
@@ -654,7 +647,6 @@ class SOPService:
                         ]
                 
                 else:
-                    # Flat lists (payer_guidelines, coding_rules_*)
                     for item in merged_items:
                         if not isinstance(item, dict): continue
                         src = item.get("source")
@@ -675,41 +667,19 @@ class SOPService:
                             if src not in doc_groups:
                                 doc_groups[src] = []
                             doc_groups[src].append(item)
-                        # src = item.get("source")
-                        # if src == "Manual" or not src:
-                        #     # Clean up manual item (remove source and temporary IDs)
-                        #     clean_item = item.copy()
-                        #     clean_item.pop("source", None)
-                        #     if key == "payer_guidelines":
-                        #         # Remove temporary frontend IDs but keep all payer guideline fields
-                        #         if "id" in clean_item and isinstance(clean_item["id"], str) and clean_item["id"].startswith("pg_"):
-                        #             clean_item.pop("id", None)
-                        #         # Ensure all payer guideline fields are preserved
-                        #         # payerName, description, payerId, eraStatus, ediStatus, tfl, networkStatus, mailingAddress
-                        #     manual_items_final.append(clean_item)
-                        # else:
-                        #     if src not in doc_groups: doc_groups[src] = []
-                        #     doc_groups[src].append(item)
-
-                # 2. Update SOP table (Manual entries)
-                setattr(db_sop, key, manual_items_final)
+                if manual_items_final:
+                    setattr(db_sop, key, manual_items_final)
                 
-                # 3. Update SOPDocuments (Extracted entries)
                 for doc in db_sop.documents:
                     source_name = "source_file" if doc.category == "Source file" else doc.name
+
                     if source_name in doc_groups:
                         setattr(doc, key, doc_groups[source_name])
                     else:
-                        # Clear field if document exists but no items were sent for it (Deletions)
-                        # Only clear if the source name was actually present in the extraction pool elsewhere
-                        # (to avoid clearing when some unrelated source is being updated)
-                        # Actually, since handleSave sends the WHOLE state, if it's not in doc_groups, it's gone.
                         setattr(doc, key, [] if key.startswith("coding_rules") else None)
 
     @staticmethod
     def update_sop(sop_id: str, sop_data: Dict, db: Session, current_user: User):
-        # Extraction is handled exclusively by POST /{sop_id}/documents/process.
-        # This method only updates SOP fields and provider mappings.
         org_id = SOPService._get_org_id(current_user)
 
         db_sop = db.query(SOP).filter(
@@ -719,7 +689,6 @@ class SOPService:
         if not db_sop:
             return None
 
-        # ── Provider mappings ──────────────────────────────────────────────────
         provider_ids = sop_data.get("provider_ids")
 
         if provider_ids is None:
@@ -757,10 +726,8 @@ class SOPService:
             for pid in to_add:
                 db.add(SopProviderMapping(sop_id=sop_id, provider_id=pid))
 
-        # ── Unified Guideline Sync ─────────────────────────────────────────────
         SOPService._sync_guidelines(db_sop, sop_data)
 
-        # ── Remaining Field updates ───────────────────────────────────────────
         guideline_fields = {"billing_guidelines", "payer_guidelines", "coding_rules_cpt", "coding_rules_icd"}
         allowed_fields = {
             "title",

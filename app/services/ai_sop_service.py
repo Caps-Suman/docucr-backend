@@ -1,12 +1,13 @@
 import asyncio
 import json
 import os
+import base64
+from io import BytesIO
+from zipfile import ZipFile
 from fastapi import HTTPException
 from pdfminer.high_level import extract_text
 from docx import Document
 from PIL import Image
-import base64
-from io import BytesIO
 import pandas as pd
 from app.models.sop import SOP
 from app.models.status import Status
@@ -47,7 +48,8 @@ async def _call_ai(prompt: str, max_tokens: int = 8000) -> dict:
     - 3-tier JSON repair fallback
     """
     response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
+        # model="gpt-4o-mini",
+        model="gpt-4o",  # gpt-4o-mini drops quality significantly on structured extraction tasks
         messages=[
             {
                 "role": "system",
@@ -74,20 +76,17 @@ async def _call_ai(prompt: str, max_tokens: int = 8000) -> dict:
 
     raw = raw[start:] if (end == -1 or end < start) else raw[start : end + 1]
 
-    # Tier 1
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    # Tier 2 — json_repair
     try:
         from json_repair import repair_json
         return json.loads(repair_json(raw))
     except Exception:
         pass
 
-    # Tier 3 — truncate to last closing brace
     last = raw.rfind("}")
     if last > 0:
         try:
@@ -96,6 +95,166 @@ async def _call_ai(prompt: str, max_tokens: int = 8000) -> dict:
             pass
 
     raise HTTPException(422, f"Cannot parse AI JSON:\n{raw[:400]}")
+
+
+# ── Vision helpers ─────────────────────────────────────────────────────────────
+
+def _is_garbled_text(text: str) -> bool:
+    """
+    Detect when pdfminer output is corrupted/unreadable.
+
+    Two signals:
+      1. >20% of non-whitespace chars are non-ASCII or bullet characters
+         (custom font encoding → each character extracted as its raw glyph ID)
+      2. Average word length < 2.5 (individual letters extracted as separate words)
+
+    Real SOP text scores: ~0.3% non-ASCII, avg word length ~4.7
+    Broken PDF scores:    ~27% non-ASCII, avg word length ~2.3
+    """
+    chars = [c for c in text if not c.isspace()]
+    if not chars:
+        return True  # empty → treat as garbled
+
+    non_ascii_ratio = sum(1 for c in chars if ord(c) > 127 or c == "•") / len(chars)
+    if non_ascii_ratio > 0.20:
+        return True
+
+    words = [w for w in text.split() if w]
+    if not words:
+        return True
+    avg_word_len = sum(len(w) for w in words[:1000]) / min(len(words), 1000)
+    if avg_word_len < 2.5:
+        return True
+
+    return False
+
+
+def _encode_pil(image: Image.Image, dpi_hint: int = 120, quality: int = 82) -> str:
+    """Convert a PIL image to a base64 JPEG string for the vision API."""
+    buf = BytesIO()
+    image.convert("RGB").save(buf, format="JPEG", quality=quality)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+async def _vision_text_from_images(
+    images_b64: list[str],
+    context: str = "medical SOP document",
+) -> str:
+    """
+    Send a batch of base64-encoded page images to GPT-4o vision and return
+    extracted text.  Preserves table rows as pipe-delimited lines so that
+    _extract_table_sections() can still find them.
+    """
+    content: list[dict] = [
+        {
+            "type": "text",
+            "text": (
+                f"You are an OCR engine for a {context}. "
+                "Extract ALL visible text from the following page image(s) exactly as they appear. "
+                "For tables: output each row as pipe-delimited text and wrap the table with "
+                "--- TABLE N START --- / --- TABLE N END --- markers (increment N per table). "
+                "Preserve section headings, bullet points, and all data values. "
+                "Do NOT summarise or skip any content."
+            ),
+        }
+    ]
+    for i, b64 in enumerate(images_b64):
+        content.append({"type": "text", "text": f"--- Page {i + 1} ---"})
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"},
+        })
+
+    response = await openai_client.chat.completions.create(
+        model="gpt-4o",          # must be gpt-4o for vision; gpt-4o-mini drops quality
+        messages=[{"role": "user", "content": content}],
+        temperature=0,
+        max_tokens=8000,
+    )
+    return response.choices[0].message.content.strip()
+
+
+async def _pdf_to_vision_text(path: str, dpi: int = 120, batch_size: int = 4) -> str:
+    """
+    Convert every page of a PDF to an image and extract text via GPT-4o vision.
+
+    Strategy:
+      - Convert pages at 120 dpi (≈164 KB/page as JPEG)
+      - Process in batches of `batch_size` pages per API call
+      - Run all batches concurrently (semaphore limits to 10 in-flight at once)
+      - Concatenate results in page order
+    """
+    from pdf2image import convert_from_path
+
+    loop = asyncio.get_event_loop()
+    pages: list[Image.Image] = await loop.run_in_executor(
+        None,
+        lambda: convert_from_path(path, dpi=dpi),
+    )
+
+    if not pages:
+        raise ValueError(f"pdf2image returned 0 pages for {path}")
+
+    print(f"[vision-pdf] {len(pages)} pages → batches of {batch_size}")
+
+    # encode all pages (CPU-bound, run in executor)
+    encoded: list[str] = await loop.run_in_executor(
+        None,
+        lambda: [_encode_pil(p, dpi) for p in pages],
+    )
+
+    # build batches
+    batches: list[list[str]] = [
+        encoded[i : i + batch_size] for i in range(0, len(encoded), batch_size)
+    ]
+
+    sem = asyncio.Semaphore(10)
+
+    async def _process_batch(batch_imgs: list[str], batch_no: int) -> tuple[int, str]:
+        async with sem:
+            text = await _vision_text_from_images(batch_imgs)
+            return batch_no, text
+
+    tasks = [_process_batch(batch, i) for i, batch in enumerate(batches)]
+    results: list[tuple[int, str]] = await asyncio.gather(*tasks)
+
+    # sort by batch index and join
+    results.sort(key=lambda x: x[0])
+    return "\n\n".join(r[1] for r in results)
+
+
+async def _docx_embedded_image_text(path: str) -> str:
+    """
+    Extract text from images embedded inside a DOCX file (word/media/*).
+    Returns concatenated vision-extracted text, or "" if none found.
+    """
+    try:
+        with ZipFile(path) as zf:
+            image_names = [
+                n for n in zf.namelist()
+                if n.startswith("word/media/")
+                and n.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"))
+            ]
+
+        if not image_names:
+            return ""
+
+        print(f"[vision-docx] {len(image_names)} embedded image(s) found")
+
+        async def _extract_one(img_name: str) -> str:
+            with ZipFile(path) as zf:
+                img_bytes = zf.read(img_name)
+
+            img = Image.open(BytesIO(img_bytes))
+            b64 = _encode_pil(img)
+            return await _vision_text_from_images([b64], context="medical SOP embedded image")
+
+        parts = await asyncio.gather(*[_extract_one(n) for n in image_names])
+        return "\n\n".join(p for p in parts if p.strip())
+
+    except Exception as e:
+        print(f"[vision-docx] embedded image extraction failed: {e}")
+        return ""
 
 
 # ── Focused parallel extractors ───────────────────────────────────────────────
@@ -419,14 +578,11 @@ class AISOPService:
                                 item["source"] = source_name
                     return items
 
-                # SOURCE FILE → populate SOP fields
                 if doc.category == "Source file":
-                    sop.billing_guidelines = structured.get("billing_guidelines")
-                    sop.payer_guidelines = structured.get("payer_guidelines")
-                    sop.coding_rules_cpt = structured.get("coding_rules_cpt")
-                    sop.coding_rules_icd = structured.get("coding_rules_icd")
-
-                # EXTRA DOCUMENTS → populate document fields
+                    doc.billing_guidelines = structured.get("billing_guidelines")
+                    doc.payer_guidelines = structured.get("payer_guidelines")
+                    doc.coding_rules_cpt = structured.get("coding_rules_cpt")
+                    doc.coding_rules_icd = structured.get("coding_rules_icd")
                 else:
                     doc.billing_guidelines = inject_source(structured.get("billing_guidelines"))
                     doc.payer_guidelines = inject_source(structured.get("payer_guidelines"))
@@ -467,7 +623,8 @@ class AISOPService:
         image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
         response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            # model="gpt-4o-mini",
+            model="gpt-4o",  # gpt-4o-mini drops quality significantly on OCR tasks
             messages=[
                 {
                     "role": "system",
@@ -537,16 +694,31 @@ class AISOPService:
     async def extract_text(path: str) -> str:
         ext = os.path.splitext(path)[1].lower()
 
+        # ── PDF ──────────────────────────────────────────────────────────────
         if ext == ".pdf":
-            return pdf_extract(path)
+            text = pdf_extract(path)
 
+            if _is_garbled_text(text):
+                # Font-encoded / scanned PDF — pdfminer output is unusable.
+                # Fall back to page-image vision extraction via GPT-4o.
+                print(
+                    f"[extract_text] PDF text garbled (font encoding issue) — "
+                    f"switching to vision extraction for {os.path.basename(path)}"
+                )
+                text = await _pdf_to_vision_text(path)
+
+            return text
+
+        # ── DOCX ─────────────────────────────────────────────────────────────
         if ext == ".docx":
             doc = Document(path)
             parts = []
+
             for p in doc.paragraphs:
                 if p.text.strip():
                     parts.append(p.text.strip())
-            # ✅ Add TABLE markers so _extract_table_sections() can find them
+
+            # Tables with TABLE markers so _extract_table_sections() can find them
             for table_index, table in enumerate(doc.tables, start=1):
                 parts.append(f"\n--- TABLE {table_index} START ---")
                 for row in table.rows:
@@ -556,8 +728,21 @@ class AISOPService:
                     if row_text:
                         parts.append(row_text)
                 parts.append(f"--- TABLE {table_index} END ---\n")
-            return "\n".join(parts)
 
+            text = "\n".join(parts)
+
+            # Embedded images (superbill screenshots, scanned inserts, etc.)
+            embedded_text = await _docx_embedded_image_text(path)
+            if embedded_text:
+                print(
+                    f"[extract_text] Appending vision text from "
+                    f"{len(embedded_text.split(chr(10)))} lines of embedded images"
+                )
+                text = text + "\n\n--- EMBEDDED IMAGE CONTENT ---\n" + embedded_text
+
+            return text
+
+        # ── Excel ─────────────────────────────────────────────────────────────
         if ext in [".xlsx", ".xlsm", ".xltx", ".xltm"]:
             wb = load_workbook(path, data_only=True)
             parts = []
@@ -579,6 +764,7 @@ class AISOPService:
                 parts.append(df.fillna("").astype(str).to_string(index=False))
             return "\n".join(parts)
 
+        # ── Images ────────────────────────────────────────────────────────────
         if ext in [".png", ".jpg", ".jpeg"]:
             return await AISOPService.extract_image_text(path)
 

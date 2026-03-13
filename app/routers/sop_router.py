@@ -35,14 +35,8 @@ class BillingGuidelineGroup(BaseModel):
 
 
 class PayerGuideline(BaseModel):
-    payerName: str
-    description: str
-    payerId: Optional[str] = None
-    eraStatus: Optional[str] = None
-    ediStatus: Optional[str] = None
-    tfl: Optional[str] = None
-    networkStatus: Optional[str] = None
-    mailingAddress: Optional[str] = None
+    payerName:str
+    description:str
     source: Optional[str] = None
 class SOPBase(BaseModel):
     title: str
@@ -227,7 +221,7 @@ async def process_extra_documents(
     # so one failure doesn't block others
     for doc in unprocessed:
         background_tasks.add_task(
-            _extract_single_document,
+            SOPService.extract_and_apply_document,
             doc_id=str(doc.id),
             sop_id=str(sop_id),
         )
@@ -237,62 +231,6 @@ async def process_extra_documents(
         "queued": len(unprocessed),
         "document_ids": [str(doc.id) for doc in unprocessed]
     }
-
-
-def _extract_single_document(doc_id: str, sop_id: str):
-    """
-    Background task: extract a single extra document and apply to SOP.
-    Runs in a separate thread via FastAPI BackgroundTasks.
-    """
-    from app.core.database import SessionLocal
-
-    db = SessionLocal()
-    try:
-        doc = db.query(SOPDocument).filter(SOPDocument.id == doc_id).first()
-        db_sop = db.query(SOP).filter(SOP.id == sop_id).first()
-
-        if not doc or not db_sop:
-            print(f"[extraction] Doc {doc_id} or SOP {sop_id} not found")
-            return
-
-        # Download from S3 and extract text + structure
-        extracted = SOPService.extract_from_document(doc)
-
-        # Filter extracted data to only the relevant section for this doc's category
-        category = doc.category or ""
-
-        # Mapping to SOPDocument fields (category-based filtering)
-        if "Payer" in category:
-            doc.payer_guidelines = extracted.get("payer_guidelines", [])
-        elif "Billing" in category:
-            doc.billing_guidelines = extracted.get("billing_guidelines", [])
-        elif "Coding" in category or "CPT" in category or "ICD" in category:
-            doc.coding_rules_cpt = extracted.get("coding_rules_cpt", [])
-            doc.coding_rules_icd = extracted.get("coding_rules_icd", [])
-        elif "Workflow" in category or "Eligibility" in category:
-            # Note: SOPDocument doesn't have workflow_process fields yet, 
-            # but we still apply it to the main SOP below.
-            pass
-
-        # Merge extracted data into the SOP fields
-        # (This updates the main SOP table fields while keeping sources separate)
-        SOPService.apply_extraction_to_sop(
-            sop=db_sop,
-            doc=doc,
-            category=category,
-            extracted=extracted,
-        )
-
-        doc.processed = True
-        db.commit()
-        print(f"[extraction] Doc {doc_id} processed successfully")
-
-    except Exception as e:
-        print(f"[extraction] Doc {doc_id} failed: {e}")
-        # Don't mark as processed so it can be retried
-
-    finally:
-        db.close()
 
 @router.post("/check-client-sop")
 def check_client_sop(
@@ -907,11 +845,9 @@ def delete_sop(
     )
 
     return None
-@router.post("/{sop_id}/documents", response_model=SOPDocumentResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/{sop_id}/documents", status_code=status.HTTP_201_CREATED)
 async def upload_sop_document(
     sop_id: UUID,
-    request: Request,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     category: str = Form("Source file"),
     extracted_data: str = Form(None),
@@ -985,34 +921,7 @@ async def upload_sop_document(
         db.commit()
         db.refresh(new_doc)
         
-        ActivityService.log(
-            db=db,
-            action="upload",
-            entity_type="SOP Document",
-            entity_id=str(new_doc.id),
-            current_user=current_user,
-            details={
-                "sop_id": str(sop.id),
-                "filename": file.filename,
-                "category": category,
-                "sop_title": sop.title
-            },
-            request=request
-        )
-        
-        # Return formatted response to ensure proper serialization
-        return {
-            "id": str(new_doc.id),
-            "name": new_doc.name,
-            "category": new_doc.category,
-            "s3_key": new_doc.s3_key,
-            "created_at": new_doc.created_at,
-            "processed": new_doc.processed,
-            "billing_guidelines": new_doc.billing_guidelines,
-            "payer_guidelines": new_doc.payer_guidelines,
-            "coding_rules_cpt": new_doc.coding_rules_cpt,
-            "coding_rules_icd": new_doc.coding_rules_icd
-        }
+        return new_doc
     except Exception as e:
         db.rollback()
         raise HTTPException(500, f"Failed to upload document: {str(e)}")
@@ -1021,7 +930,6 @@ async def upload_sop_document(
 async def delete_sop_document(
     sop_id: UUID,
     document_id: UUID,
-    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(Permission("SOPs", "UPDATE"))
 ):
@@ -1039,21 +947,6 @@ async def delete_sop_document(
         
         # Delete from database
         db.delete(doc)
-        db.commit()
-
-        ActivityService.log(
-            db=db,
-            action="delete",
-            entity_type="SOP Document",
-            entity_id=str(document_id),
-            current_user=current_user,
-            details={
-                "sop_id": str(sop_id),
-                "filename": doc.name,
-                "category": doc.category
-            },
-            request=request
-        )
         db.commit()
         
         return None
