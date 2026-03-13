@@ -1027,7 +1027,10 @@ class DocumentService:
             
             client_name = None
             doc_type_name = None
-
+            if doc.document_type_id:
+                dt = doc_type_map.get(str(doc.document_type_id))
+                if dt:
+                    doc_type_name = dt.name
             if doc.client_id:
                 c = client_map.get(str(doc.client_id))
                 if c:
