@@ -223,133 +223,297 @@ async def get_document_form_data(
     }
 
 
+# @router.patch("/{document_id}/form-data")
+# async def update_document_form_data(
+#     document_id: int,
+#     form_data: dict, 
+#     current_user: User = Depends(get_current_user),
+#     db: Session = Depends(get_db),
+#     permission: bool = Depends(Permission("documents", "UPDATE")),
+#     background_tasks: BackgroundTasks = None,
+#     request: Request = None
+# ):
+#     """Update form data for a document with role-based access control"""
+#     from ..models.user_role import UserRole
+#     from ..models.role import Role
+#     from ..models.status import Status
+#     from ..models.user_client import UserClient
+#     from ..models.client import Client
+#     from ..models.document_form_data import DocumentFormData
+#     from sqlalchemy import cast, String, or_
+    
+#     # Get user's roles to determine access level
+#     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
+#         User.id == current_user.id,
+#         Role.status_id.in_(
+#             db.query(Status.id).filter(Status.code == 'ACTIVE')
+#         )
+#     ).all()
+    
+#     role_names = [role.name for role in user_roles]
+#     is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
+    
+#     query = DocumentService._document_access_query(db, current_user)
+#     document = query.filter(Document.id == document_id).first()
+
+    
+#     if not is_admin:
+#         assigned_client_ids = select(UserClient.client_id).where(
+#             UserClient.user_id == current_user.id
+#         )
+        
+#         client_documents_query = db.query(Document.id).join(
+#             DocumentFormData, Document.id == DocumentFormData.document_id
+#         ).join(
+#             Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
+#         ).filter(
+#             Client.id.in_(assigned_client_ids)
+#         )
+        
+#         query = query.filter(
+#             or_(
+#                 Document.created_by == current_user.id,
+#                 Document.id.in_(client_documents_query)
+#             )
+#         )
+    
+#     document = query.first()
+#     if not document:
+#         raise HTTPException(status_code=404, detail="Document not found")
+    
+#     from ..models.document_form_data import DocumentFormData
+#     from ..models.form import FormField
+#     from ..models.client import Client
+#     from ..models.document_type import DocumentType
+    
+#     # Helper for resolving data with human-readable labels and values
+#     def resolve_resolved_data(data_dict):
+#         resolved = {}
+#         for field_id, value in data_dict.items():
+#             field = db.query(FormField).filter(FormField.id == field_id).first()
+#             if field:
+#                 display_value = value
+                
+#                 # Check for specific field types or labels for system fields
+#                 is_client = field.field_type == 'client_dropdown' or field.label == 'Client'
+#                 is_doc_type = field.field_type == 'document_type_dropdown' or field.label == 'Document Type'
+                
+#                 if field.field_type == 'dropdown' and field.options:
+#                     for option in field.options:
+#                         if option.get('value') == value:
+#                             display_value = option.get('label', value)
+#                             break
+#                 elif is_client:
+#                     try:
+#                         client = db.query(Client).filter(Client.id == value).first()
+#                         if client:
+#                             display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
+#                     except Exception:
+#                         pass
+#                 elif is_doc_type:
+#                     try:
+#                         doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
+#                         if doc_type:
+#                             display_value = doc_type.name
+#                     except Exception:
+#                         pass
+#                 resolved[field.label] = display_value
+#             else:
+#                 resolved[field_id] = value
+#         return resolved
+
+#     # Capture old and new resolved data to calculate changes
+#     old_data_raw = document.form_data_relation.data if document.form_data_relation else {}
+#     resolved_old = resolve_resolved_data(old_data_raw)
+#     resolved_new = resolve_resolved_data(form_data)
+    
+#     changes = ActivityService.calculate_changes(resolved_old, resolved_new)
+
+#     # Update client_id in the Document record if present in form_data
+#     client_id = DocumentService.extract_client_id_from_form_data(db, form_data)
+#     if client_id:
+#         document.client_id = client_id
+
+#     if not document.form_data_relation:
+#         # Create if not exists (though typically created on upload)
+#         new_record = DocumentFormData(
+#             document_id=document.id,
+#             data=form_data
+#         )
+#         db.add(new_record)
+#     else:
+#         document.form_data_relation.data = {**form_data}
+        
+#     db.commit()
+
+#     # Activity Log
+#     ActivityService.log(
+#         db,
+#         action="UPDATE",
+#         entity_type="document",
+#         entity_id=str(document_id),
+#         current_user=current_user,
+#         details={
+#             "sub_action": "METADATA_UPDATE",
+#             "filename": document.filename,
+#             "changes": changes
+#         },
+#         request=request,
+#         background_tasks=background_tasks
+#     )
+
+#     return {"message": "Form data updated"}
+
+# Fixed PATCH /{document_id}/form-data endpoint
+# Paste this over the existing endpoint in your router file
+
 @router.patch("/{document_id}/form-data")
 async def update_document_form_data(
     document_id: int,
-    form_data: dict, 
+    form_data: dict,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("documents", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None
 ):
-    """Update form data for a document with role-based access control"""
+    """Update form data for a document with role-based access control."""
     from ..models.user_role import UserRole
     from ..models.role import Role
     from ..models.status import Status
     from ..models.user_client import UserClient
     from ..models.client import Client
-    from ..models.document_form_data import DocumentFormData
+    from ..models.document_form_data import DocumentFormData  # imported once only
+    from ..models.form import FormField
+    from ..models.document_type import DocumentType
     from sqlalchemy import cast, String, or_
-    
-    # Get user's roles to determine access level
+    from sqlalchemy.orm.attributes import flag_modified
+
+    # ── 1. Determine role ──────────────────────────────────────────────────
     user_roles = db.query(Role.name).join(UserRole).join(User).filter(
         User.id == current_user.id,
         Role.status_id.in_(
-            db.query(Status.id).filter(Status.code == 'ACTIVE')
+            db.query(Status.id).filter(Status.code == "ACTIVE")
         )
     ).all()
-    
-    role_names = [role.name for role in user_roles]
-    is_admin = any(role in ['ADMIN', 'SUPER_ADMIN'] for role in role_names)
-    
-    query = DocumentService._document_access_query(db, current_user)
-    document = query.filter(Document.id == document_id).first()
+    role_names  = [r.name for r in user_roles]
+    is_admin    = any(r in ("ADMIN", "SUPER_ADMIN", "ORGANISATION_ADMIN") for r in role_names)
 
-    
+    # ── 2. Access check — ONE query, always filtered by document_id ────────
+    # BUG FIX: original code called query.first() a second time without the
+    # document_id filter for non-admin users, returning the first accessible
+    # document instead of the requested one → wrong document was updated.
+    base_query = DocumentService._document_access_query(db, current_user)
+
     if not is_admin:
-        # assigned_client_ids = db.query(UserClient.client_id).filter(
-        #     UserClient.user_id == current_user.id
-        # ).subquery()
         assigned_client_ids = select(UserClient.client_id).where(
             UserClient.user_id == current_user.id
         )
-        
-        client_documents_query = db.query(Document.id).join(
-            DocumentFormData, Document.id == DocumentFormData.document_id
-        ).join(
-            Client, cast(DocumentFormData.data['client_id'], String) == cast(Client.id, String)
-        ).filter(
-            Client.id.in_(assigned_client_ids)
+        client_documents_query = (
+            db.query(Document.id)
+            .join(DocumentFormData, Document.id == DocumentFormData.document_id)
+            .join(
+                Client,
+                cast(DocumentFormData.data["client_id"], String) == cast(Client.id, String)
+            )
+            .filter(Client.id.in_(assigned_client_ids))
         )
-        
-        query = query.filter(
+        base_query = base_query.filter(
             or_(
                 Document.created_by == current_user.id,
                 Document.id.in_(client_documents_query)
             )
         )
-    
-    document = query.first()
+
+    # Always filter by the requested document_id — single fetch
+    document = base_query.filter(Document.id == document_id).first()
+
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
-    
-    from ..models.document_form_data import DocumentFormData
-    from ..models.form import FormField
-    from ..models.client import Client
-    from ..models.document_type import DocumentType
-    
-    # Helper for resolving data with human-readable labels and values
-    def resolve_resolved_data(data_dict):
+
+    # ── 3. Build activity-log diff (batch-load all needed FormFields) ──────
+    # BUG FIX: original resolve_resolved_data did one db.query per field_id (N+1).
+    # Batch-load all field IDs that appear in either old or new data up front.
+    old_data_raw = document.form_data_relation.data if document.form_data_relation else {}
+
+    all_field_ids = set(old_data_raw.keys()) | set(form_data.keys())
+    # Filter out non-UUID keys like "client_id"
+    uuid_field_ids = [fid for fid in all_field_ids if len(str(fid)) == 36]
+
+    fields_bulk  = db.query(FormField).filter(FormField.id.in_(uuid_field_ids)).all()
+    field_lookup = {str(f.id): f for f in fields_bulk}
+
+    client_ids_needed = set()
+    doc_type_ids_needed = set()
+    for data_dict in (old_data_raw, form_data):
+        for fid, val in data_dict.items():
+            field = field_lookup.get(str(fid))
+            if not field or not val:
+                continue
+            if field.field_type in ("client_dropdown",) or field.label == "Client":
+                client_ids_needed.add(str(val))
+            if field.field_type in ("document_type_dropdown",) or field.label == "Document Type":
+                doc_type_ids_needed.add(str(val))
+
+    clients_map   = {str(c.id): c for c in db.query(Client).filter(
+        Client.id.in_(client_ids_needed)).all()} if client_ids_needed else {}
+    doc_types_map = {str(d.id): d for d in db.query(DocumentType).filter(
+        DocumentType.id.in_(doc_type_ids_needed)).all()} if doc_type_ids_needed else {}
+
+    def resolve_data(data_dict: dict) -> dict:
         resolved = {}
-        for field_id, value in data_dict.items():
-            field = db.query(FormField).filter(FormField.id == field_id).first()
-            if field:
-                display_value = value
-                
-                # Check for specific field types or labels for system fields
-                is_client = field.field_type == 'client_dropdown' or field.label == 'Client'
-                is_doc_type = field.field_type == 'document_type_dropdown' or field.label == 'Document Type'
-                
-                if field.field_type == 'dropdown' and field.options:
-                    for option in field.options:
-                        if option.get('value') == value:
-                            display_value = option.get('label', value)
-                            break
-                elif is_client:
-                    try:
-                        client = db.query(Client).filter(Client.id == value).first()
-                        if client:
-                            display_value = client.business_name or f"{client.first_name} {client.last_name}".strip()
-                    except Exception:
-                        pass
-                elif is_doc_type:
-                    try:
-                        doc_type = db.query(DocumentType).filter(DocumentType.id == value).first()
-                        if doc_type:
-                            display_value = doc_type.name
-                    except Exception:
-                        pass
-                resolved[field.label] = display_value
-            else:
-                resolved[field_id] = value
+        for fid, value in data_dict.items():
+            if fid == "client_id":
+                c = clients_map.get(str(value))
+                resolved["Client"] = (
+                    c.business_name or f"{c.first_name} {c.last_name}".strip()
+                ) if c else value
+                continue
+            field = field_lookup.get(str(fid))
+            if not field:
+                resolved[str(fid)] = value
+                continue
+            display = value
+            if field.field_type == "dropdown" and field.options:
+                for opt in field.options:
+                    if opt.get("value") == value:
+                        display = opt.get("label", value)
+                        break
+            elif field.field_type == "client_dropdown" or field.label == "Client":
+                c = clients_map.get(str(value))
+                if c:
+                    display = c.business_name or f"{c.first_name} {c.last_name}".strip()
+            elif field.field_type == "document_type_dropdown" or field.label == "Document Type":
+                dt = doc_types_map.get(str(value))
+                if dt:
+                    display = dt.name
+            resolved[field.label] = display
         return resolved
 
-    # Capture old and new resolved data to calculate changes
-    old_data_raw = document.form_data_relation.data if document.form_data_relation else {}
-    resolved_old = resolve_resolved_data(old_data_raw)
-    resolved_new = resolve_resolved_data(form_data)
-    
+    resolved_old = resolve_data(old_data_raw)
+    resolved_new = resolve_data(form_data)
     changes = ActivityService.calculate_changes(resolved_old, resolved_new)
 
-    # Update client_id in the Document record if present in form_data
+    # ── 4. Update client_id on the Document row if provided ───────────────
     client_id = DocumentService.extract_client_id_from_form_data(db, form_data)
     if client_id:
         document.client_id = client_id
 
+    # ── 5. Persist form data ───────────────────────────────────────────────
+    # BUG FIX: SQLAlchemy does not auto-detect reassignment of a JSONB column
+    # via = {...}. flag_modified() must be called so the change is flushed.
     if not document.form_data_relation:
-        # Create if not exists (though typically created on upload)
-        new_record = DocumentFormData(
+        db.add(DocumentFormData(
             document_id=document.id,
-            data=form_data
-        )
-        db.add(new_record)
+            data=dict(form_data)
+        ))
     else:
-        document.form_data_relation.data = form_data
-        
+        document.form_data_relation.data = dict(form_data)
+        flag_modified(document.form_data_relation, "data")  # ← tells SQLAlchemy the JSON changed
+
     db.commit()
 
-    # Activity Log
+    # ── 6. Activity log ────────────────────────────────────────────────────
     ActivityService.log(
         db,
         action="UPDATE",
@@ -359,10 +523,10 @@ async def update_document_form_data(
         details={
             "sub_action": "METADATA_UPDATE",
             "filename": document.filename,
-            "changes": changes
+            "changes": changes,
         },
         request=request,
-        background_tasks=background_tasks
+        background_tasks=background_tasks,
     )
 
     return {"message": "Form data updated"}

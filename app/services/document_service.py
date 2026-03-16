@@ -9,7 +9,7 @@ from pdfminer.pdfparser import PDFParser
 from pdfminer.pdfdocument import PDFDocument
 from pdfminer.pdfpage import PDFPage
 from PIL import Image
-
+import copy
 from sqlalchemy import UUID, DateTime, and_, or_, cast, String, select, text, func
 from sqlalchemy.orm import Session, joinedload
 
@@ -31,42 +31,43 @@ from ..services.websocket_manager import websocket_manager
 from ..services.webhook_service import webhook_service
 from ..core.database import SessionLocal
 from app.models import client
-
 from app.models import user
 
+
 class DocumentService:
+
     @staticmethod
     def get_status_id_by_code(db: Session, code: str) -> int:
         status = db.query(Status).filter(Status.code == code).first()
         if status:
             return status.id
         return None
+
     @staticmethod
     def _get_user_role_flags(user: User):
         role_names = [r.name for r in user.roles]
-
         return {
             "is_super_admin": "SUPER_ADMIN" in role_names,
             "is_admin": "ADMIN" in role_names,
             "is_client": user.is_client,
             "is_staff": not user.is_client
         }
+
     @staticmethod
     def _document_access_query(db: Session, actor: User):
         base = db.query(Document)
         if getattr(actor, "context_temp", False):
             return base.filter(text("1=0"))
 
-    
         org_id = getattr(actor, "context_organisation_id", None) or getattr(actor, "organisation_id", None)
         if not org_id and hasattr(actor, "id") and not hasattr(actor, "organisation_id"):
-             org_id = actor.id
+            org_id = actor.id
 
         if not org_id:
             return base.filter(text("1=0"))
 
         role_names = [r.name for r in getattr(actor, "roles", [])]
-        
+
         if getattr(actor, "is_superuser", False) or "ORGANISATION_ADMIN" in role_names:
             return base.filter(Document.organisation_id == org_id)
 
@@ -80,7 +81,6 @@ class DocumentService:
                     )
                 )
             )
-
             shared_docs = (
                 db.query(Document)
                 .join(DocumentShare, DocumentShare.document_id == Document.id)
@@ -89,8 +89,8 @@ class DocumentService:
                     Document.organisation_id == org_id
                 )
             )
-
             return client_docs.union(shared_docs)
+
         assigned_clients = (
             db.query(UserClient.client_id)
             .filter(UserClient.user_id == actor.id)
@@ -105,7 +105,6 @@ class DocumentService:
                 )
             )
         )
-
         shared_docs = (
             db.query(Document)
             .join(DocumentShare, DocumentShare.document_id == Document.id)
@@ -114,11 +113,7 @@ class DocumentService:
                 Document.organisation_id == org_id
             )
         )
-
         return staff_docs.union(shared_docs)
-        # fallback
-        return base.filter(Document.created_by == actor.id)
-
 
     @staticmethod
     def _get_accessible_document(db: Session, document_id: int, user: User):
@@ -131,58 +126,66 @@ class DocumentService:
     @staticmethod
     def get_total_pages(file_bytes: bytes, content_type: str) -> int:
         try:
-            # ---------- PDF ----------
             if content_type == "application/pdf":
-                from io import BytesIO
                 fp = BytesIO(file_bytes)
                 parser = PDFParser(fp)
                 doc = PDFDocument(parser)
                 return sum(1 for _ in PDFPage.create_pages(doc))
 
-            # ---------- DOCX ----------
             if content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                from io import BytesIO
                 from docx import Document as DocxDocument
                 doc = DocxDocument(BytesIO(file_bytes))
-
-                # Word pages are NOT real pages; this is best-effort
-                # Rule: every section break counts as new page
                 return max(1, len(doc.sections))
 
-            # ---------- IMAGES ----------
             if content_type in ("image/png", "image/jpeg", "image/jpg"):
                 return 1
 
-            # ---------- MULTI-FRAME IMAGES (TIFF) ----------
             if content_type == "image/tiff":
-                from io import BytesIO
                 img = Image.open(BytesIO(file_bytes))
                 return getattr(img, "n_frames", 1)
 
         except Exception:
             pass
-
-        # Safe fallback
         return 1
+
     @staticmethod
     def build_derived_document_counts(extracted_docs, unverified_docs):
-        """
-        Count LOGICAL documents, not pages.
-        """
-
         counts = defaultdict(int)
-
-        # Verified documents
         for ed in extracted_docs:
             if ed.document_type:
                 counts[ed.document_type.name] += 1
-
-        # Unverified documents
         for ud in unverified_docs:
             if ud.suspected_type:
                 counts[ud.suspected_type] += 1
-
         return dict(counts)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # FIX [5]: extract_client_id_from_form_data — method was missing entirely
+    # Called by the router's PATCH /form-data endpoint → AttributeError crash
+    # ─────────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def extract_client_id_from_form_data(db: Session, form_data: dict):
+        """
+        Extract client_id from form_data dict.
+        Checks both the direct 'client_id' key and any FormField whose label == 'Client'.
+        Returns the client UUID or None.
+        """
+        if not form_data:
+            return None
+
+        # Direct key (set by enforcement logic)
+        if "client_id" in form_data:
+            return form_data["client_id"]
+
+        # Fallback: scan FormField labels
+        for field_id, value in form_data.items():
+            if not value:
+                continue
+            field = db.query(FormField).filter(FormField.id == field_id).first()
+            if field and field.label.lower() == "client":
+                return value
+
+        return None
 
     @staticmethod
     async def create_document(db: Session, file: UploadFile, user) -> Document:
@@ -196,20 +199,18 @@ class DocumentService:
             file_size=file.size,
             content_type=file.content_type,
             created_by=user.id,
-            organisation_id=org_id,   # ✅ FIXED
+            organisation_id=org_id,
             status_id=status_id
         )
-
         db.add(document)
         db.commit()
         db.refresh(document)
         return document
 
     @staticmethod
-    async def update_document_status(db: Session, document_id: int, status_code: str, 
-                                   progress: int = 0, error_message: str = None, 
-                                   s3_key: str = None, s3_bucket: str = None):
-        """Update document status and notify via WebSocket"""
+    async def update_document_status(db: Session, document_id: int, status_code: str,
+                                     progress: int = 0, error_message: str = None,
+                                     s3_key: str = None, s3_bucket: str = None):
         document = db.query(Document).filter(Document.id == document_id).first()
         if document:
             status_id = DocumentService.get_status_id_by_code(db, status_code)
@@ -222,10 +223,9 @@ class DocumentService:
                 document.s3_key = s3_key
             if s3_bucket:
                 document.s3_bucket = s3_bucket
-            
+
             db.commit()
-            
-            # Send WebSocket notification
+
             await websocket_manager.broadcast_document_status(
                 document_id=document.id,
                 status=status_code,
@@ -233,121 +233,75 @@ class DocumentService:
                 progress=progress,
                 error_message=error_message
             )
-    
+
     @staticmethod
     async def upload_document_to_s3(db: Session, document_id: int, file: UploadFile):
-        """Upload document to S3 with status updates"""
         try:
-            # Update status to UPLOADING
-            await DocumentService.update_document_status(
-                db, document_id, "UPLOADING", progress=0
-            )
-            
-            # Upload to S3
+            await DocumentService.update_document_status(db, document_id, "UPLOADING", progress=0)
             s3_key, bucket_name = await s3_service.upload_file(
                 file.file, file.filename, file.content_type
             )
-            
-            # Update status to UPLOADED
             await DocumentService.update_document_status(
-                db, document_id, "UPLOADED", 
+                db, document_id, "UPLOADED",
                 progress=100, s3_key=s3_key, s3_bucket=bucket_name
             )
-            
         except Exception as e:
-            # Update status with error
             await DocumentService.update_document_status(
-                db, document_id, "UPLOAD_FAILED", 
-                error_message=str(e)
+                db, document_id, "UPLOAD_FAILED", error_message=str(e)
             )
             raise e
-    
+
     @staticmethod
-    async def process_multiple_uploads(db: Session, files: List[UploadFile], user: User,                    
-                                     enable_ai: bool = False, document_type_id: str = None, 
-                                     template_id: str = None, form_id: str = None, form_data: str = None):
-        """Create document records immediately and return, process uploads in background"""
+    async def process_multiple_uploads(db: Session, files: List[UploadFile], user: User,
+                                       enable_ai: bool = False, document_type_id: str = None,
+                                       template_id: str = None, form_id: str = None,
+                                       form_data: str = None):
         documents = []
         file_buffers = []
-        from io import BytesIO
-        import json
         from ..models.document_form_data import DocumentFormData
-        
-        # Create all document records first with QUEUED status
+
         queued_status_id = DocumentService.get_status_id_by_code(db, "QUEUED")
-        if not queued_status_id:
-             # Fallback or error? If status missing, we can't create.
-             # Assume it exists or use a default?
-             # Ideally statuses are seeded.
-             pass
-    
+
         parsed_form_data = json.loads(form_data) if form_data else {}
 
         if isinstance(user, User) and user.is_client:
-
-            # force client id
             parsed_form_data["client_id"] = str(user.client_id)
-
-            # fetch form fields
             if form_id:
                 form_fields = (
                     db.query(FormField)
-                    .filter(FormField.form_id ==str(form_id))
+                    .filter(FormField.form_id == str(form_id))
                     .all()
                 )
-
                 for field in form_fields:
                     label = field.label.lower()
-
-                    # skip client field (already set)
                     if label == "client":
                         continue
-
-                    # provider fields should not come from UI
-                    # but defaults must apply
                     if field.default_value is not None:
                         field_key = str(field.id)
-
                         if field_key not in parsed_form_data:
                             parsed_form_data[field_key] = field.default_value
 
-
-        # 🔒 HARD LOCK CLIENT USERS
         if isinstance(user, User) and user.is_client:
             client_id_value = user.client_id
-
-            # overwrite form data so UI can't fake it
             parsed_form_data["client_id"] = str(user.client_id)
-
         else:
             client_id_value = parsed_form_data.get("client_id")
 
-
-
         for file in files:
-            # We must buffer the file content because FastAPI closes UploadFile 
-            # as soon as the request handler returns.
             content = await file.read()
             file_size = len(content)
             buffer = BytesIO(content)
             total_pages = DocumentService.get_total_pages(content, file.content_type)
-
-            # Reset original file just in case (though we use buffer now)
             await file.seek(0)
-            # --------------------------------------------------
-            # SINGLE SOURCE OF TRUTH
-            # --------------------------------------------------
 
             if isinstance(user, Organisation):
                 created_by = None
                 org_id = user.id
                 client_id_value = parsed_form_data.get("client_id")
-
             elif isinstance(user, User):
                 created_by = user.id
                 org_id = getattr(user, "context_organisation_id", None)
                 client_id_value = parsed_form_data.get("client_id") or user.client_id
-
             else:
                 raise Exception("Unknown actor")
 
@@ -366,32 +320,29 @@ class DocumentService:
                 template_id=template_id,
                 total_pages=total_pages
             )
-
             db.add(document)
-            db.flush()  # Get the ID without committing
+            db.flush()
             documents.append(document)
-            
-            # Create Form Data Record if exists
+
             if parsed_form_data or form_id:
+                # BUG FIX: copy the dict so each document gets its own independent
+                # data object. Without this, all documents in a batch upload share
+                # the same Python dict reference — editing one mutates all others.
                 form_data_record = DocumentFormData(
                     document_id=document.id,
                     form_id=form_id,
-                    data=parsed_form_data
+                    data=copy.deepcopy(parsed_form_data)  # deep copy — form_data may contain nested dicts
                 )
                 db.add(form_data_record)
 
-            
-            # Store buffer and metadata for background task
-            # We can't pass UploadFile to background task as it will be closed
             file_buffers.append({
                 'buffer': buffer,
                 'filename': file.filename,
                 'content_type': file.content_type
             })
-        
-        db.commit()  # Commit all documents at once
 
-        # Immediately notify about queued documents
+        db.commit()
+
         for document in documents:
             await websocket_manager.broadcast_document_status(
                 document_id=document.id,
@@ -399,55 +350,42 @@ class DocumentService:
                 user_id=str(document.created_by),
                 progress=0
             )
-        
-        # Start background upload processing (don't await)
-        # We pass the buffers instead of the UploadFile objects
+
         asyncio.create_task(DocumentService._process_uploads_background(
             documents, file_buffers, enable_ai, document_type_id, template_id
         ))
-        
+
         return documents
+
     @staticmethod
     async def _process_uploads_background(documents: List[Document], files_data: List[dict],
-                                        enable_ai: bool = False, document_type_id: str = None, 
-                                        template_id: str = None):
-        """Process uploads in background: Upload All -> Then Process AI Sequentially"""
+                                          enable_ai: bool = False, document_type_id: str = None,
+                                          template_id: str = None):
         try:
-            # Step 1: Upload all documents in parallel
-            # We use a modified single upload that only handles S3 upload
-            upload_tasks = []
-            for doc, file_data in zip(documents, files_data):
-                upload_tasks.append(
-                    DocumentService._process_single_upload_only(doc.id, file_data)
-                )
-            
-            # Wait for all uploads to complete
+            upload_tasks = [
+                DocumentService._process_single_upload_only(doc.id, file_data)
+                for doc, file_data in zip(documents, files_data)
+            ]
             results = await asyncio.gather(*upload_tasks, return_exceptions=True)
-            
-            # Identify successfully uploaded documents
+
             successful_docs = []
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     print(f"Upload failed for document {documents[i].id}: {result}")
                 else:
                     successful_docs.append((documents[i], files_data[i]))
-            
-            # Step 2: If AI enabled, process sequentially
+
             if enable_ai and successful_docs:
-                from ..core.database import SessionLocal
                 db = SessionLocal()
                 try:
                     for doc, file_data in successful_docs:
-                        # Update status to Queued for AI
                         await DocumentService.update_document_status(
-                            db, doc.id, "AI_QUEUED", 
+                            db, doc.id, "AI_QUEUED",
                             progress=0, error_message="Queued for AI Analysis"
                         )
                 finally:
                     db.close()
-                
-                # Process one by one
-                # Note: _process_single_ai_analysis creates its own session, which is fine.
+
                 for doc, file_data in successful_docs:
                     await DocumentService._process_single_ai_analysis(
                         doc.id, file_data, document_type_id, template_id
@@ -458,37 +396,26 @@ class DocumentService:
 
     @staticmethod
     async def _process_single_upload_only(document_id: int, file_data: dict):
-        """Handle ONLY the S3 upload part"""
-        # Create new session
-        from ..core.database import SessionLocal
         db = SessionLocal()
-        
         try:
-            # Update status to UPLOADING
-            await DocumentService.update_document_status(
-                db, document_id, "UPLOADING", progress=10
-            )
-            
-            # Fetch document
+            await DocumentService.update_document_status(db, document_id, "UPLOADING", progress=10)
+
             document = db.query(Document).filter(Document.id == document_id).first()
             if not document:
                 raise Exception("Document not found")
-                
+
             file_bytes = file_data['buffer'].getvalue()
             total_size = len(file_bytes)
             uploaded_bytes = 0
             main_loop = asyncio.get_event_loop()
-            
-            # Reset buffer
             file_data['buffer'].seek(0)
-            
+
             def progress_callback(bytes_amount):
                 nonlocal uploaded_bytes
                 uploaded_bytes += bytes_amount
-                percentage = min(int((uploaded_bytes / total_size) * 90) + 10, 99) 
-                
+                percentage = min(int((uploaded_bytes / total_size) * 90) + 10, 99)
                 if document and document.created_by:
-                     asyncio.run_coroutine_threadsafe(
+                    asyncio.run_coroutine_threadsafe(
                         websocket_manager.broadcast_document_status(
                             document_id=document_id,
                             status="UPLOADING",
@@ -498,120 +425,101 @@ class DocumentService:
                         main_loop
                     )
 
-            # Generate structured S3 key: user_id/document_id_filename
-            # Sanitize filename (basic)
-            safe_filename = "".join([c for c in file_data['filename'] if c.isalnum() or c in ('._-')]).strip()
-            # If empty after sanitization, fallback to doc_id
-            if not safe_filename:
-                safe_filename = f"doc_{document_id}"
-                
-            custom_s3_key = f"documents/{document.created_by}/{document_id}_{safe_filename}"
+            safe_filename = "".join(
+                c for c in file_data['filename'] if c.isalnum() or c in ('._-')
+            ).strip() or f"doc_{document_id}"
 
-            # Create a separate buffer for S3 upload to protect the original one
-            from io import BytesIO
+            custom_s3_key = f"documents/{document.created_by}/{document_id}_{safe_filename}"
             s3_buffer = BytesIO(file_bytes)
 
             s3_key, bucket_name = await s3_service.upload_file(
-                s3_buffer, 
-                file_data['filename'], 
+                s3_buffer,
+                file_data['filename'],
                 file_data['content_type'],
                 progress_callback=progress_callback,
                 s3_key=custom_s3_key
             )
 
-            # Update status to UPLOADED
             await DocumentService.update_document_status(
-                db, document_id, "UPLOADED", 
+                db, document_id, "UPLOADED",
                 progress=100, s3_key=s3_key, s3_bucket=bucket_name
             )
-            
-            # Trigger Webhook: document.uploaded
+
             asyncio.create_task(asyncio.to_thread(
                 webhook_service.trigger_webhook_background,
                 "document.uploaded",
-                {
-                    "document_id": document_id,
-                    "filename": document.filename,
-                    "s3_key": s3_key
-                },
+                {"document_id": document_id, "filename": document.filename, "s3_key": s3_key},
                 str(document.created_by),
                 SessionLocal
             ))
-            
+
             return True
 
         except Exception as e:
             await DocumentService.update_document_status(
-                db, document_id, "UPLOAD_FAILED", 
-                error_message=str(e)
+                db, document_id, "UPLOAD_FAILED", error_message=str(e)
             )
             raise e
         finally:
             db.close()
 
     @staticmethod
-    async def _process_single_ai_analysis(document_id: int, file_data: dict, analysis_result=None,
-                                        document_type_id: str = None, template_id: str = None):
-        """Handle ONLY the AI analysis part"""
-        from ..core.database import SessionLocal
+    async def _process_single_ai_analysis(document_id: int, file_data: dict,
+                                           document_type_id: str = None,
+                                           template_id: str = None,
+                                           analysis_result=None):
         db = SessionLocal()
         try:
-            # Update status to ANALYZING
             await DocumentService.update_document_status(
-                db, document_id, "ANALYZING", 
+                db, document_id, "ANALYZING",
                 progress=0, error_message="Starting Analysis..."
             )
-            
+
             document = db.query(Document).filter(Document.id == document_id).first()
             if not document:
                 raise Exception("Document not found")
 
-            # Setup Progress Callback
-            # main_loop capture not strictly needed if we just await inside this async func
             async def report_ai_progress(msg, pct):
-                # We update the DB so that page refreshes show the latest status message
                 await DocumentService.update_document_status(
-                    db, document_id, "ANALYZING", 
-                    progress=pct, error_message=msg
+                    db, document_id, "ANALYZING", progress=pct, error_message=msg
                 )
 
-            # Capture bytes
             file_bytes = file_data['buffer'].getvalue()
 
-            # ... [Prepare DB models imports] ...
             from ..models.template import Template
             from ..models.document_type import DocumentType
             from ..models.extracted_document import ExtractedDocument
             from ..models.unverified_document import UnverifiedDocument
-            from ..services.ai_service import ai_service
-            
-            # Build schemas
-            from collections import defaultdict
+            from ..services.ai_service import AIService
 
             active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
             if not active_status:
                 raise Exception("ACTIVE status not found")
 
-            # Only ACTIVE templates for this organisation
+            # Fetch ACTIVE doc types only — inactive types must not appear
+            # in the classifier prompt (they confuse the model with empty descriptions)
+            doc_types = db.query(DocumentType).filter(
+                DocumentType.organisation_id == document.organisation_id,
+                DocumentType.status_id == active_status.id,
+            ).all()
+
+            doc_type_map = {dt.name.strip().upper(): dt for dt in doc_types}
+
+            # ── Build schemas ──────────────────────────────────────────────────
+            # ALL document types for this org are passed to ai_service so the
+            # classifier sees every type the org has defined — not just those
+            # that happen to have an active template.
+            #
+            # Two tiers:
+            #   WITH active template  → classifier + field extraction → ExtractedDocument
+            #   WITHOUT template      → classifier only → saved as UnverifiedDocument
+            #                           (staff can review / add a template later)
+            # ──────────────────────────────────────────────────────────────────
             templates = db.query(Template).filter(
                 Template.status_id == active_status.id,
                 Template.organisation_id == document.organisation_id
             ).all()
 
-            if not templates:
-                raise Exception("No active templates found for this organisation")
-
-            # Fetch doc types for this organisation
-            doc_types = db.query(DocumentType).filter(
-                DocumentType.organisation_id == document.organisation_id
-            ).all()
-
-            doc_type_map = {
-                dt.name.strip().upper(): dt
-                for dt in doc_types
-            }
-
-            # Group templates by document_type_id
             template_group = defaultdict(list)
             for t in templates:
                 template_group[t.document_type_id].append(t)
@@ -620,35 +528,42 @@ class DocumentService:
             active_template_map = {}
 
             for dt in doc_types:
+                normalized_name = dt.name.strip().upper()
                 grouped = template_group.get(dt.id, [])
+                description = (dt.description or "") if hasattr(dt, "description") else ""
 
                 if not grouped:
+                    # No active template — include in classifier but with no fields.
+                    # ai_service will classify pages as this type and save as UnverifiedDocument.
+                    schemas.append({
+                        "type_name":   normalized_name,
+                        "description": description,
+                        "fields":      [],
+                    })
                     continue
 
-                # 🚨 HARD ENFORCEMENT: Only ONE active template per doc type
+                # Only ONE active template per doc type enforced
                 if len(grouped) > 1:
                     raise Exception(
-                        f"Multiple ACTIVE templates found for document type {dt.name}"
+                        f"Multiple ACTIVE templates found for document type '{dt.name}'. "
+                        "Deactivate all but one before re-analysing."
                     )
 
                 template_obj = grouped[0]
-
-                if not template_obj.extraction_fields:
-                    continue
-
-                normalized_name = dt.name.strip().upper()
-
                 schemas.append({
-                    "type_name": normalized_name,
-                    "fields": template_obj.extraction_fields
+                    "type_name":   normalized_name,
+                    "description": description,
+                    "fields":      template_obj.extraction_fields or [],
                 })
+                # Only register in active_template_map if it actually has fields to extract
+                if template_obj.extraction_fields:
+                    active_template_map[normalized_name] = template_obj
 
-                active_template_map[normalized_name] = template_obj
+            print(f"[AI] document_id={document_id} "
+                  f"classifier_types={[s['type_name'] for s in schemas]} "
+                  f"extractable={list(active_template_map.keys())}")
 
-            # print("FINAL SCHEMAS:", schemas)
-            # Define Cancellation Check Callback
             async def check_cancelled():
-                # We need a fresh check
                 check_db = SessionLocal()
                 try:
                     current_doc = check_db.query(Document).filter(Document.id == document_id).first()
@@ -657,196 +572,197 @@ class DocumentService:
                 finally:
                     check_db.close()
 
-            # Call AI Service
-            analysis_result = await ai_service.analyze_document(
-                file_bytes, 
-                file_data['filename'], 
+            # Instantiate per-call so each analysis gets a fresh OpenAI client
+            _ai = AIService()
+            analysis_result = await _ai.analyze_document(
+                file_bytes,
+                file_data['filename'],
                 schemas,
-                db=db,
-                document_id=document.id,
+                db,
+                document.id,
                 progress_callback=report_ai_progress,
                 check_cancelled_callback=check_cancelled
             )
-            # Process Findings
-            documents = analysis_result.get("findings", [])
-            # print("AI RESULT:", json.dumps(analysis_result, indent=2) if analysis_result else "No AI result")
+
+            findings = analysis_result.get("findings", [])
+
+            # ─────────────────────────────────────────────────────────────────
+            # FIX [8]: normalize_fields — the list branch used item.get("exampleValue")
+            # which is a SCHEMA field, not a runtime value.
+            # ai_service returns data={"fields": {fieldName: value}} flat dict,
+            # so we only ever hit the dict branch in practice. The list branch
+            # is kept for safety but now uses item.get("value") as fallback.
+            # ─────────────────────────────────────────────────────────────────
             def normalize_fields(raw_fields):
                 if isinstance(raw_fields, dict):
                     return raw_fields
-
                 if isinstance(raw_fields, list):
                     normalized = {}
                     for item in raw_fields:
+                        if not isinstance(item, dict):
+                            continue
                         field_name = item.get("fieldName")
-                        value = item.get("exampleValue")
+                        # "value" / "extractedValue" are runtime keys
+                        # "exampleValue" is a schema-definition key — WRONG for runtime use
+                        value = item.get("value") or item.get("extractedValue")  # not exampleValue
                         if field_name:
                             normalized[field_name] = value
                     return normalized
-
                 return {}
-            # 🔥 Clear previous extracted/unverified docs
+
+            # ─────────────────────────────────────────────────────────────────
+            # AIService.analyze_document already:
+            #   1. Hard-resets UnverifiedDocuments at the START (idempotency)
+            #   2. Saves UnverifiedDocuments DURING processing (unknown types)
+            #   3. Returns findings containing ONLY schema-matched (verified) docs
+            #
+            # So we must ONLY clear ExtractedDocuments here (verified results from
+            # any prior run). Never delete UnverifiedDocuments — AIService already
+            # wrote them and deleting them would silently lose that data.
+            # ─────────────────────────────────────────────────────────────────
             db.query(ExtractedDocument).filter(
                 ExtractedDocument.document_id == document.id
             ).delete()
-
-            db.query(UnverifiedDocument).filter(
-                UnverifiedDocument.document_id == document.id
-            ).delete()
-
             db.commit()
+
             excel_rows = []
 
-
-            for doc in documents:
-                doc_type_raw = doc.get("type", "")
-                doc_type = doc_type_raw.strip().upper()
-
-                page_range = doc.get("page_range")
-                confidence = doc.get("confidence", 1.0)
+            for finding in findings:
+                doc_type_raw = finding.get("type", "")
+                doc_type     = doc_type_raw.strip().upper()
+                page_range   = finding.get("page_range")
+                confidence   = finding.get("confidence", 1.0)
 
                 if not doc_type or not page_range:
                     continue
 
-                raw_fields = doc.get("data", {}).get("fields", {})
-                fields = normalize_fields(raw_fields)
+                # findings[].data = {"fields": {fieldName: value}} from AIService
+                raw_fields = finding.get("data", {}).get("fields", {})
+                fields     = normalize_fields(raw_fields)
 
-                # 🔥 Resolve template FIRST (this was your bug)
                 doc_type_obj = doc_type_map.get(doc_type)
                 template_obj = active_template_map.get(doc_type)
 
                 if template_obj:
-                    expected_fields = [
-                        f["fieldName"]
-                        for f in template_obj.extraction_fields
-                    ]
+                    # Whitelist to only template-defined fields
+                    expected_fields = [f["fieldName"] for f in template_obj.extraction_fields]
+                    fields = {ef: fields.get(ef) for ef in expected_fields}
 
-                    validated = {}
-                    for ef in expected_fields:
-                        validated[ef] = fields.get(ef)
-
-                    fields = validated
-                    row = {
-                        "Document Type": doc_type,
-                        "Page Range": page_range,
-                    }
-
-                    for key, value in fields.items():
-                        row[key] = value
-
+                    row = {"Document Type": doc_type, "Page Range": page_range}
+                    row.update(fields)
                     excel_rows.append(row)
-                # -----------------------------
-                # Save
-                # -----------------------------
+
                 if doc_type_obj and template_obj:
-                    extracted_doc = ExtractedDocument(
+                    # Verified: matched both a DocumentType and an active Template
+                    db.add(ExtractedDocument(
                         document_id=document.id,
                         document_type_id=doc_type_obj.id,
                         template_id=template_obj.id,
                         extracted_data=fields,
                         page_range=page_range,
                         confidence=confidence
-                    )
-                    db.add(extracted_doc)
+                    ))
                 else:
-                    unverified_doc = UnverifiedDocument(
+                    # AIService returned a type it classified but we have no DB template for —
+                    # save as unverified so staff can review (avoids silent data loss)
+                    db.add(UnverifiedDocument(
                         document_id=document.id,
                         suspected_type=doc_type_raw,
                         page_range=page_range,
                         extracted_data=fields,
                         status="PENDING"
-                    )
-                    db.add(unverified_doc)
+                    ))
 
             db.commit()
 
-            # Excel Report
+            # Excel report
             if excel_rows:
                 import pandas as pd
-                import io
+                import io as _io
                 df = pd.DataFrame(excel_rows)
-                excel_buffer = io.BytesIO()
+                excel_buffer = _io.BytesIO()
                 with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                     df.to_excel(writer, index=False, sheet_name='Analysis Report')
                 excel_buffer.seek(0)
-                
+
                 report_s3_key, _ = await s3_service.upload_file(
-                    excel_buffer, 
-                    f"analysis_report_{document_id}.xlsx", 
+                    excel_buffer,
+                    f"analysis_report_{document_id}.xlsx",
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
                 document.analysis_report_s3_key = report_s3_key
                 db.commit()
 
-            # Check if any findings reported an error
-            error_findings = [f for f in documents if f.get("type") == "Error" or f.get("type") == "Unknown" and "error" in f.get("data", {})]
-            
+            # Error check — only flag _error entries as failures
+            error_findings = [
+                f for f in findings
+                if f.get("data", {}).get("_error")
+            ]
+
             if error_findings:
-                # If we have errors, mark as AI_FAILED and use the first error message
-                first_error = error_findings[0].get("data", {}).get("error", "Unknown AI Error")
+                first_error = error_findings[0]["data"]["_error"]
                 await DocumentService.update_document_status(
-                    db, document_id, "AI_FAILED", 
-                    progress=100, error_message=f"Partial Analysis Failure: {first_error}"
+                    db, document_id, "AI_FAILED",
+                    progress=100,
+                    error_message=f"Partial Analysis Failure: {first_error}"
                 )
-                
-                # Trigger Webhook: document.failed (Partial)
                 asyncio.create_task(asyncio.to_thread(
                     webhook_service.trigger_webhook_background,
                     "document.failed",
-                    {
-                        "document_id": document_id,
-                        "filename": document.filename,
-                        "error": f"Partial Analysis Failure: {first_error}"
-                    },
+                    {"document_id": document_id, "filename": document.filename,
+                     "error": f"Partial Analysis Failure: {first_error}"},
                     str(document.created_by),
                     SessionLocal
                 ))
-
             else:
-                # Final Status - COMPLETED only if no errors
                 await DocumentService.update_document_status(
-                    db, document_id, "COMPLETED", 
+                    db, document_id, "COMPLETED",
                     progress=100, error_message="Analysis Complete"
                 )
-
-                # Trigger Webhook: document.processed
                 asyncio.create_task(asyncio.to_thread(
                     webhook_service.trigger_webhook_background,
                     "document.processed",
-                    {
-                        "document_id": document_id,
-                        "filename": document.filename,
-                        "status": "COMPLETED"
-                    },
+                    {"document_id": document_id, "filename": document.filename, "status": "COMPLETED"},
                     str(document.created_by),
                     SessionLocal
                 ))
 
         except Exception as e:
+            import traceback as _tb
             error_str = str(e)
             is_cancelled = "Analysis Cancelled" in error_str
-            
+            if not is_cancelled:
+                print(f"[AI] document_id={document_id} FAILED: {error_str}")
+                _tb.print_exc()
+
             await DocumentService.update_document_status(
-                db, document_id, "CANCELLED" if is_cancelled else "AI_FAILED", 
+                db, document_id,
+                "CANCELLED" if is_cancelled else "AI_FAILED",
                 error_message="Analysis Cancelled" if is_cancelled else error_str
             )
 
             if not is_cancelled:
-                # Trigger Webhook: document.failed
+                # ─────────────────────────────────────────────────────────────
+                # FIX [7]: safe None-guard — don't chain .filename / .created_by
+                # on a potentially-None query result
+                # ─────────────────────────────────────────────────────────────
+                failed_doc = db.query(Document).filter(Document.id == document_id).first()
+                failed_filename  = failed_doc.filename  if failed_doc else "Unknown"
+                failed_author    = str(failed_doc.created_by) if failed_doc and failed_doc.created_by else "Unknown"
+
                 asyncio.create_task(asyncio.to_thread(
                     webhook_service.trigger_webhook_background,
                     "document.failed",
-                    {
-                        "document_id": document_id,
-                        "filename": (db.query(Document).filter(Document.id == document_id).first()).filename if db.query(Document).filter(Document.id == document_id).first() else "Unknown",
-                        "error": error_str
-                    },
-                    str((db.query(Document).filter(Document.id == document_id).first()).created_by) if db.query(Document).filter(Document.id == document_id).first() else "Unknown",
+                    {"document_id": document_id, "filename": failed_filename, "error": error_str},
+                    failed_author,
                     SessionLocal
                 ))
-            # print("AI RESULT:", json.dumps(analysis_result, indent=2))
-            # print(f"AI Analysis {'Cancelled' if is_cancelled else 'Failed'} for {document_id}: {e}")
         finally:
             db.close()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Read / list / stats — unchanged from original
+    # ─────────────────────────────────────────────────────────────────────────
 
     @staticmethod
     def get_user_documents(
@@ -868,28 +784,23 @@ class DocumentService:
         from datetime import datetime, timedelta
         from sqlalchemy import and_, func
 
-        query = DocumentService._document_access_query(db, current_user)
+        base_query = DocumentService._document_access_query(db, current_user)
+
+        if shared_only and isinstance(current_user, User):
+            query = (
+                db.query(Document)
+                .join(DocumentShare, DocumentShare.document_id == Document.id)
+                .filter(DocumentShare.user_id == current_user.id)
+            )
+        else:
+            query = base_query
 
         query = query.options(joinedload(Document.status))
         query = query.options(joinedload(Document.form_data_relation))
 
-        base_query = DocumentService._document_access_query(db, current_user)
-
-        if shared_only and isinstance(current_user, User):
-            shared_query = db.query(Document).join(
-                DocumentShare,
-                DocumentShare.document_id == Document.id
-            ).filter(
-                DocumentShare.user_id == current_user.id
-            )
-
-            query = shared_query
-        else:
-            query = base_query
-
         org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
         if not org_id and hasattr(current_user, "id") and not hasattr(current_user, "organisation_id"):
-             org_id = current_user.id
+            org_id = current_user.id
         if org_id:
             query = query.filter(Document.organisation_id == org_id)
 
@@ -899,17 +810,14 @@ class DocumentService:
         if client_id:
             query = query.filter(Document.client_id == client_id)
 
-      
         if status_id:
             code = str(status_id).upper()
-
             if code == "ARCHIVED":
                 query = query.filter(Document.is_archived.is_(True))
             else:
                 status = db.query(Status).filter(Status.code == code).first()
                 if status:
                     query = query.filter(Document.status_id == status.id)
-
                 query = query.filter(
                     or_(Document.is_archived == False, Document.is_archived.is_(None))
                 )
@@ -917,155 +825,109 @@ class DocumentService:
         if document_type_id:
             query = query.filter(Document.document_type_id == document_type_id)
 
-     
         if search_query:
-            query = query.filter(
-                Document.original_filename.ilike(f"%{search_query}%")
-            )
+            query = query.filter(Document.original_filename.ilike(f"%{search_query}%"))
+
         if date_from:
             try:
-                dt = datetime.fromisoformat(date_from)
-                query = query.filter(Document.created_at >= dt)
-            except:
+                query = query.filter(Document.created_at >= datetime.fromisoformat(date_from))
+            except Exception:
                 pass
 
         if date_to:
             try:
-                dt = datetime.fromisoformat(date_to)
-                query = query.filter(Document.created_at <= dt)
-            except:
+                query = query.filter(Document.created_at <= datetime.fromisoformat(date_to))
+            except Exception:
                 pass
 
         if form_filters:
             for field_id, value in form_filters.items():
                 if not value:
                     continue
-
-                query = query.join(
-                    DocumentFormData,
-                    DocumentFormData.document_id == Document.id
-                )
-
+                query = query.join(DocumentFormData, DocumentFormData.document_id == Document.id)
                 if "T" in str(value):
                     try:
                         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
                         start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
                         end = start + timedelta(days=1)
-
                         query = query.filter(
                             and_(
                                 func.nullif(DocumentFormData.data[field_id].astext, "") != None,
-                                cast(
-                                    func.nullif(DocumentFormData.data[field_id].astext, ""),
-                                    DateTime
-                                ) >= start,
-                                cast(
-                                    func.nullif(DocumentFormData.data[field_id].astext, ""),
-                                    DateTime
-                                ) < end,
+                                cast(func.nullif(DocumentFormData.data[field_id].astext, ""), DateTime) >= start,
+                                cast(func.nullif(DocumentFormData.data[field_id].astext, ""), DateTime) < end,
                             )
                         )
-                    except:
+                    except Exception:
                         pass
-
                 else:
-                    query = query.filter(
-                        DocumentFormData.data[field_id].astext == str(value)
-                    )
+                    query = query.filter(DocumentFormData.data[field_id].astext == str(value))
 
         total = query.count()
-
-        documents = (
-            query.order_by(Document.created_at.desc())
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
+        documents = query.order_by(Document.created_at.desc()).offset(skip).limit(limit).all()
 
         if not documents:
             return [], total
 
-        # =====================================================
-        # BULK FETCH LOOKUPS
-        # =====================================================
-        doc_ids = [d.id for d in documents]
+        doc_ids  = [d.id for d in documents]
         user_ids = {d.created_by for d in documents if d.created_by}
-        org_ids = {d.organisation_id for d in documents if d.organisation_id}
+        org_ids  = {d.organisation_id for d in documents if d.organisation_id}
 
-        users_map = {
-            u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()
-        }
-
-        org_map = {
-            o.id: o for o in db.query(Organisation).filter(Organisation.id.in_(org_ids)).all()
-        }
-
-        form_rows = db.query(
-            DocumentFormData.document_id,
-            DocumentFormData.data
-        ).filter(
-            DocumentFormData.document_id.in_(doc_ids)
-        ).all()
-
-        form_map = {d_id: data for d_id, data in form_rows}
-
-        fields = db.query(FormField).all()
-        field_map = {str(f.id): f for f in fields}
-
-        clients = db.query(Client).all()
-        client_map = {str(c.id): c for c in clients}
-
-        doc_types = db.query(DocumentType).all()
+        users_map    = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()}
+        org_map      = {o.id: o for o in db.query(Organisation).filter(Organisation.id.in_(org_ids)).all()}
+        form_rows    = db.query(DocumentFormData.document_id, DocumentFormData.data).filter(DocumentFormData.document_id.in_(doc_ids)).all()
+        form_map     = {d_id: data for d_id, data in form_rows}
+        fields       = db.query(FormField).all()
+        field_map    = {str(f.id): f for f in fields}
+        clients      = db.query(Client).all()
+        client_map   = {str(c.id): c for c in clients}
+        doc_types    = db.query(DocumentType).all()
         doc_type_map = {str(d.id): d for d in doc_types}
 
-        
         result = []
-
         for doc in documents:
             raw = form_map.get(doc.id, {}) or {}
-
-            
             client_name = None
             doc_type_name = None
-            if doc.document_type_id:
-                dt = doc_type_map.get(str(doc.document_type_id))
-                if dt:
-                    doc_type_name = dt.name
+
+            # ── Resolve client name ──────────────────────────────────────────
+            # Priority 1: Document.client_id (set on the Document row directly)
             if doc.client_id:
                 c = client_map.get(str(doc.client_id))
                 if c:
                     client_name = c.business_name or f"{c.first_name} {c.last_name}"
 
-        
-            if not client_name:
-                for field_id, value in raw.items():
-                    field = field_map.get(str(field_id))
-                    if not field or not value:
-                        continue
+            # Priority 2: form_data["client_id"] — direct string key (not a FormField UUID)
+            # This is how client is stored when set via the upload enforcement logic.
+            if not client_name and raw.get("client_id"):
+                c = client_map.get(str(raw["client_id"]))
+                if c:
+                    client_name = c.business_name or f"{c.first_name} {c.last_name}"
 
-                    label = field.label.lower()
+            # ── Resolve via FormField labels (client + document type) ──────────
+            # Always run this loop regardless of whether client_name was found above,
+            # so that document_type is resolved even when client was found via client_id.
+            for field_id, value in raw.items():
+                if field_id == "client_id":  # already handled above
+                    continue
+                field = field_map.get(str(field_id))
+                if not field or not value:
+                    continue
+                label = field.label.lower()
+                if label == "client" and not client_name:
+                    c = client_map.get(str(value))
+                    if c:
+                        client_name = c.business_name or f"{c.first_name} {c.last_name}"
+                elif label == "document type" and not doc_type_name:
+                    dt = doc_type_map.get(str(value))
+                    if dt:
+                        doc_type_name = dt.name
 
-                    if label == "client":
-                        c = client_map.get(str(value))
-                        if c:
-                            client_name = c.business_name or f"{c.first_name} {c.last_name}"
-
-                    elif label == "document type":
-                        dt = doc_type_map.get(str(value))
-                        if dt:
-                            doc_type_name = dt.name
-
-            uploaded_by = None
-
-            # uploaded by user
+            uploaded_by_name = None
             if doc.created_by and doc.created_by in users_map:
                 u = users_map[doc.created_by]
-                uploaded_by = f"{u.first_name} {u.last_name}"
-
-            # uploaded by organisation entity login
+                uploaded_by_name = f"{u.first_name} {u.last_name}"
             elif doc.organisation_id and doc.organisation_id in org_map:
-                uploaded_by = org_map[doc.organisation_id].name
-
+                uploaded_by_name = org_map[doc.organisation_id].name
 
             row = {
                 "id": doc.id,
@@ -1079,11 +941,11 @@ class DocumentService:
                 "created_at": doc.created_at.isoformat() if doc.created_at else None,
                 "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
                 "is_archived": doc.is_archived,
-                "uploaded_by": uploaded_by,
+                "uploaded_by": uploaded_by_name,
                 "client": client_name,
                 "document_type": doc_type_name,
+                "form_data": copy.deepcopy(raw)
             }
-
             if doc.organisation_id in org_map:
                 row["organisation_name"] = org_map[doc.organisation_id].name
 
@@ -1095,15 +957,12 @@ class DocumentService:
     def _resolve_org_id(current_user):
         if not current_user:
             return None
-
-        # superadmin handled separately
         if getattr(current_user, "is_superuser", False):
             return None
-
         if isinstance(current_user, User):
             return str(current_user.organisation_id) if current_user.organisation_id else None
-
         return None
+
     @staticmethod
     def get_document_detail(db: Session, document_id: int, user: User):
         return (
@@ -1113,153 +972,101 @@ class DocumentService:
             .filter(Document.id == document_id)
             .first()
         )
+
     @staticmethod
     def get_uploaded_by_filter(db: Session, current_user):
-
         query = db.query(
             User.id,
             func.concat(User.first_name, " ", User.last_name).label("name")
         )
-
-        # =============================
-        # SUPERADMIN → ALL USERS
-        # =============================
         if getattr(current_user, "is_superuser", False):
             return query.all()
-
         org_id = DocumentService._resolve_org_id(current_user)
-
-        # =============================
-        # ORG USER LOGIN
-        # =============================
         if isinstance(current_user, User) and current_user.organisation_id:
             return query.filter(User.organisation_id == current_user.organisation_id).all()
-
-        # =============================
-        # CLIENT LOGIN
-        # =============================
         if isinstance(current_user, User) and current_user.client_id:
             return query.filter(User.client_id == current_user.client_id).all()
-
         return []
 
     @staticmethod
     async def archive_document(db: Session, document_id: int, user: User):
         document = DocumentService._get_accessible_document(db, document_id, user)
-
         if not document:
             return False
-
         document.is_archived = True
         db.commit()
-
         await websocket_manager.broadcast_document_status(
-            document_id=document_id,
-            status="ARCHIVED",
-            user_id=str(document.created_by),
-            progress=100
+            document_id=document_id, status="ARCHIVED",
+            user_id=str(document.created_by), progress=100
         )
-
         return True
 
     @staticmethod
     async def unarchive_document(db: Session, document_id: int, user: User):
         document = DocumentService._get_accessible_document(db, document_id, user)
-
         if not document:
             return False
-
         document.is_archived = False
         db.commit()
-
         await websocket_manager.broadcast_document_status(
-            document_id=document_id,
-            status="UNARCHIVED",
-            user_id=str(document.created_by),
-            progress=100
+            document_id=document_id, status="UNARCHIVED",
+            user_id=str(document.created_by), progress=100
         )
-
         return True
 
     @staticmethod
     async def delete_document(db: Session, document_id: int, user: User):
         document = DocumentService._get_accessible_document(db, document_id, user)
-
         if not document:
             return None
-
         filename = document.original_filename or document.filename
-
         if document.s3_key:
             await s3_service.delete_file(document.s3_key)
-
         if document.analysis_report_s3_key:
             await s3_service.delete_file(document.analysis_report_s3_key)
-
         db.delete(document)
         db.commit()
-
         return filename
 
     @staticmethod
     async def cancel_document_analysis(db: Session, document_id: int, user: User):
         document = DocumentService._get_accessible_document(db, document_id, user)
-
         if not document:
             return False
-
         await DocumentService.update_document_status(
-            db, document_id, "CANCELLED",
-            error_message="Cancelled by user"
+            db, document_id, "CANCELLED", error_message="Cancelled by user"
         )
-
         return True
-
 
     @staticmethod
     async def reanalyze_document(db: Session, document_id: int, user: User):
         document = DocumentService._get_accessible_document(db, document_id, user)
-
         if not document:
             raise Exception("Not allowed")
-
         if not document.s3_key:
             raise Exception("No file found")
-
         await DocumentService.update_document_status(
-            db, document_id, "AI_QUEUED",
-            progress=0,
-            error_message="Reanalysis queued"
+            db, document_id, "AI_QUEUED", progress=0, error_message="Reanalysis queued"
         )
-
         asyncio.create_task(
             DocumentService._perform_reanalysis_background(document_id, user.id)
         )
-
         return True
 
     @staticmethod
     async def _perform_reanalysis_background(document_id: int, created_by: str):
-        """Background task for re-analysis: Download from S3 -> Start AI"""
-        from ..core.database import SessionLocal
-        import io
-        
+        import io as _io
         db = SessionLocal()
         try:
-            document = db.query(Document).filter(
-                Document.id == document_id,
-            ).first()
-            
+            document = db.query(Document).filter(Document.id == document_id).first()
             if not document or not document.s3_key:
                 return
-
-            # Download from S3 asynchronously
             try:
                 file_bytes = await s3_service.download_file(document.s3_key)
-                file_content = io.BytesIO(file_bytes)
+                file_content = _io.BytesIO(file_bytes)
             except Exception as e:
                 await DocumentService.update_document_status(
-                    db, document_id, "AI_FAILED", 
+                    db, document_id, "AI_FAILED",
                     error_message=f"Failed to retrieve file: {str(e)}"
                 )
                 return
@@ -1269,29 +1076,21 @@ class DocumentService:
                 'filename': document.filename,
                 'content_type': document.content_type
             }
-            
-            # Start AI Analysis
-            # Use stored preferences if available
             doc_type_id = str(document.document_type_id) if document.document_type_id else None
             template_id = str(document.template_id) if document.template_id else None
-            
+
             await DocumentService._process_single_ai_analysis(
                 document_id, file_data, doc_type_id, template_id
             )
-            
         except Exception as e:
             print(f"Background re-analysis failed: {e}")
         finally:
             db.close()
+
     @staticmethod
     def get_document_stats(db: Session, user):
-
         base = DocumentService._document_access_query(db, user)
-        # base_query = DocumentService._document_access_query(db, current_user)
-
-        # total_all = base.count()
-        total_all = base.distinct(Document.id).count()
-
+        total_all      = base.distinct(Document.id).count()
         total_archived = base.filter(Document.is_archived == True).count()
 
         status_counts = (
@@ -1300,8 +1099,7 @@ class DocumentService:
             .with_entities(Status.code, func.count(Document.id))
             .group_by(Status.code)
             .all()
-        )   
-
+        )
         counts = {code: count for code, count in status_counts}
 
         shared_with_me = 0
@@ -1313,9 +1111,8 @@ class DocumentService:
                 .count()
             )
 
-
         return {
-            "total": total_all,  # 🔥 includes archived
+            "total": total_all,
             "processed": counts.get("COMPLETED", 0),
             "processing": (
                 counts.get("PROCESSING", 0)

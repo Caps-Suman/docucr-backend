@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, Backgrou
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.permissions import Permission
@@ -20,12 +20,12 @@ router = APIRouter(prefix="/api/document-types", tags=["document-types"], depend
 # Pydantic models
 class DocumentTypeCreate(BaseModel):
     name: str
-    description: str = None
+    description: str = Field(..., min_length=3)
     status_code: str = None
 
 class DocumentTypeUpdate(BaseModel):
     name: str = None
-    description: str = None
+    description: str = Field(..., min_length=3)
     status_code: str = None
 
 class DocumentTypeResponse(BaseModel):
@@ -138,7 +138,7 @@ def update_document_type(
         update_payload
     )
 
-    result = service.update(document_type_id, document_type_data.name, document_type_data.description, document_type_data.status_id)
+    result = service.update(document_type_id, document_type_data.name, document_type_data.description, document_type_data.status_code)
 
     ActivityService.log(
         db=db,
