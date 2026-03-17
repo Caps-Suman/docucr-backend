@@ -34,7 +34,7 @@ class AIService:
             loop = asyncio.get_event_loop()
             pages = await loop.run_in_executor(
                 None,
-                lambda: convert_from_bytes(file_content, dpi=150)
+                lambda: convert_from_bytes(file_content, dpi=200)
             )
             encoded = await loop.run_in_executor(
                 None,
@@ -68,10 +68,16 @@ class AIService:
     def build_document_instances(self, pages: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         """
         Group consecutive pages into document instances.
-        A new instance starts when:
-          - the type changes, OR
-          - same type but header_restart=True (new patient header detected on this page)
-        Pages with header_restart=False and same type as previous → merged into one instance.
+
+        header_restart=False means "this page is a continuation of the previous one".
+        When a page is a continuation, it is ALWAYS merged with the previous instance
+        regardless of whether the classifier returned a different type name.
+        This correctly handles multi-page forms (e.g. DXA front+back) where the
+        back page may be classified as a different type due to visual differences.
+
+        A new instance starts ONLY when:
+          - header_restart=True (new patient header / new form start detected), OR
+          - header_restart=True (default) and type changed
         """
         documents = []
         current = None
@@ -85,19 +91,20 @@ class AIService:
                 }
                 continue
 
-            type_changed = page["type"] != current["type"]
-            new_header   = page.get("signals", {}).get("header_restart", True)
+            is_continuation = not page.get("signals", {}).get("header_restart", True)
 
-            if type_changed or new_header:
+            if is_continuation:
+                # Always merge with previous — ignore type name differences.
+                # The page type stays as the FIRST page's type (authoritative).
+                current["end"] = page["page"]
+            else:
+                # New patient header or new form → start a new instance
                 documents.append(current)
                 current = {
                     "type": page["type"],
                     "start": page["page"],
                     "end": page["page"],
                 }
-            else:
-                # Same type + continuation → extend current instance
-                current["end"] = page["page"]
 
         if current:
             documents.append(current)
@@ -152,11 +159,12 @@ CLASSIFICATION RULES:
 1. First try to match the page to one of the listed types above using the description.
 2. If the page clearly matches one of the listed types → use that type name exactly.
 3. If the page does NOT match any listed type → INVENT a concise, descriptive type name:
-   - Use ALL_CAPS with underscores (e.g. DXA_ORDER, INSURANCE_CARD, LAB_REPORT, REFERRAL_LETTER)
-   - Make the name describe what the document actually is, not what it contains
+   - Use ALL_CAPS with underscores (e.g. DXA_ORDER, INSURANCE_CARD, LAB_REPORT)
+   - Describe WHAT the document is (its form type), not what data it contains
    - Common examples: DXA_DIAGNOSTIC_CODES, INSURANCE_CARD, FINANCIAL_RESPONSIBILITY,
      LAB_RESULTS, REFERRAL_FORM, CONSENT_FORM, PRIOR_AUTH, PATIENT_INTAKE
-   - Do NOT use UNKNOWN — always invent a meaningful name
+   - NEVER return "UNKNOWN" — always invent a meaningful descriptive name
+   - NEVER return "UNCLASSIFIED" — always invent a meaningful descriptive name
 
 GROUPING — header_restart controls how pages are counted as documents.
 Get this right — it determines how many document instances are reported.
@@ -171,7 +179,9 @@ RULES for header_restart:
 ALWAYS false (continuation) for these page types:
   • A diagnosis/ICD-10 list page (shows "H. DIAGNOSIS" header, alphabetical diagnoses,
     "Signed out By" — this is the BACK of a superbill, same patient, same visit)
-  • Back page of a DXA order showing more diagnosis categories (no patient name)
+  • A page showing diagnosis categories like "Osteoporosis", "Ovary", "Parathyroid",
+    "Thyroid", "V Codes", "Pituitary" with ICD codes — this is the BACK of a DXA order
+    form. Classify it as the SAME type as the previous page and set header_restart=false.
   • Page 2+ of any multi-page form with no new patient block at the top
   • Any page that has NO patient name/DOB written at the top
 
@@ -238,10 +248,10 @@ Return ONLY this JSON:
                         }
                     }
                 except Exception as e:
-                    print(f"[ai_service] page {page_no} classify error → UNKNOWN: {e}")
+                    print(f"[ai_service] page {page_no} classify error → UNCLASSIFIED: {e}")
                     return {
                         "page": page_no,
-                        "type": "UNKNOWN",
+                        "type": "UNCLASSIFIED",
                         "signals": {"header_restart": True}
                     }
 
@@ -253,8 +263,8 @@ Return ONLY this JSON:
         pages = []
         for i, r in enumerate(results):
             if isinstance(r, Exception):
-                print(f"[ai_service] page {i+1} gather error → UNKNOWN: {r}")
-                pages.append({"page": i + 1, "type": "UNKNOWN", "signals": {"header_restart": True}})
+                print(f"[ai_service] page {i+1} gather error → UNCLASSIFIED: {r}")
+                pages.append({"page": i + 1, "type": "UNCLASSIFIED", "signals": {"header_restart": True}})
             else:
                 pages.append(r)
         return pages
@@ -263,6 +273,251 @@ Return ONLY this JSON:
     # Phase 2 — Extract fields from a document instance (fully dynamic)
     # ------------------------------------------------------------------
 
+    def _deduplicate_codes(self, codes) -> list:
+        """
+        Normalize, deduplicate and return codes as a clean list.
+        Handles comma-separated strings, slash-separated pairs, and plain strings.
+        """
+        if codes is None:
+            return None
+        if isinstance(codes, str):
+            codes = [codes]
+        if not isinstance(codes, list):
+            return None
+        seen = set()
+        result = []
+        for code in codes:
+            if not isinstance(code, str):
+                continue
+            for part in code.split(","):
+                for c in part.split("/"):
+                    c = c.strip()
+                    if c and c not in seen:
+                        seen.add(c)
+                        result.append(c)
+        return result if result else None
+
+    # Medical code format validators
+    # These filter out hallucinated values that don't match the expected code format.
+
+    _CPT_RE  = None  # initialized lazily
+    _ICD_RE  = None
+    _JCODE_RE = None
+
+    def _is_valid_cpt(self, code: str) -> bool:
+        """
+        CPT / HCPCS codes:
+          - 5 numeric digits: 99213, 20610, 36415
+          - Letter + 4 digits: J3590, J1740, G0463, A4550, Q5123, C9257
+          - 4 digits + letter: 0237T
+          - Letter + 3 digits + letter+digit: edge cases
+        Rejects ICD-9 (e.g. 279.899) and plain text.
+        """
+        import re
+        if not code or not isinstance(code, str):
+            return False
+        c = code.strip().upper()
+        return bool(re.match(
+            r'^([0-9]{5}[A-Z]?|[A-Z][0-9]{4}[A-Z0-9]?|[0-9]{4}[A-Z])$', c
+        ))
+
+    def _is_valid_icd(self, code: str) -> bool:
+        """
+        Valid ICD codes:
+          ICD-10: any letter A-Z + 2+ digits (e.g. M25.50, F41.9, J84.9, Z79.899)
+          ICD-9:  3 digits + optional .XX suffix (e.g. 733.00, 278.01)
+        
+        Rejects HCPCS J-codes (J + exactly 4 digits, e.g. J1200, J3590) — those
+        are drug/medication billing codes, NOT diagnosis codes.
+        Also rejects plain text (GTP, BL) and CPT codes (99213).
+        """
+        import re
+        if not code or not isinstance(code, str):
+            return False
+        c = code.strip().upper()
+        # Reject HCPCS J-codes: J + 4 digits (medication billing codes)
+        if re.match(r'^J[0-9]{4}[A-Z0-9]?$', c):
+            return False
+        # ICD-10: any letter + 2+ digits
+        if re.match(r'^[A-Z][0-9]{2}', c):
+            return True
+        # ICD-9: exactly 3 digits with optional .1-2 digit decimal
+        if re.match(r'^[0-9]{3}(\.[0-9]{1,2})?$', c):
+            return True
+        return False
+    def _code_prefix(self, code: str) -> str:
+        """
+        Grouping prefix for sequential hallucination detection.
+        Strips the final trailing digit so that codes differing only in
+        their last digit are grouped together.
+          M25.561, M25.562, M25.569  →  "M25.56"  (same group)
+          M25.50, M25.60, M25.70     →  "M25.5", "M25.6", "M25.7"  (different groups ✓)
+        """
+        import re as _re
+        return _re.sub(r'\d$', '', code.strip())
+
+    def _remove_sequential_runs(self, codes: list, max_per_prefix: int = 2) -> list:
+        """
+        Remove sequential hallucinations where the model lists many consecutive
+        codes from the same sub-category (e.g. M25.561, M25.562, M25.563...).
+        Real clinical selections rarely pick more than 2 codes with the same prefix.
+        """
+        if not codes:
+            return codes
+        from collections import defaultdict as _dd
+        seen = _dd(int)
+        result = []
+        for code in codes:
+            if not isinstance(code, str):
+                continue
+            pfx = self._code_prefix(code)
+            seen[pfx] += 1
+            if seen[pfx] <= max_per_prefix:
+                result.append(code)
+        removed = [c for c in codes if c not in result]
+        if removed:
+            print(f"[ai_service] removed sequential run: {removed}")
+        return result
+
+    def _filter_codes_by_type(self, codes: list, field_name: str) -> list:
+        """
+        Filter a list of codes to only include values matching the expected
+        format for the given field name. Removes hallucinated codes.
+        For ICD fields, also removes sequential code runs.
+        """
+        if not codes:
+            return codes
+        fn = field_name.lower()
+        is_cpt = any(kw in fn for kw in ("cpt", "procedure", "billing", "service", "hcpcs"))
+        is_icd = any(kw in fn for kw in ("icd", "diagnos", "condition", " dx"))
+
+        if is_cpt:
+            filtered = [c for c in codes if self._is_valid_cpt(c)]
+        elif is_icd:
+            filtered = [c for c in codes if self._is_valid_icd(c)]
+            # Remove sequential hallucinations (e.g. M25.561, M25.562, M25.569...)
+            filtered = self._remove_sequential_runs(filtered, max_per_prefix=2)
+        else:
+            filtered = codes
+
+        removed_format = [c for c in codes if c not in filtered]
+        if removed_format:
+            print(f"[ai_service] filtered {field_name}: {removed_format}")
+        return filtered
+
+    def _classify_field_page(self, field_name: str) -> str:
+        """
+        Route a field to the page it belongs on in a multi-page medical form.
+        Returns: "first", "last", or "any"
+
+        Medical billing forms follow a consistent layout:
+        - CPT codes / procedures / medications → first page (billing grid)
+        - ICD codes / diagnoses               → last page  (diagnosis list)
+        - Patient info (name, DOB, date, etc.)→ first page (patient header)
+        """
+        fn = field_name.lower()
+        if any(kw in fn for kw in ("icd", "diagnos", "condition", " dx")):
+            return "last"
+        if any(kw in fn for kw in ("cpt", "procedure", "medication", "drug", "billing", "service")):
+            return "first"
+        if any(kw in fn for kw in ("name", "birth", "dob", "date", "patient", "gender",
+                                    "address", "phone", "insurance", "provider", "copay", "balance")):
+            return "first"
+        return "any"
+
+    async def _extract_page(
+        self,
+        page_img: str,
+        fields_list: List[Dict],
+        doc_type: str,
+        type_context: str,
+        page_role: str = "",
+    ) -> Dict[str, Any]:
+        """Extract the given fields from one page image."""
+        if not fields_list:
+            return {}
+
+        field_lines = []
+        for f in fields_list:
+            fn = f.get("fieldName") or f.get("name") or ""
+            ft = f.get("type") or f.get("fieldType") or "text"
+            fd = f.get("description") or f.get("label") or ""
+            if not fn:
+                continue
+            hints = [f"type={ft}"]
+            if fd:
+                hints.append(fd)
+            field_lines.append(f'  "{fn}": null  // {', '.join(hints)}')
+
+        fields_block = "\n".join(field_lines)
+        empty_json = json.dumps(
+            {(f.get("fieldName") or f.get("name", "")): None
+             for f in fields_list if f.get("fieldName") or f.get("name")},
+            indent=2
+        )
+        role_hint = f" This is the {page_role}." if page_role else ""
+        context_line = f"Document context: {type_context}" if type_context else ""
+
+        system_prompt = (
+            "You are a visual ink-mark detector for medical forms. "
+            "Your ONLY task is to find items where someone physically drew on "
+            "the printed form with pen, pencil, highlighter, or any writing instrument. "
+            "Return valid JSON only. No markdown."
+        )
+
+        user_prompt = f"""Look at this medical form image carefully.
+
+TASK: Find every place where someone has drawn, written, or marked on the PRINTED form
+using a pen, pencil, marker, or highlighter.
+
+WHAT COUNTS AS A MARK (extract these):
+  → A checkmark ✓ or tick drawn inside or next to a box
+  → An X or cross × drawn inside or next to a box  
+  → A circle or oval drawn around a code, word, or row
+  → A line or underline drawn under text
+  → A highlighter mark (color wash over text)
+  → Handwritten text (anything written in ink/pencil — clearly different from printed font)
+  → A dot, slash, or any ink touching a code
+  → Strike-through: a line crossed through an item
+
+WHAT DOES NOT COUNT (ignore these completely):
+  → Printed text — codes and labels pre-printed on the form
+  → Printed checkbox outlines □ with nothing inside
+  → Printed lines, borders, or dividers on the form
+  → Printed section headers like "A. OFFICE VISITS" or "H. DIAGNOSIS"
+
+FIELDS TO FILL (extract the CODE or TEXT that has a mark near/on it):
+{fields_block}
+
+IMPORTANT:
+- If a code has NO mark physically drawn on or next to it → do NOT include it
+- Codes that appear in sequence (e.g. M25.50, M25.51, M25.52...) are printed options, not marks
+- A real provider visit has 1-5 CPT codes marked and 2-6 ICD codes marked
+- Maximum {{}}: 5 for CPT/procedure fields, 8 for ICD/diagnosis fields, 8 for others
+- Each code appears at most once
+- For text fields (name, date of birth): extract the handwritten value exactly
+
+Return ONLY:
+{empty_json}"""
+
+        response = await self.client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": [
+                    {"type": "text", "text": user_prompt},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/jpeg;base64,{page_img}",
+                        "detail": "high"
+                    }}
+                ]}
+            ],
+            max_tokens=400,
+            response_format={"type": "json_object"},
+            temperature=0,
+        )
+        return self._safe_parse_json(response.choices[0].message.content)
+
     async def _extract_fields(
         self,
         doc_type: str,
@@ -270,89 +525,115 @@ Return ONLY this JSON:
         images: List[str],
         schema: Dict[str, Any],
     ) -> Dict[str, Any]:
+        """
+        Extract fields with smart field-to-page routing.
 
+        Each field is sent only to the page it belongs on:
+        - CPT/billing fields  → first page only (billing grid, sections A-G)
+        - ICD/diagnosis fields→ last page only  (H. DIAGNOSIS list)
+        - Patient info fields → first page only (handwritten header)
+        - Unknown fields      → all pages, first non-null wins
+
+        This prevents J-codes appearing in ICD fields and ICD codes in CPT fields.
+        """
         start, end = map(int, page_range.split("-"))
         selected_images = images[start - 1: end]
-
         fields_list = schema.get("fields", [])
-        field_lines = []
+        type_context = (schema.get("description") or "").strip()
+
+        if not fields_list:
+            return {}
+
+        num_pages = len(selected_images)
+
+        if num_pages == 1:
+            return await self._extract_page(
+                selected_images[0], fields_list, doc_type, type_context
+            )
+
+        # Route fields to their correct page
+        first_fields, last_fields, any_fields = [], [], []
         for f in fields_list:
             fn = f.get("fieldName") or f.get("name") or ""
-            ft = f.get("type") or f.get("fieldType") or "text"
-            fd = f.get("description") or f.get("label") or ""
-            ex = f.get("exampleValue") or ""
             if not fn:
                 continue
-            hints = [f"type={ft}"]
-            if fd:
-                hints.append(fd)
-            if ex:
-                hints.append(f'e.g. "{ex}"')
-            field_lines.append(f'  "{fn}": null  // {", ".join(hints)}')
+            t = self._classify_field_page(fn)
+            if t == "first":
+                first_fields.append(f)
+            elif t == "last":
+                last_fields.append(f)
+            else:
+                any_fields.append(f)
 
-        fields_block = "\n".join(field_lines)
-        empty_json   = json.dumps(
-            {(f.get("fieldName") or f.get("name", "")): None for f in fields_list if f.get("fieldName") or f.get("name")},
-            indent=2
-        )
+        page_roles = (
+            ["front page (CPT billing grid, patient header)"] +
+            ["middle page"] * (num_pages - 2) +
+            ["back page (ICD-10 diagnosis list)"]
+        ) if num_pages > 1 else [""]
 
-        # Use the DB description for context if available
-        type_context = (schema.get("description") or "").strip()
-        context_line = f"Document description: {type_context}" if type_context else ""
+        # Build parallel tasks
+        tasks, task_keys = [], []
+        if first_fields:
+            tasks.append(self._extract_page(
+                selected_images[0], first_fields, doc_type, type_context, page_roles[0]
+            ))
+            task_keys.append(("targeted", first_fields))
 
-        system_prompt = (
-            f"You are extracting structured data from a {doc_type} document. "
-            f"{context_line} "
-            "Return valid JSON only. No markdown."
-        )
+        if last_fields:
+            tasks.append(self._extract_page(
+                selected_images[-1], last_fields, doc_type, type_context, page_roles[-1]
+            ))
+            task_keys.append(("targeted", last_fields))
 
-        user_prompt = f"""Extract the requested fields from these medical document image(s).
-All {len(selected_images)} image(s) belong to the same document — treat them as one continuous document.
+        if any_fields:
+            for i, img in enumerate(selected_images):
+                tasks.append(self._extract_page(
+                    img, any_fields, doc_type, type_context, page_roles[i]
+                ))
+                task_keys.append(("any", any_fields))
 
-FIELDS TO EXTRACT:
-{fields_block}
+        all_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-CRITICAL EXTRACTION RULES:
-1. MARKED ITEMS ONLY — This document is a FORM with checkboxes, circles, and handwriting.
-   Extract ONLY items that are visually SELECTED: checked ☑, circled, underlined,
-   crossed out, or have handwriting directly adjacent to them.
-   DO NOT extract items that are merely printed on the form but have NO mark next to them.
-   A blank checkbox □ = NOT selected. A checked checkbox ☑ or circled item = selected.
+        # Assemble result
+        result = {
+            (f.get("fieldName") or f.get("name", "")): None
+            for f in fields_list if f.get("fieldName") or f.get("name")
+        }
 
-2. For CODE fields (CPT codes, ICD codes, billing codes):
-   - Include ONLY codes that have a visible mark, check, circle, or handwritten annotation
-   - The form prints many codes as options — ignore all unselected ones
-   - Typical superbill: only 2-8 codes are actually selected out of hundreds printed
+        for task_result, (kind, task_fields) in zip(all_results, task_keys):
+            if isinstance(task_result, Exception):
+                continue
+            for f in task_fields:
+                fn = f.get("fieldName") or f.get("name") or ""
+                if not fn:
+                    continue
+                ft = (f.get("type") or f.get("fieldType") or "text").lower()
+                is_list = ft in ("array", "list") or any(
+                    kw in fn.lower() for kw in ("codes", "diagnos", "medication", "procedure")
+                )
+                val = task_result.get(fn)
+                if is_list:
+                    existing = result.get(fn)
+                    if isinstance(existing, list) and isinstance(val, list):
+                        result[fn] = existing + val
+                    elif val is not None:
+                        result[fn] = val if isinstance(val, list) else [str(val)]
+                else:
+                    if result.get(fn) is None and val is not None:
+                        result[fn] = val
 
-3. For TEXT fields (patient name, date of birth, dates, amounts):
-   - Extract the handwritten or typed value exactly as it appears
-   - Use null if the field is blank
+        # Final deduplication + format validation
+        for f in fields_list:
+            fn = f.get("fieldName") or f.get("name") or ""
+            if not fn or fn not in result:
+                continue
+            val = result[fn]
+            if isinstance(val, list):
+                deduped = self._deduplicate_codes(val) or []
+                result[fn] = self._filter_codes_by_type(deduped, fn) or None
 
-4. For list fields: return a compact JSON array of strings
-5. Extract ONLY the fields listed above — do NOT add extra keys
-6. Preserve exact values (dates as written, codes as printed)
+        return result
 
-Return ONLY this JSON (no markdown):
-{empty_json}"""
-
-        user_content: List[Dict] = [{"type": "text", "text": user_prompt}]
-        for img in selected_images:
-            user_content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{img}", "detail": "high"}
-            })
-
-        response = await self.client.chat.completions.create(
-            model="gpt-4o",   # gpt-4o required for reliable checkbox detection
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
-            ],
-            max_tokens=1024,  # compact output — only marked items, not all codes
-            response_format={"type": "json_object"},
-            temperature=0,
-        )
-        return self._safe_parse_json(response.choices[0].message.content)
 
     # ------------------------------------------------------------------
     # Public API

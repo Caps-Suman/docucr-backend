@@ -770,7 +770,7 @@ class DocumentService:
         current_user,
         skip: int = 0,
         limit: int = 25,
-        status_id=None,
+        status_code=None,
         date_from=None,
         date_to=None,
         search_query=None,
@@ -810,14 +810,33 @@ class DocumentService:
         if client_id:
             query = query.filter(Document.client_id == client_id)
 
-        if status_id:
-            code = str(status_id).upper()
+        if status_code:
+            code = str(status_code).upper()
+
             if code == "ARCHIVED":
                 query = query.filter(Document.is_archived.is_(True))
+
+            elif code == "PROCESSING":
+                processing_codes = ["UPLOADING", "AI_QUEUED", "ANALYZING", "PROCESSING"]
+
+                status_ids = (
+                    db.query(Status.id)
+                    .filter(Status.code.in_(processing_codes))
+                    .all()
+                )
+
+                status_ids = [s.id for s in status_ids]
+
+                query = query.filter(Document.status_id.in_(status_ids))
+                query = query.filter(
+                    or_(Document.is_archived == False, Document.is_archived.is_(None))
+                )
+
             else:
                 status = db.query(Status).filter(Status.code == code).first()
                 if status:
                     query = query.filter(Document.status_id == status.id)
+
                 query = query.filter(
                     or_(Document.is_archived == False, Document.is_archived.is_(None))
                 )
@@ -895,19 +914,12 @@ class DocumentService:
                 c = client_map.get(str(doc.client_id))
                 if c:
                     client_name = c.business_name or f"{c.first_name} {c.last_name}"
-
-            # Priority 2: form_data["client_id"] — direct string key (not a FormField UUID)
-            # This is how client is stored when set via the upload enforcement logic.
             if not client_name and raw.get("client_id"):
                 c = client_map.get(str(raw["client_id"]))
                 if c:
                     client_name = c.business_name or f"{c.first_name} {c.last_name}"
-
-            # ── Resolve via FormField labels (client + document type) ──────────
-            # Always run this loop regardless of whether client_name was found above,
-            # so that document_type is resolved even when client was found via client_id.
             for field_id, value in raw.items():
-                if field_id == "client_id":  # already handled above
+                if field_id == "client_id":  
                     continue
                 field = field_map.get(str(field_id))
                 if not field or not value:

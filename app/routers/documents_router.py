@@ -576,7 +576,7 @@ def get_documents(
         current_user=current_user,
         skip=skip,
         limit=limit,
-        status_id=status_code,
+        status_code=status_code,
         date_from=date_from,
         date_to=date_to,
         search_query=search_query,
