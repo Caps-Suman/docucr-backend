@@ -430,11 +430,12 @@
         {% endif %}
 
         {% for rule in rules %}
-            {% if rule.strip() %}
-                <div class="guideline-item">{{ rule.strip() }}</div>
-            {% endif %}
-        {% endfor %}     
-        {% endif %}      
+    {% set rule_text = rule.description if rule is mapping else rule %}
+        {% if rule_text and rule_text | string | trim %}
+            <div class="guideline-item">{{ rule_text | string | trim }}</div>
+        {% endif %}
+    {% endfor %}
+    {% endif %}      
 
         {% if sop.workflow_process.eligibility_verification_portals %}
         <h3 class="sub-category">Eligibility Verification Portals</h3>
