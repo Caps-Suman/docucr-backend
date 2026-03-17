@@ -35,8 +35,14 @@ class BillingGuidelineGroup(BaseModel):
 
 
 class PayerGuideline(BaseModel):
-    payerName:str
-    description:str
+    payerName: str
+    description: Optional[str] = ""
+    payerId: Optional[str] = ""
+    eraStatus: Optional[str] = ""
+    ediStatus: Optional[str] = ""
+    tfl: Optional[str] = ""
+    networkStatus: Optional[str] = ""
+    mailingAddress: Optional[str] = ""
     source: Optional[str] = None
 class SOPBase(BaseModel):
     title: str

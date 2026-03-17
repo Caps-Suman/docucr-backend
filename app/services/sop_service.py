@@ -1,5 +1,5 @@
 import asyncio
-from importlib.resources import path
+import copy
 import tempfile
 import uuid
 from fastapi import HTTPException
@@ -13,42 +13,16 @@ from app.models.sop_provider_mapping import SopProviderMapping
 from app.models.user import User
 from app.models.organisation import Organisation
 from app.models.user_client import UserClient
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib import colors
 from io import BytesIO
 from app.services.ai_sop_service import AISOPService
+from jinja2 import Environment, FileSystemLoader
+from weasyprint import HTML
+import datetime
+import os
+from urllib.parse import quote
 
 
 class SOPService:
-
-    @staticmethod
-    def _normalize_pcr(rules) -> list:
-        """Normalize posting_charges_rules to always be list[str]."""
-        if not rules:
-            return []
-        if isinstance(rules, str):
-            parts = [p.strip() for p in rules.split(",") if p.strip()]
-            return parts if len(parts) > 1 and all(len(p) >= 8 for p in parts) else [rules.strip()]
-        if isinstance(rules, list):
-            result = []
-            for r in rules:
-                if isinstance(r, dict):
-                    # e.g. {"description": "Rule text"}
-                    text = r.get("description") or r.get("text") or r.get("rule") or str(r)
-                elif isinstance(r, str):
-                    text = r
-                else:
-                    text = str(r)
-                text = text.strip()
-                if text:
-                    result.append(text)
-            return result
-        return [str(rules).strip()] if str(rules).strip() else []
-
-
 
     @staticmethod
     def _get_org_id(current_user):
@@ -208,9 +182,25 @@ class SOPService:
         }
 
     @staticmethod
-    def _format_sop(sop: SOP, skip_presigned: bool = False) -> Dict:
+    def _format_sop(sop: SOP) -> Dict:
         from sqlalchemy.orm import attributes
         from app.services.s3_service import s3_service
+
+        # Helper for adding source to manual entries
+        def add_manual_source(items, source_name="Manual"):
+            if not items: return items if items else []
+            if isinstance(items, list):
+                if items and isinstance(items[0], dict) and "rules" in items[0]:
+                    # billing_guidelines structure
+                    for cat in items:
+                        for rule in cat.get("rules", []):
+                            if "source" not in rule:
+                                rule["source"] = source_name
+                else:
+                    for item in items:
+                        if isinstance(item, dict) and "source" not in item:
+                            item["source"] = source_name
+            return items
 
         data = {
             "id": sop.id,
@@ -225,29 +215,43 @@ class SOPService:
             "created_at": sop.created_at,
             "updated_at": sop.updated_at,
             "provider_info": sop.provider_info,
-            "workflow_process": sop.workflow_process,
-            "billing_guidelines": sop.billing_guidelines,
-            "payer_guidelines": sop.payer_guidelines,
-            "coding_rules_cpt": sop.coding_rules_cpt,
-            "coding_rules_icd": sop.coding_rules_icd,
+            "workflow_process": {
+                "description": (sop.workflow_process or {}).get("description")
+                or (sop.workflow_process or {}).get("workflow_description"),
+                "eligibility_verification_portals": (sop.workflow_process or {}).get(
+                    "eligibility_verification_portals", []
+                ),
+                "posting_charges_rules": (sop.workflow_process or {}).get(
+                    "posting_charges_rules", []
+                ),
+            },
+            "billing_guidelines": add_manual_source(sop.billing_guidelines),
+            "payer_guidelines": add_manual_source(sop.payer_guidelines),
+            "coding_rules_cpt": add_manual_source(sop.coding_rules_cpt),
+            "coding_rules_icd": add_manual_source(sop.coding_rules_icd),
             "documents": [
                 {
                     "id": str(doc.id),
                     "name": doc.name,
                     "category": doc.category,
                     "s3_key": doc.s3_key,
-                    "document_url": (
-                        None if skip_presigned else
-                        s3_service.generate_presigned_url(
-                            doc.s3_key,
-                            response_content_disposition=f'inline; filename="{doc.name}"'
-                        )
+
+                    # Hide extracted data for source file
+                    "billing_guidelines": None if doc.category == "Source file" else doc.billing_guidelines,
+                    "payer_guidelines": None if doc.category == "Source file" else doc.payer_guidelines,
+                    "coding_rules_cpt": [] if doc.category == "Source file" else doc.coding_rules_cpt,
+                    "coding_rules_icd": [] if doc.category == "Source file" else doc.coding_rules_icd,
+
+                    "document_url": s3_service.generate_presigned_url(
+                        doc.s3_key,
+                        response_content_disposition=f"inline; filename*=UTF-8''{quote(doc.name)}"
                     ),
                     "created_at": doc.created_at,
                     "processed": doc.processed
                 }
                 for doc in sop.documents
-            ] if sop.documents else [],
+            ]
+        if sop.documents else [],
             "status": {
                 "id": sop.lifecycle_status.id,
                 "code": sop.lifecycle_status.code,
@@ -259,6 +263,16 @@ class SOPService:
 
         if sop.client:
             data["client_npi"] = sop.client.npi
+            data["client_specialty"] = sop.client.specialty
+            addr_parts = [
+                sop.client.address_line_1,
+                sop.client.address_line_2,
+                sop.client.city,
+                sop.client.state_code,
+                sop.client.zip_code
+            ]
+            data["client_address"] = ", ".join([p for p in addr_parts if p]).strip()
+            
             if sop.client.business_name:
                 data["client_name"] = sop.client.business_name
             else:
@@ -267,6 +281,8 @@ class SOPService:
         else:
             data["client_name"] = None
             data["client_npi"] = None
+            data["client_specialty"] = None
+            data["client_address"] = None
 
         if sop.creator:
             names = [sop.creator.first_name, sop.creator.middle_name, sop.creator.last_name]
@@ -275,6 +291,33 @@ class SOPService:
             data["created_by_name"] = sop.organisation.name
         else:
             data["created_by_name"] = None
+
+        # Providers
+        p_info = sop.provider_info or {}
+        client_name = data.get("client_name")
+        client_npi = data.get("client_npi")
+
+        data["providers"] = [
+            {
+                "id": str(m.provider.id),
+                "name": f"{m.provider.first_name} {m.provider.middle_name or ''} {m.provider.last_name}".strip().replace("  ", " "),
+                "first_name": m.provider.first_name,
+                "last_name": m.provider.last_name,
+                "npi": m.provider.npi,
+                "type": "Individual",
+                "software": p_info.get("software", ""),
+                "practiceName": client_name,
+                "providerName": p_info.get("providerName", ""),
+                "clearinghouse": p_info.get("clearinghouse", ""),
+                "providerTaxID": p_info.get("providerTaxID", ""),
+                "billingAddress": p_info.get("billingAddress", ""),
+                "billingProviderNPI": p_info.get("billingProviderNPI", ""),
+                "billingProviderName": p_info.get("billingProviderName", ""),
+                "client_name": client_name,
+                "client_npi": client_npi
+            }
+            for m in sop.provider_mappings if m.provider
+        ] if hasattr(sop, 'provider_mappings') and sop.provider_mappings else []
 
         data["provider_name"] = None
         if sop.provider_info:
@@ -295,7 +338,8 @@ class SOPService:
             joinedload(SOP.organisation),
             joinedload(SOP.client),
             joinedload(SOP.lifecycle_status),
-            joinedload(SOP.documents)
+            joinedload(SOP.documents),
+            joinedload(SOP.provider_mappings).joinedload(SopProviderMapping.provider)
         ).first()
 
         if not sop:
@@ -313,51 +357,23 @@ class SOPService:
             for pg in sop.payer_guidelines:
                 if not isinstance(pg, dict):
                     continue
-                if "payer_name" in pg:
-                    normalized.append({
-                        "payerName": pg.get("payer_name"),
-                        "description": pg.get("description", "")
-                    })
+                
+                name = pg.get("payerName") or pg.get("payer_name")
+                if name:
+                    normalized_pg = {
+                        "payerName": name,
+                        "description": pg.get("description", ""),
+                        "payerId": pg.get("payerId", pg.get("payer_id", "")),
+                        "eraStatus": pg.get("eraStatus", pg.get("era_status", "")),
+                        "ediStatus": pg.get("ediStatus", pg.get("edi_status", "")),
+                        "tfl": pg.get("tfl", ""),
+                        "networkStatus": pg.get("networkStatus", pg.get("network_status", "")),
+                        "mailingAddress": pg.get("mailingAddress", pg.get("mailing_address", ""))
+                    }
+                    normalized.append(normalized_pg)
             sop.payer_guidelines = normalized
 
-        from app.models.provider import Provider
-        from app.models.sop_provider_mapping import SopProviderMapping
-
-        linked_providers = (
-            db.query(Provider)
-            .join(SopProviderMapping, SopProviderMapping.provider_id == Provider.id)
-            .filter(SopProviderMapping.sop_id == sop.id)
-            .all()
-        )
-
-        formatted_sop = SOPService._format_sop(sop)
-
-        p_info = sop.provider_info or {}
-        client_name = formatted_sop.get("client_name")
-        client_npi = formatted_sop.get("client_npi")
-
-        formatted_sop["providers"] = [
-            {
-                "id": str(p.id),
-                "name": f"{p.first_name} {p.middle_name or ''} {p.last_name}".strip().replace("  ", " "),
-                "first_name": p.first_name,
-                "last_name": p.last_name,
-                "npi": p.npi,
-                "type": "Individual",
-                "software": p_info.get("software", ""),
-                "practiceName": client_name,
-                "providerName": p_info.get("providerName", ""),
-                "clearinghouse": p_info.get("clearinghouse", ""),
-                "providerTaxID": p_info.get("providerTaxID", ""),
-                "billingAddress": p_info.get("billingAddress", ""),
-                "billingProviderNPI": p_info.get("billingProviderNPI", ""),
-                "billingProviderName": p_info.get("billingProviderName", ""),
-                "client_name": client_name,
-                "client_npi": client_npi
-            }
-            for p in linked_providers
-        ]
-        return formatted_sop
+        return SOPService._format_sop(sop)
 
     @staticmethod
     def get_blocked_providers(client_id, provider_ids, db, exclude_sop_id=None):
@@ -458,21 +474,14 @@ class SOPService:
             if not doc or not sop:
                 return
 
-            doc.extracted_data = structured
 
             if category == "Workflow Process":
-                wf_raw = structured.get("workflow_process") or {}
-                wf_raw["posting_charges_rules"] = SOPService._normalize_pcr(
-                    wf_raw.get("posting_charges_rules")
-                )
-                sop.workflow_process = wf_raw
+                sop.workflow_process = structured.get("workflow_process")
             elif category == "Billing Guidelines":
                 sop.billing_guidelines = structured.get("billing_guidelines")
             elif category == "Posting Charges Rules":
                 wf = sop.workflow_process or {}
-                wf["posting_charges_rules"] = SOPService._normalize_pcr(
-                    structured.get("workflow_process", {}).get("posting_charges_rules")
-                )
+                wf["posting_charges_rules"] = structured.get("workflow_process", {}).get("posting_charges_rules")
                 sop.workflow_process = wf
 
             db.commit()
@@ -482,45 +491,43 @@ class SOPService:
             db.close()
 
     @staticmethod
-    def apply_extraction_to_sop(sop, category, extracted):
+    def apply_extraction_to_sop(sop, doc, category, extracted):
+        if doc:
+            source_name = "source_file" if doc.category == "Source file" else (doc.name or category or "Document")
+            
+            def inject_source(items):
+                if not items: return items
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            item["source"] = source_name
+                            if "rules" in item and isinstance(item["rules"], list): # billing guidelines category
+                                for r in item.get("rules", []):
+                                    if isinstance(r, dict):
+                                        r["source"] = source_name
+                return items
+
+            if "Billing" in category:
+                doc.billing_guidelines = inject_source(extracted.get("billing_guidelines") or [])
+            elif "Payer" in category:
+                doc.payer_guidelines = inject_source(extracted.get("payer_guidelines") or [])
+            elif "Coding" in category or "CPT" in category or "ICD" in category:
+                doc.coding_rules_cpt = inject_source(extracted.get("coding_rules_cpt") or [])
+                doc.coding_rules_icd = inject_source(extracted.get("coding_rules_icd") or [])
+
+        # 2. Update SOP shared fields (Workflow, category, title)
         if category == "Workflow Process":
             sop.workflow_process = extracted.get("workflow_process")
 
         elif category == "Posting Charges Rules":
             wf = sop.workflow_process or {}
-            wf["posting_charges_rules"] = SOPService._normalize_pcr(
-                    extracted.get("workflow_process", {}).get("posting_charges_rules")
-                )
+            wf["posting_charges_rules"] = extracted.get("workflow_process", {}).get("posting_charges_rules")
             sop.workflow_process = wf
 
         elif category == "Eligibility Verification Portals":
             wf = sop.workflow_process or {}
             wf["eligibility_verification_portals"] = extracted.get("workflow_process", {}).get("eligibility_verification_portals")
             sop.workflow_process = wf
-
-        elif category == "Payer Guidelines":
-            extracted_rules = extracted.get("payer_guidelines", [])
-            if not extracted_rules:
-                return
-            existing = sop.payer_guidelines or []
-            existing_titles = {r.get("title") for r in existing}
-            for rule in extracted_rules:
-                if rule.get("title") not in existing_titles:
-                    existing.append(rule)
-            sop.payer_guidelines = existing
-
-        elif category in ("Coding Guidelines", "CPT Coding Rules", "ICD Coding Rules"):
-            cpt = extracted.get("coding_rules_cpt", [])
-            if cpt:
-                existing = sop.coding_rules_cpt or []
-                existing.extend(cpt)
-                sop.coding_rules_cpt = existing
-
-            icd = extracted.get("coding_rules_icd", [])
-            if icd:
-                existing = sop.coding_rules_icd or []
-                existing.extend(icd)
-                sop.coding_rules_icd = existing
 
     @staticmethod
     def extract_from_document(doc):
@@ -562,7 +569,6 @@ class SOPService:
 
             category = doc.category or ""
 
-            # Filter to only what this document's category covers
             if "Payer" in category:
                 extracted = {"payer_guidelines": extracted.get("payer_guidelines", [])}
             elif "Billing" in category:
@@ -577,10 +583,10 @@ class SOPService:
             elif "Eligibility" in category:
                 extracted = {"workflow_process": extracted.get("workflow_process", {})}
 
-            doc.extracted_data = extracted
 
             SOPService.apply_extraction_to_sop(
                 sop=db_sop,
+                doc=doc,
                 category=category,
                 extracted=extracted,
             )
@@ -591,15 +597,89 @@ class SOPService:
 
         except Exception as e:
             print(f"[extraction] ❌ Doc {doc_id} failed: {e}")
-            # Do NOT mark as processed — allows retry
 
         finally:
             db.close()
 
     @staticmethod
+    def _sync_guidelines(db_sop: SOP, sop_data: Dict):
+        """
+        Synchronizes guidelines (billing, payer, cpt, icd) across the main SOP table 
+        and its associated SOPDocument records. 
+        Items with source='Manual' are saved to the SOP table.
+        Items with other sources are saved to their respective SOPDocument records.
+        If a document exists but no items are provided for it in the payload, 
+        its respective guideline field is cleared (supporting deletions).
+        """
+        guideline_keys = ["billing_guidelines", "payer_guidelines", "coding_rules_cpt", "coding_rules_icd"]
+        
+        for key in guideline_keys:
+            if key in sop_data and sop_data[key] is not None:
+                merged_items = sop_data[key]
+                
+                manual_items_final = []
+                doc_groups = {} 
+                
+                if key == "billing_guidelines":
+                    for cat_group in merged_items:
+                        if not isinstance(cat_group, dict): continue
+                        cat_name = cat_group.get("category", "Uncategorized")
+                        rules = cat_group.get("rules", [])
+                        
+                        manual_rules = [r for r in rules if r.get("source") == "Manual" or not r.get("source")]
+                        if manual_rules:
+                            manual_items_final.append({
+                                "category": cat_name,
+                                "rules": [{"description": r.get("description")} for r in manual_rules]
+                            })
+                        
+                        for r in rules:
+                            src = r.get("source")
+                            if src and src != "Manual":
+                                if src not in doc_groups: doc_groups[src] = {}
+                                if cat_name not in doc_groups[src]: doc_groups[src][cat_name] = []
+                                doc_groups[src][cat_name].append(r)
+                    
+                    for src in doc_groups:
+                        doc_groups[src] = [
+                            {"category": cat, "rules": rules} 
+                            for cat, rules in doc_groups[src].items()
+                        ]
+                
+                else:
+                    for item in merged_items:
+                        if not isinstance(item, dict): continue
+                        src = item.get("source")
+
+                        # Manual + source file stay on SOP
+                        if src in ("Manual", None, ""):
+
+                            clean_item = item.copy()
+                            clean_item.pop("source", None)
+
+                            if key == "payer_guidelines":
+                                if "id" in clean_item and isinstance(clean_item["id"], str) and clean_item["id"].startswith("pg_"):
+                                    clean_item.pop("id", None)
+
+                            manual_items_final.append(clean_item)
+
+                        else:
+                            if src not in doc_groups:
+                                doc_groups[src] = []
+                            doc_groups[src].append(item)
+                if manual_items_final:
+                    setattr(db_sop, key, manual_items_final)
+                
+                for doc in db_sop.documents:
+                    source_name = "source_file" if doc.category == "Source file" else doc.name
+
+                    if source_name in doc_groups:
+                        setattr(doc, key, doc_groups[source_name])
+                    else:
+                        setattr(doc, key, [] if key.startswith("coding_rules") else None)
+
+    @staticmethod
     def update_sop(sop_id: str, sop_data: Dict, db: Session, current_user: User):
-        # Extraction is handled exclusively by POST /{sop_id}/documents/process.
-        # This method only updates SOP fields and provider mappings.
         org_id = SOPService._get_org_id(current_user)
 
         db_sop = db.query(SOP).filter(
@@ -609,7 +689,6 @@ class SOPService:
         if not db_sop:
             return None
 
-        # ── Provider mappings ──────────────────────────────────────────────────
         provider_ids = sop_data.get("provider_ids")
 
         if provider_ids is None:
@@ -647,7 +726,9 @@ class SOPService:
             for pid in to_add:
                 db.add(SopProviderMapping(sop_id=sop_id, provider_id=pid))
 
-        # ── Field updates ──────────────────────────────────────────────────────
+        SOPService._sync_guidelines(db_sop, sop_data)
+
+        guideline_fields = {"billing_guidelines", "payer_guidelines", "coding_rules_cpt", "coding_rules_icd"}
         allowed_fields = {
             "title",
             "category",
@@ -655,35 +736,18 @@ class SOPService:
             "client_id",
             "provider_info",
             "workflow_process",
-            "billing_guidelines",
-            "payer_guidelines",
-            "coding_rules_cpt",
-            "coding_rules_icd",
             "status_id",
         }
 
         for k, v in sop_data.items():
-            if k == "provider_ids":
+            if k == "provider_ids" or k in guideline_fields:
                 continue
             if k not in allowed_fields:
                 continue
 
             if k == "workflow_process" and isinstance(v, dict):
                 existing = db_sop.workflow_process or {}
-                # Deep merge: update top-level keys, normalize posting_charges_rules
                 existing.update(v)
-                # Normalize posting_charges_rules: if it arrived as a comma-joined
-                # string (legacy frontend behaviour), split it back into a list
-                pcr = existing.get("posting_charges_rules")
-                if isinstance(pcr, str) and pcr.strip():
-                    existing["posting_charges_rules"] = [
-                        r.strip() for r in pcr.split(",") if r.strip()
-                    ]
-                # Ensure description field is preserved (frontend key is "description")
-                if not existing.get("description") and v.get("description"):
-                    existing["description"] = v["description"]
-                from sqlalchemy.orm.attributes import flag_modified
-                flag_modified(db_sop, "workflow_process")
                 setattr(db_sop, "workflow_process", existing)
             else:
                 setattr(db_sop, k, v)
@@ -728,415 +792,92 @@ class SOPService:
         ]
 
     @staticmethod
-    def _build_coding_table(story, title, headers, rows, field_map, styles, colors_cfg):
-        if not rows:
-            return
-
-        if title:
-            story.append(Paragraph(title, styles["section_header"]))
-
-        th = styles["th"]
-        td = styles["td"]
-        header_row = [Paragraph(f"<b>{h}</b>", th) for h in headers]
-        # Build all rows in one pass — avoid re-creating style objects per cell
-        table_data = [header_row] + [
-            [Paragraph(str(r.get(f) or ""), td) for f in field_map]
-            for r in rows
-        ]
-
-        # Auto-size: distribute column widths proportionally to field type
-        from reportlab.lib.units import inch
-        from reportlab.lib import pagesizes
-        page_w = pagesizes.letter[0] - 1.5 * inch  # usable width
-        n = len(headers)
-        col_widths = [page_w / n] * n
-
-        table = Table(table_data, repeatRows=1, colWidths=col_widths)
-        table.setStyle(colors_cfg)
-        story.append(table)
-        story.append(Spacer(1, 0.15 * inch))
-
-    @staticmethod
     def generate_sop_pdf(sop: Any) -> bytes:
         import copy
         if not isinstance(sop, dict):
-            # skip_presigned=True: no AWS calls — document_url not needed for PDF
-            sop = SOPService._format_sop(sop, skip_presigned=True)
+            sop = SOPService._format_sop(sop)
         sop = copy.deepcopy(sop)
 
         # ── Pre-compute extracted doc groups (mirrors SOPReadOnlyView logic) ────
+        from app.services.s3_service import s3_service
         all_docs = sop.get("documents", [])
-        # NEVER show "Source file" as an "Extracted from" section —
-        # its data is already on the top-level sop fields (billing_guidelines,
-        # coding_rules_cpt, etc.).  Only extra uploaded docs get a badge.
-        extra_docs = [d for d in all_docs if d.get("category") != "Source file"]
-
-        def _ext_by_doc(key, filter_fn):
+        
+        def _ext_by_doc(field_name, filter_fn):
             result = []
-            for document in extra_docs:
-                items = [x for x in (document.get(key) or []) if filter_fn(x)]
-                if items:
+            image_extensions = ('.png', '.jpg', '.jpeg', '.webp')
+            
+            for doc in all_docs:
+                items = doc.get(field_name) or []
+                filtered_items = [x for x in items if filter_fn(x)]
+                
+                if filtered_items:
+                    doc_name = doc.get("name", "")
+                    s3_key = doc.get("s3_key")
+                    doc_url = s3_service.generate_presigned_url(
+                        s3_key,
+                        response_content_disposition=f"inline; filename*=UTF-8''{quote(doc_name)}"
+                    )
+                    
+                    is_image = doc_name.lower().endswith(image_extensions)
+                    image_data = None
+                    
+                    if is_image and s3_key:
+                        try:
+                            # Synchronous S3 fetch for PDF generation context
+                            import boto3
+                            import base64
+                            from botocore.config import Config
+                            
+                            s3_client = boto3.client(
+                                's3',
+                                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+                                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+                                region_name=os.getenv('AWS_REGION', 'us-east-1'),
+                                config=Config(signature_version='s3v4')
+                            )
+                            response = s3_client.get_object(Bucket=os.getenv('AWS_S3_BUCKET'), Key=s3_key)
+                            binary_data = response['Body'].read()
+                            
+                            mime_type = "image/png"
+                            if doc_name.lower().endswith(('.jpg', '.jpeg')):
+                                mime_type = "image/jpeg"
+                            elif doc_name.lower().endswith('.webp'):
+                                mime_type = "image/webp"
+                                
+                            base64_str = base64.b64encode(binary_data).decode('utf-8')
+                            image_data = f"data:{mime_type};base64,{base64_str}"
+                        except Exception as e:
+                            print(f"Error fetching image for PDF: {e}")
+                            is_image = False # Fallback to link if fetch fails
+                    
                     result.append({
-                        "name": document.get("name", ""),
-                        "url":  document.get("document_url") or document.get("s3_key") or "",
-                        "items": items,
+                        "name": doc_name,
+                        "url":  doc_url,
+                        "data_items": filtered_items,
+                        "is_image": is_image,
+                        "image_data": image_data
                     })
             return result
 
         ext_billing = _ext_by_doc("billing_guidelines", lambda g: g.get("category") or g.get("rules"))
-        ext_payer   = _ext_by_doc("payer_guidelines",   lambda g: g.get("title") or g.get("description"))
+        ext_payer   = _ext_by_doc("payer_guidelines",   lambda g: g.get("title") or g.get("payerName") or g.get("payer_name") or g.get("description"))
         ext_cpt     = _ext_by_doc("coding_rules_cpt",   lambda r: r.get("cptCode") or r.get("description"))
         ext_icd     = _ext_by_doc("coding_rules_icd",   lambda r: r.get("icdCode") or r.get("description"))
 
-        # ── PDF setup ────────────────────────────────────────────────────────────
+        # ── HTML/PDF setup ───────────────────────────────────────────────────────
+        template_dir = os.path.join(os.path.dirname(__file__), "..", "templates")
+        env = Environment(loader=FileSystemLoader(template_dir))
+        template = env.get_template("sop_pdf.html")
+
+        html_content = template.render(
+            sop=sop,
+            ext_billing=ext_billing,
+            ext_payer=ext_payer,
+            ext_cpt=ext_cpt,
+            ext_icd=ext_icd,
+            current_date=datetime.datetime.now().strftime("%B %d, %Y")
+        )
+
         buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=letter,
-            topMargin=0.5*inch, bottomMargin=0.5*inch,
-            leftMargin=0.75*inch, rightMargin=0.75*inch)
-        base_styles = getSampleStyleSheet()
-        story = []
-
-        primary_color = colors.HexColor('#0c4a6e')
-        accent_color  = colors.HexColor('#0ea5e9')
-        header_bg     = colors.HexColor('#e0f2fe')
-        source_bg     = colors.HexColor('#eff6ff')
-        source_border = colors.HexColor('#bfdbfe')
-        text_color    = colors.HexColor('#334155')
-        label_color   = colors.HexColor('#64748b')
-        cat_color     = colors.HexColor('#1e40af')
-        bs = base_styles['BodyText']
-
-        section_header = ParagraphStyle('SectionHeader', parent=base_styles['Heading2'],
-            fontSize=14, textColor=primary_color, spaceBefore=14, spaceAfter=6)
-        sub_header = ParagraphStyle('SubHeader', parent=base_styles['Heading3'],
-            fontSize=11, textColor=primary_color, spaceBefore=8, spaceAfter=3)
-        cat_style = ParagraphStyle('Category', parent=bs,
-            fontSize=11, textColor=accent_color, spaceAfter=6, alignment=1)
-
-        pdf_styles = {
-            "section_header": section_header,
-            "th": ParagraphStyle('TH', parent=bs, textColor=primary_color,
-                alignment=1, fontSize=10, fontName='Helvetica-Bold'),
-            "td": ParagraphStyle('TD', parent=bs, textColor=text_color, fontSize=9),
-        }
-
-        table_styles = TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), header_bg),
-            ('LINEBELOW', (0,0), (-1,0), 1, accent_color),
-            ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('PADDING', (0,0), (-1,-1), 6),
-        ])
-
-        def mk_field(label, value):
-            return Paragraph(
-                f"<font color='{label_color.hexval()}'><b>{label}</b></font>"
-                f"<br/><font color='{text_color.hexval()}'>{value or '-'}</font>", bs)
-
-        # Pre-create badge styles once (not per call)
-        _badge_style = ParagraphStyle(
-            'SourceBadge', parent=bs,
-            fontSize=9, textColor=colors.HexColor('#1d4ed8'),
-        )
-        _link_style = ParagraphStyle(
-            'SourceLink', parent=bs,
-            fontSize=9, textColor=colors.HexColor('#2563eb'),
-            alignment=2,
-        )
-
-        def source_badge(name, url=""):
-            left_cell = Paragraph(
-                f'<font color="#1d4ed8"><b>&#9679; Extracted from: {name}</b></font>',
-                _badge_style,
-            )
-            right_cell = Paragraph(
-                f'<link href="{url}"><font color="#2563eb"><u>View Document &#8594;</u></font></link>'
-                if url else "",
-                _link_style,
-            )
-
-            t = Table(
-                [[left_cell, right_cell]],
-                colWidths=[5.2*inch, 1.8*inch],
-            )
-            t.setStyle(TableStyle([
-                ('BACKGROUND',   (0,0), (-1,-1), source_bg),
-                ('BOX',          (0,0), (-1,-1), 0.75, source_border),
-                ('ROUNDEDCORNERS', [4]),
-                ('VALIGN',       (0,0), (-1,-1), 'MIDDLE'),
-                ('PADDING',      (0,0), (-1,-1), 5),
-                ('TOPPADDING',   (0,0), (-1,-1), 6),
-                ('BOTTOMPADDING',(0,0), (-1,-1), 6),
-            ]))
-            return t
-
-        # ── Title ────────────────────────────────────────────────────────────────
-        story.append(Paragraph(sop.get('title', 'SOP'),
-            ParagraphStyle('MainTitle', parent=base_styles['Title'],
-                fontSize=24, textColor=primary_color, spaceAfter=8, leading=28)))
-        story.append(Paragraph(sop.get('category', '-'), cat_style))
-        story.append(Spacer(1, 4))
-        story.append(Table([['']], colWidths=[7.0*inch],
-            style=[('LINEBELOW', (0,0), (-1,-1), 1, accent_color)]))
-        story.append(Spacer(1, 0.3*inch))
-
-        # ── Practice Information ─────────────────────────────────────────────────
-        story.append(Paragraph('Practice Information', section_header))
-        t_client = Table(
-            [[mk_field('Name', sop.get('client_name')), mk_field('NPI', sop.get('client_npi'))]],
-            colWidths=[3.5*inch]*2)
-        t_client.setStyle(TableStyle([
-            ('VALIGN', (0,0), (-1,-1), 'TOP'), ('PADDING', (0,0), (-1,-1), 8),
-            ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')),
-            ('BACKGROUND', (0,0), (-1,-1), colors.white),
-        ]))
-        story.append(t_client)
-        story.append(Spacer(1, 0.2*inch))
-
-        # ── Associated Providers ─────────────────────────────────────────────────
-        providers = sop.get('providers', [])
-        if providers:
-            story.append(Paragraph('Associated Providers', section_header))
-            prov_data = [[Paragraph('<b>Provider Name</b>', pdf_styles['th']),
-                          Paragraph('<b>NPI</b>', pdf_styles['th'])]]
-            for p in providers:
-                prov_data.append([
-                    Paragraph(p.get('name', '-'), pdf_styles['td']),
-                    Paragraph(p.get('npi', '-'),  pdf_styles['td'])
-                ])
-            t_prov = Table(prov_data, colWidths=[4.5*inch, 2.5*inch])
-            t_prov.setStyle(table_styles)
-            story.append(t_prov)
-            story.append(Spacer(1, 0.2*inch))
-
-        # ── Billing Information ──────────────────────────────────────────────────
-        story.append(Paragraph('Billing Information', section_header))
-        p_info = sop.get('provider_info') or {}
-        bi_data = [
-            [mk_field('Provider Name', p_info.get('providerName')),
-             mk_field('Tax ID',        p_info.get('providerTaxID')),
-             mk_field('NPI',           p_info.get('billingProviderNPI'))],
-            [mk_field('Billing Provider', p_info.get('billingProviderName')),
-             mk_field('Practice Name',    sop.get('client_name')),
-             mk_field('Software',         p_info.get('software'))],
-            [mk_field('Address',      p_info.get('billingAddress')),
-             mk_field('Clearinghouse', p_info.get('clearinghouse')),
-             mk_field('Status',        (sop.get('status') or {}).get('code', 'Active'))],
-        ]
-        t_bi = Table(bi_data, colWidths=[2.333*inch]*3)
-        t_bi.setStyle(TableStyle([
-            ('VALIGN', (0,0), (-1,-1), 'TOP'), ('PADDING', (0,0), (-1,-1), 8),
-            ('GRID', (0,0), (-1,-1), 0.25, colors.HexColor('#e2e8f0')),
-            ('BACKGROUND', (0,0), (-1,-1), colors.white),
-        ]))
-        story.append(t_bi)
-        story.append(Spacer(1, 0.2*inch))
-
-        # ── Workflow Process ─────────────────────────────────────────────────────
-        workflow = sop.get("workflow_process") or {}
-        if workflow:
-            story.append(Paragraph("Workflow Process", section_header))
-            description = workflow.get("description") or workflow.get("superbill_source") or "-"
-            story.append(Paragraph(description,
-                ParagraphStyle("WorkflowBody", parent=bs,
-                    textColor=text_color, fontSize=10, leading=14)))
-
-            posting_rules_raw = workflow.get("posting_charges_rules") or []
-            # Normalise to a list of strings — NEVER iterate characters
-            if isinstance(posting_rules_raw, list):
-                # Already a proper list — filter empties
-                posting_rules = [str(r).strip() for r in posting_rules_raw if str(r).strip()]
-            elif isinstance(posting_rules_raw, str) and posting_rules_raw.strip():
-                raw = posting_rules_raw.strip()
-                # Only split if each comma-segment looks like a meaningful rule
-                # (i.e. all segments are >= 10 chars). Otherwise keep as one block.
-                parts = [p.strip() for p in raw.split(",") if p.strip()]
-                if len(parts) > 1 and all(len(p) >= 8 for p in parts):
-                    posting_rules = parts
-                else:
-                    posting_rules = [raw]  # treat whole string as one entry
-            else:
-                posting_rules = []
-
-            if posting_rules:
-                story.append(Spacer(1, 8))
-                story.append(Paragraph("<b>Posting Charges Rules:</b>",
-                    ParagraphStyle("PostingHeader", parent=bs,
-                        textColor=primary_color, spaceAfter=4)))
-                _pr_body = ParagraphStyle("PostingRule", parent=bs,
-                    leftIndent=12, textColor=text_color, spaceAfter=4, leading=14)
-                if len(posting_rules) == 1:
-                    # Single block of text — render as wrapped paragraph, no bullet
-                    story.append(Paragraph(posting_rules[0], _pr_body))
-                else:
-                    for rule in posting_rules:
-                        story.append(Paragraph(f"• {rule}", _pr_body))
-
-            portals_raw = (workflow.get("eligibility_verification_portals")
-                           or workflow.get("eligibilityPortals") or [])
-            # Guard: must be a list of strings, never iterate a bare string
-            if isinstance(portals_raw, str) and portals_raw.strip():
-                portals = [p.strip() for p in portals_raw.split(",") if p.strip()]
-            elif isinstance(portals_raw, list):
-                portals = [str(p).strip() for p in portals_raw if str(p).strip()]
-            else:
-                portals = []
-            if portals:
-                story.append(Spacer(1, 8))
-                story.append(Paragraph("<b>Eligibility Verification Portals:</b>",
-                    ParagraphStyle("PortalHeader", parent=bs,
-                        textColor=primary_color, spaceAfter=4)))
-                _portal_style = ParagraphStyle("Portal", parent=bs,
-                    leftIndent=12, textColor=text_color, spaceAfter=3,
-                    backColor=header_bg, borderPadding=3)
-                for portal in portals:
-                    story.append(Paragraph(f"• {portal}", _portal_style))
-            story.append(Spacer(1, 0.2*inch))
-
-        # ── Billing Guidelines ───────────────────────────────────────────────────
-        # Aggregate from sop-level + documents, de-duplicate by category+description
-        seen_bg = set()
-        all_billing: dict = {}
-        def _add_billing_group(group):
-            cat = group.get("category", "Guidelines")
-            if cat not in all_billing:
-                all_billing[cat] = []
-            for rule in (group.get("rules") or []):
-                desc = rule.get("description", "")
-                key = (cat, desc)
-                if desc and key not in seen_bg:
-                    seen_bg.add(key)
-                    all_billing[cat].append(desc)
-
-        for group in (sop.get('billing_guidelines') or []):
-            _add_billing_group(group)
-        for document in extra_docs:
-            for group in (document.get('billing_guidelines') or []):
-                _add_billing_group(group)
-
-        if all_billing:
-            story.append(Paragraph('Billing Guidelines', section_header))
-            for cat, descs in all_billing.items():
-                story.append(Paragraph(cat, sub_header))
-                for desc in descs:
-                    story.append(Paragraph(f"• {desc}",
-                        ParagraphStyle('BGRule', parent=bs,
-                            leftIndent=14, textColor=text_color,
-                            fontSize=10, spaceAfter=4)))
-            story.append(Spacer(1, 0.15*inch))
-
-        # ── Payer Guidelines ─────────────────────────────────────────────────────
-        # Aggregate from sop-level + documents, de-duplicate by payerName
-        seen_payers = set()
-        all_payers = []
-        def _add_payer(pg):
-            name = pg.get('title') or pg.get('payerName') or pg.get('payer') or 'Unknown Payer'
-            if name not in seen_payers:
-                seen_payers.add(name)
-                all_payers.append(pg)
-
-        for pg in (sop.get('payer_guidelines') or []):
-            _add_payer(pg)
-        for document in extra_docs:
-            for pg in (document.get('payer_guidelines') or []):
-                _add_payer(pg)
-
-        if all_payers:
-            story.append(Paragraph('Payer Guidelines', section_header))
-            payer_headers = ["Payer", "ERA", "EDI", "TFL", "Network", "Payer ID", "Description"]
-            payer_field_map = ["payerName","eraStatus","ediStatus","tfl","networkStatus","payerId","description"]
-            SOPService._build_coding_table(
-                story=story, title="",
-                headers=payer_headers,
-                rows=all_payers,
-                field_map=payer_field_map,
-                styles=pdf_styles, colors_cfg=table_styles,
-            )
-            story.append(Spacer(1, 0.15*inch))
-
-        # ── CPT Coding Guidelines ────────────────────────────────────────────────
-        # Aggregate CPT from: sop-level field (legacy) + each document's field
-        # De-duplicate by cptCode+ndcCode so source_file data never shows twice
-        seen_cpt_keys = set()
-        all_cpt_rows = []
-        for r in (sop.get('coding_rules_cpt') or []):
-            k = (r.get('cptCode',''), r.get('ndcCode',''))
-            if k not in seen_cpt_keys:
-                seen_cpt_keys.add(k)
-                all_cpt_rows.append(r)
-        for document in extra_docs:
-            for r in (document.get('coding_rules_cpt') or []):
-                k = (r.get('cptCode',''), r.get('ndcCode',''))
-                if k not in seen_cpt_keys:
-                    seen_cpt_keys.add(k)
-                    all_cpt_rows.append(r)
-
-        if all_cpt_rows:
-            story.append(Paragraph('CPT Coding Guidelines', section_header))
-            # Split into two sub-tables: NDC/infusion rows and modifier/rule rows
-            ndc_rows = [r for r in all_cpt_rows if r.get('ndcCode') or r.get('chargePerUnit')]
-            rule_rows = [r for r in all_cpt_rows if not r.get('ndcCode') and not r.get('chargePerUnit')]
-            if ndc_rows:
-                story.append(Paragraph("<b>Infusion / NDC Codes</b>",
-                    ParagraphStyle("CPTSubHead", parent=bs, textColor=primary_color,
-                        fontSize=10, spaceAfter=4)))
-                SOPService._build_coding_table(
-                    story=story, title="",
-                    headers=["CPT", "Description", "NDC", "Units", "Charge", "Modifier", "Replace"],
-                    rows=ndc_rows,
-                    field_map=["cptCode","description","ndcCode","units",
-                               "chargePerUnit","modifier","replacementCPT"],
-                    styles=pdf_styles, colors_cfg=table_styles,
-                )
-            if rule_rows:
-                story.append(Paragraph("<b>Coding Rules</b>",
-                    ParagraphStyle("CPTSubHead2", parent=bs, textColor=primary_color,
-                        fontSize=10, spaceAfter=4)))
-                SOPService._build_coding_table(
-                    story=story, title="",
-                    headers=["CPT", "Description", "Units", "Modifier", "Replace"],
-                    rows=rule_rows,
-                    field_map=["cptCode","description","units","modifier","replacementCPT"],
-                    styles=pdf_styles, colors_cfg=table_styles,
-                )
-
-        # ── ICD Coding Guidelines ────────────────────────────────────────────────
-        # Aggregate ICD from sop-level + documents, de-duplicate by icdCode
-        seen_icd_keys = set()
-        all_icd_rows = []
-        for r in (sop.get('coding_rules_icd') or []):
-            k = r.get('icdCode','')
-            if k not in seen_icd_keys:
-                seen_icd_keys.add(k)
-                all_icd_rows.append(r)
-        for document in extra_docs:
-            for r in (document.get('coding_rules_icd') or []):
-                k = r.get('icdCode','')
-                if k not in seen_icd_keys:
-                    seen_icd_keys.add(k)
-                    all_icd_rows.append(r)
-
-        if all_icd_rows:
-            story.append(Paragraph('ICD Coding Guidelines', section_header))
-            SOPService._build_coding_table(
-                story=story, title="",
-                headers=["ICD Code", "Description", "Notes"],
-                rows=all_icd_rows,
-                field_map=["icdCode", "description", "notes"],
-                styles=pdf_styles, colors_cfg=table_styles,
-            )
-
-        # ── Footer ───────────────────────────────────────────────────────────────
-        def add_footer(canvas, doc):
-            canvas.saveState()
-            canvas.setStrokeColor(colors.HexColor('#e2e8f0'))
-            canvas.line(0.75*inch, 0.6*inch, letter[0]-0.75*inch, 0.6*inch)
-            canvas.setFont('Helvetica-Bold', 9)
-            canvas.setFillColor(colors.HexColor('#94a3b8'))
-            canvas.drawRightString(letter[0] - 0.75*inch, 0.35*inch, "docucr")
-            canvas.setFont('Helvetica', 9)
-            canvas.drawString(0.75*inch, 0.35*inch, f"Page {doc.page}")
-            canvas.restoreState()
-
-        doc.build(story, onFirstPage=add_footer, onLaterPages=add_footer)
+        HTML(string=html_content).write_pdf(buffer)
         return buffer.getvalue()
