@@ -52,3 +52,8 @@ output "ecr_repository_name" {
   description = "ECR repository name"
   value       = aws_ecr_repository.backend.name
 }
+
+output "aws_region" {
+  description = "AWS region"
+  value       = var.aws_region
+}

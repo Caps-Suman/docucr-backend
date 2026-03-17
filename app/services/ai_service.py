@@ -447,7 +447,8 @@ Return ONLY this JSON:
             hints = [f"type={ft}"]
             if fd:
                 hints.append(fd)
-            field_lines.append(f'  "{fn}": null  // {', '.join(hints)}')
+            hints_str = ', '.join(hints)
+            field_lines.append(f'  "{fn}": null  // {hints_str}')
 
         fields_block = "\n".join(field_lines)
         empty_json = json.dumps(
