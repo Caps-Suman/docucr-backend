@@ -31,7 +31,36 @@ class SOPService:
         if not org_id and not is_super:
             raise HTTPException(403, "No organisation selected")
         return org_id
+    @staticmethod
+    def _apply_visibility_filter(query, db: Session, current_user: Any):
+        org_id = SOPService._get_org_id(current_user)
+        user_id = str(current_user.id)
+        is_super = getattr(current_user, "context_is_superadmin", False)
+        role = getattr(current_user, "role", None)
 
+        # ALWAYS enforce org boundary
+        if org_id:
+            query = query.filter(SOP.organisation_id == org_id)
+
+        if is_super:
+            return query
+
+        if role == "INTERNAL":
+            return query.filter(SOP.created_by == user_id)
+
+        elif role == "CLIENT_ADMIN":
+            client_ids = db.query(UserClient.client_id).filter(
+                UserClient.user_id == user_id
+            )
+
+            client_user_ids = db.query(UserClient.user_id).filter(
+                UserClient.client_id.in_(client_ids)
+            )
+
+            return query.filter(SOP.created_by.in_(client_user_ids))
+
+        # fallback → strict
+        return query.filter(SOP.created_by == user_id)
     @staticmethod
     def _base_visible_sops_query(db: Session):
         return db.query(SOP).join(Status, Status.id == SOP.status_id).filter(
@@ -98,10 +127,11 @@ class SOPService:
             defer(SOP.coding_rules_cpt),
             defer(SOP.coding_rules_icd),
         )
-        org_id = SOPService._get_org_id(current_user)
+        query = SOPService._apply_visibility_filter(query, db, current_user)
 
-        if org_id:
-            query = query.filter(SOP.organisation_id == org_id)
+
+        # if org_id:
+        #     query = query.filter(SOP.organisation_id == org_id)
 
         if status_code:
             status = db.query(Status).filter(
@@ -154,31 +184,25 @@ class SOPService:
 
     @staticmethod
     def get_sop_stats(db: Session, current_user: Any) -> Dict[str, int]:
-        q = (
-            db.query(
-                func.count(SOP.id)
-                    .filter(or_(Status.type == "GENERAL", Status.code.in_(["FAILED", "AI_FAILED"])))
-                    .label("total"),
-                func.count(SOP.id)
-                    .filter(Status.code == "ACTIVE")
-                    .label("active"),
-                func.count(SOP.id)
-                    .filter(Status.code == "INACTIVE")
-                    .label("inactive"),
+        base_query = db.query(SOP).join(Status, Status.id == SOP.status_id).filter(
+            or_(
+                Status.type == "GENERAL",
+                Status.code.in_(["FAILED", "AI_FAILED"])
             )
-            .select_from(SOP)
-            .join(Status, Status.id == SOP.status_id)
-            .filter(or_(Status.type == "GENERAL", Status.code.in_(["FAILED", "AI_FAILED"])))
         )
-        org_id = SOPService._get_org_id(current_user)
-        if org_id:
-            q = q.filter(SOP.organisation_id == org_id)
 
-        row = q.one()
+        # APPLY SAME VISIBILITY FILTER
+        base_query = SOPService._apply_visibility_filter(base_query, db, current_user)
+
+        total = base_query.count()
+
+        active = base_query.filter(Status.code == "ACTIVE").count()
+        inactive = base_query.filter(Status.code == "INACTIVE").count()
+
         return {
-            "total_sops": row.total,
-            "active_sops": row.active,
-            "inactive_sops": row.inactive,
+            "total_sops": total,
+            "active_sops": active,
+            "inactive_sops": inactive,
         }
 
     @staticmethod
@@ -330,8 +354,7 @@ class SOPService:
         org_id = SOPService._get_org_id(current_user)
 
         query = db.query(SOP).filter(SOP.id == sop_id)
-        if org_id:
-            query = query.filter(SOP.organisation_id == org_id)
+        query = SOPService._apply_visibility_filter(query, db, current_user)
 
         sop = query.options(
             joinedload(SOP.creator),
@@ -682,10 +705,10 @@ class SOPService:
     def update_sop(sop_id: str, sop_data: Dict, db: Session, current_user: User):
         org_id = SOPService._get_org_id(current_user)
 
-        db_sop = db.query(SOP).filter(
-            SOP.id == sop_id,
-            SOP.organisation_id == org_id
-        ).first()
+        query = db.query(SOP).filter(SOP.id == sop_id)
+        query = SOPService._apply_visibility_filter(query, db, current_user)
+
+        db_sop = query.first()
         if not db_sop:
             return None
 
@@ -762,8 +785,7 @@ class SOPService:
         org_id = SOPService._get_org_id(current_user)
 
         query = db.query(SOP).filter(SOP.id == sop_id)
-        if org_id:
-            query = query.filter(SOP.organisation_id == org_id)
+        query = SOPService._apply_visibility_filter(query, db, current_user)
 
         db_sop = query.first()
         if not db_sop:

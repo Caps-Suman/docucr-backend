@@ -28,15 +28,34 @@ class FormService:
             return query.filter(False)
 
         org_id = FormService._resolve_org_id(current_user)
-
-        # no org selected → no access
         if not org_id:
             return query.filter(False)
 
-        return query.filter(Form.organisation_id == org_id)
+        user_id = str(current_user.id)
+        is_super = getattr(current_user, "context_is_superadmin", False)
+        role = getattr(current_user, "role", None)
+
+        # 🔒 ALWAYS enforce org boundary
+        query = query.filter(Form.organisation_id == org_id)
+
+        # superadmin → full access
+        if is_super:
+            return query
+
+        # 🔒 INTERNAL → only own forms
+        if role == "INTERNAL":
+            return query.filter(Form.created_by == user_id)
+
+        # 🔒 CLIENT → already blocked earlier, but double safety
+        if getattr(current_user, "is_client", False):
+            return query.filter(False)
+
+        # 🔒 fallback (strict, not permissive)
+        return query.filter(Form.created_by == user_id)
     @staticmethod
     def get_form_stats(db: Session, current_user):
 
+        # block client users
         if getattr(current_user, "is_client", False):
             return {
                 "total_forms": 0,
@@ -44,6 +63,7 @@ class FormService:
                 "inactive_forms": 0
             }
 
+        # block temp users
         if getattr(current_user, "context_temp", False):
             return {
                 "total_forms": 0,
@@ -51,33 +71,21 @@ class FormService:
                 "inactive_forms": 0
             }
 
-        org_id = FormService._resolve_org_id(current_user)
-        if not org_id:
-            return {
-                "total_forms": 0,
-                "active_forms": 0,
-                "inactive_forms": 0
-            }
+        base_query = db.query(Form).join(Status, Form.status_id == Status.id)
 
-        active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+        # 🔥 APPLY SAME ACCESS FILTER (THIS WAS MISSING)
+        base_query = FormService._apply_access_filter(base_query, current_user)
 
-        total_forms = db.query(func.count(Form.id))\
-            .filter(Form.organisation_id == org_id)\
-            .scalar() or 0
+        total = base_query.count()
 
-        active_forms = 0
+        active = base_query.filter(Status.code == "ACTIVE").count()
 
-        if active_status:
-            active_forms = db.query(func.count(Form.id))\
-                .filter(
-                    Form.organisation_id == org_id,
-                    Form.status_id == active_status.id
-                ).scalar() or 0
+        inactive = base_query.filter(Status.code == "INACTIVE").count()
 
         return {
-            "total_forms": total_forms,
-            "active_forms": active_forms,
-            "inactive_forms": total_forms - active_forms
+            "total_forms": total,
+            "active_forms": active,
+            "inactive_forms": inactive
         }
 
 

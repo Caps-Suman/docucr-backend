@@ -426,9 +426,6 @@ class UserService:
         context_org = UserService._ctx_org(current_user)
         context_role = UserService._ctx_role(current_user)
         is_super = UserService._ctx_is_super(current_user)
-
-        created_by_val = None
-        organisation_id_val = None
         client_id_val = None
 
         # SUPERADMIN inside org
@@ -470,7 +467,7 @@ class UserService:
         else:
             raise HTTPException(403, "User not permitted")
 
-        password = user_data['password']
+        password = user_data['password'].strip()
         UserService.validate_password(password)
         user = User(
             id=str(uuid.uuid4()),
@@ -485,7 +482,7 @@ class UserService:
             is_superuser=False,
             status_id=status_id_val,
             organisation_id=organisation_id_val,
-            client_id=client_id_val if 'client_id_val' in locals() else user_data.get('client_id'), # Use auto-assigned or provided
+            client_id = client_id_val if client_id_val is not None else user_data.get('client_id'), # Use auto-assigned or provided
             created_by=created_by_val
         )
         

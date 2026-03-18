@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from fastapi import Query
 import re
-from app.core.permissions import Permission
 from app.core.database import get_db
 from app.services.user_service import UserService
 from app.core.permissions import Permission
@@ -34,7 +33,7 @@ class UserCreate(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=50)
     middle_name: Optional[str] = Field(None, max_length=50)
     last_name: str = Field(..., min_length=1, max_length=50)
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=8)
     phone_country_code: Optional[str] = None
     phone_number: Optional[str] = None
     role_ids: List[str] = []
@@ -56,7 +55,28 @@ class UserCreate(BaseModel):
         if not v or not v.strip():
             raise ValueError('Username cannot be empty')
         return v.strip()
+    
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        v = v.strip()
 
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Must include uppercase letter")
+
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Must include lowercase letter")
+
+        if not re.search(r"\d", v):
+            raise ValueError("Must include number")
+
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("Must include special character")
+
+        return v
 class UserUpdate(BaseModel):
     email: Optional[str] = None
     username: Optional[str] = Field(None, min_length=3, max_length=50)
@@ -538,8 +558,28 @@ async def deactivate_user(
 
 
 class ChangePasswordRequest(BaseModel):
-    new_password: str = Field(..., min_length=6, description="New password for the user")
+    new_password: str = Field(..., min_length=8, description="New password for the user")
+    @field_validator("new_password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        v = v.strip()
 
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Must include uppercase letter")
+
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Must include lowercase letter")
+
+        if not re.search(r"\d", v):
+            raise ValueError("Must include number")
+
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("Must include special character")
+
+        return v
 @router.post("/{user_id}/change-password")
 async def change_user_password(
     user_id: str, 
