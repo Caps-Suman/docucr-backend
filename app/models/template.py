@@ -35,7 +35,12 @@ class Template(Base):
     created_by = Column(
         String,
         ForeignKey("docucr.user.id"),
-        nullable=False
+        nullable=True
+    )
+    organisation_id = Column(
+        String,
+        ForeignKey("docucr.organisation.id"),
+        nullable=True
     )
 
     updated_by = Column(
@@ -43,7 +48,6 @@ class Template(Base):
         ForeignKey("docucr.user.id"),
         nullable=True
     )
-
 
     creator = relationship("User", foreign_keys=[created_by])
     updater = relationship("User", foreign_keys=[updated_by])

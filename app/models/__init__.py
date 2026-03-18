@@ -9,6 +9,8 @@ from .user import User
 from .user_role import UserRole
 from .user_role_module import UserRoleModule
 from .user_supervisor import UserSupervisor
+from .provider import Provider
+from .client_location import ClientLocation
 from .document_type import DocumentType
 from .template import Template
 from .document import Document
@@ -29,12 +31,14 @@ from .user_client import UserClient
 from .user_role import UserRole
 from .user_role_module import UserRoleModule
 from .organisation import Organisation
-from .organisation_role import OrganisationRole
+from .provider_client_mapping import ProviderClientMapping
+from .sop_provider_mapping import SopProviderMapping
 
 __all__ = [
     'Base', 'Module', 'Client', 'Privilege', 'Role', 'RoleModule', 'Submodule', 'RoleSubmodule', 'User', 'UserRole', 
-    'UserRoleModule', 'UserSupervisor', 'DocumentType', 'Template', 'Document',
+    'UserRoleModule', 'UserSupervisor', 'Provider', 'ClientLocation', 'DocumentType', 'Template', 'Document',
     'DocumentFormData', 'ExtractedDocument', 'UnverifiedDocument', 'Form', 'FormField', 'Status',
     'DocumentListConfig', 'Printer', 'ActivityLog', 'SOP', 'OTP', 'Webhook',
-    'DocumentShare', 'ExternalShare', 'UserClient', 'UserRole', 'UserRoleModule', 'Organisation', 'OrganisationRole'
+    'DocumentShare', 'ExternalShare', 'UserClient', 'UserRole', 'UserRoleModule', 'Organisation',
+    'ProviderClientMapping', 'SopProviderMapping'
 ]

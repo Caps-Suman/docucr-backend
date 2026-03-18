@@ -37,6 +37,8 @@ class Client(Base):
     state_name = Column(String(50), nullable=True)       # e.g. Virginia
     country = Column(String(50), nullable=True, default="United States")
     zip_code = Column(String(10), nullable=True)
+    specialty = Column(String(250), nullable=True)
+    specialty_code = Column(String(50), nullable=True)
 
     # --- System ---
     is_user = Column(Boolean, default=False)

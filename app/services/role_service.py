@@ -7,34 +7,65 @@ import uuid
 from app.models.role import Role
 from app.models.user import User
 from app.models.organisation import Organisation
-from app.models.organisation_role import OrganisationRole
 from app.models.user_role import UserRole
 from app.models.role_module import RoleModule
 from app.models.role_submodule import RoleSubmodule
 from app.models.user_role_module import UserRoleModule
 from app.models.status import Status
+from app.models.client import Client
 from app.services.user_service import UserService
 
 
 class RoleService:
-    
+
     @staticmethod
-    def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session, current_user):
+    def _apply_org_scope(query, current_user):
+        context_org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+        is_super = getattr(current_user, "context_is_superadmin", getattr(current_user, "is_superuser", False))
+
+        if not is_super:
+            if getattr(current_user, "is_client", False):
+                return query.filter(Role.created_by == str(current_user.id))
+            elif context_org_id:
+                return query.filter(Role.organisation_id == str(context_org_id))
+            else:
+                return query.filter(Role.created_by == str(current_user.id))
+        elif context_org_id:
+            return query.filter(Role.organisation_id == str(context_org_id))
+            
+        return query
+    @staticmethod
+    def get_roles(page: int, page_size: int, status_id: Optional[str], db: Session, current_user, search: Optional[str] = None, organisation_id: Optional[List[str]] = None):
         skip = (page - 1) * page_size
+
+        # print("all roles:", db.query(Role).count())
+        # print("non default:", db.query(Role).filter(Role.is_default == False).count())
 
         query = RoleService._base_roles_query(db)
 
-        if not current_user.is_superuser:
-            if getattr(current_user, 'is_client', False):
-                query = query.filter(Role.created_by == str(current_user.id))
-            else:
-                 query = query.filter(Role.organisation_id == str(current_user.id))
+        # 🔥 ALWAYS hide default roles
+        query = query.filter(Role.is_default == False)
+
+        # ---------------------------------------------------------
+        # Hide SYSTEM Roles (Requested Behavior)
+        # ---------------------------------------------------------
+        query = RoleService._apply_org_scope(query, current_user)
 
         if status_id:
             query = query.join(Role.status_relation).filter(Status.code == status_id)
 
+        if search:
+            query = query.filter(Role.name.ilike(f"%{search}%"))
+
+        if organisation_id:
+            if isinstance(organisation_id, list):
+                query = query.filter(Role.organisation_id.in_(organisation_id))
+            else:
+                query = query.filter(Role.organisation_id == organisation_id)
+
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
+
 
         result = []
         for role in roles:
@@ -87,16 +118,28 @@ class RoleService:
         skip = (page - 1) * page_size
 
         query = RoleService._base_roles_query(db)
-        
-        # if not current_user.is_superuser:
-        #     query = query.filter(Role.created_by == current_user.id)
 
-        if not current_user.is_superuser:
-            if getattr(current_user, 'is_client', False):
-                query = query.filter(Role.created_by == str(current_user.id))
-            else:
-                 query = query.filter(Role.organisation_id == str(current_user.id))
+        # 🔥 ALWAYS hide default roles
+        query = query.filter(Role.is_default == False)
 
+        # context_org_id = getattr(current_user, "context_organisation_id", None)
+        # is_super = getattr(current_user, "context_is_superadmin", False)
+
+        # if not is_super:
+        #     if getattr(current_user, "is_client", False):
+        #         query = query.filter(Role.created_by == str(current_user.id))
+        #     elif context_org_id:
+        #         query = query.filter(Role.organisation_id == str(context_org_id))
+        #     else:
+        #         query = query.filter(Role.created_by == str(current_user.id))
+        # else:
+        #     query = query.filter(
+        #         or_(
+        #             Role.created_by == str(current_user.id),
+        #             Role.organisation_id.is_(None)
+        #         )
+        #     )
+        query = RoleService._apply_org_scope(query, current_user)
         total = query.count()
         roles = query.offset(skip).limit(page_size).all()
 
@@ -110,10 +153,92 @@ class RoleService:
                 "status_id": role.status_id,
                 "statusCode": role.status_relation.code if role.status_relation else None,
                 "can_edit": role.can_edit,
-                "users_count": users_count
+                "users_count": users_count,
+                "organisation_id": str(role.organisation_id) if role.organisation_id else None
             })
 
         return result, total
+
+    @staticmethod
+    def get_light_roles(
+        search: Optional[str],
+        db: Session,
+        current_user,
+        organisation_id: Optional[List[str]] = None,
+        client_id: Optional[List[str]] = None
+    ) -> List[Dict]:
+        """
+        Fetch lightweight list of roles.
+        Filters by search, org, and client, but returns simplified objects.
+        Limit to 50 results.
+        """
+        query = RoleService._base_roles_query(db)
+        
+        # 🔥 ALWAYS hide default roles
+        query = query.filter(Role.is_default == False)
+
+        # ---------------------------------------------------------
+        # 1. Handle ORGANISATION/CLIENT Login (Instance Checks)
+        # ---------------------------------------------------------
+        if isinstance(current_user, Client):
+             # STRICT: Only roles Created By this Client
+             query = query.filter(Role.created_by == str(current_user.id))
+
+    
+        # elif isinstance(current_user, User) and not current_user.is_superuser:
+        #     role_names = [r.name for r in current_user.roles]
+
+        #     if getattr(current_user, 'is_client', False) or "CLIENT_ADMIN" in role_names:
+ 
+        #         query = query.filter(Role.created_by == str(current_user.id))
+            
+        #     elif current_user.organisation_id or "ORGANISATION_ADMIN" in role_names:
+        #          query = query.filter(Role.organisation_id == str(current_user.organisation_id))
+            
+        #     else:
+        #         query = query.filter(
+        #             (Role.organisation_id.is_(None) & Role.created_by.is_(None))
+        #         )
+        elif isinstance(current_user, User):
+            context_org_id = getattr(current_user, "context_organisation_id", None) or getattr(current_user, "organisation_id", None)
+            is_super = getattr(current_user, "context_is_superadmin", getattr(current_user, "is_superuser", False))
+
+            if not is_super:
+                if getattr(current_user, "is_client", False):
+                    query = query.filter(Role.created_by == str(current_user.id))
+                elif context_org_id:
+                    query = query.filter(Role.organisation_id == str(context_org_id))
+                else:
+                    query = query.filter(Role.created_by == str(current_user.id))
+            elif context_org_id:
+                query = query.filter(Role.organisation_id == str(context_org_id))
+        # Additional Filters from Arguments
+        if organisation_id:
+             if isinstance(organisation_id, list):
+                query = query.filter(Role.organisation_id.in_(organisation_id))
+             else:
+                query = query.filter(Role.organisation_id == organisation_id)
+        
+        if search:
+            query = query.filter(func.upper(Role.name).ilike(f"%{search.upper()}%"))
+        
+        # Join Organisation for name if needed
+        query = query.outerjoin(Organisation, Role.organisation_id == Organisation.id)
+        
+        results = query.with_entities(
+            Role.id,
+            Role.name,
+            Organisation.name.label("organisation_name")
+        ).limit(50).all()
+
+        return [
+            {
+                "id": r.id,
+                "name": r.name,
+                "organisation_name": r.organisation_name
+            }
+            for r in results
+        ]
 
     @staticmethod
     def get_role_by_id(role_id: str, db: Session) -> Optional[Dict]:
@@ -199,16 +324,32 @@ class RoleService:
         organisation_id_val = None
         created_by_val = None
 
-        if isinstance(current_user, Organisation):
+        organisation_id_val = None
+        created_by_val = None
+
+        context_org = getattr(current_user, "context_organisation_id", None)
+        is_super = getattr(current_user, "context_is_superadmin", False)
+
+        # SUPERADMIN inside organisation
+        if is_super and context_org:
+            organisation_id_val = str(context_org)
             created_by_val = None
-            organisation_id_val = str(current_user.id)
-        elif isinstance(current_user, User):
-            if not current_user.is_superuser:
-                created_by_val = str(current_user.id)
-                if current_user.organisation_id:
-                    organisation_id_val = str(current_user.organisation_id)
-            else:
-                created_by_val = None
+
+        # GLOBAL SUPERADMIN
+        elif is_super and not context_org:
+            organisation_id_val = None
+            created_by_val = None
+
+        # ORG USER
+        elif context_org:
+            organisation_id_val = str(context_org)
+            created_by_val = str(current_user.id)
+
+        # CLIENT ADMIN
+        elif getattr(current_user, "is_client", False):
+            created_by_val = str(current_user.id)
+            organisation_id_val = None
+
         
         # Check for duplicate role name within scope
         if RoleService._check_duplicate_role(role_data['name'], db, current_user):
@@ -250,22 +391,20 @@ class RoleService:
             return None
 
         # 1. Scope Permission Check
-        if isinstance(current_user, Organisation):
-            if str(role.organisation_id) != str(current_user.id):
-                 # Assuming returning None or raising specific error? Service usually returns None or raises.
-                 # Given request context, let's treat as 'Not Found' or invalid.
-                 return None 
-        elif isinstance(current_user, User) and not current_user.is_superuser:
-            if getattr(current_user, 'is_client', False):
-                 if str(role.created_by) != str(current_user.id):
-                      return None
-            elif current_user.organisation_id:
-                 if str(role.organisation_id) != str(current_user.organisation_id):
-                      return None
-            else:
-                 # Independent user updating their own role?
-                 if str(role.created_by) != str(current_user.id):
-                      return None
+        if isinstance(current_user, User):
+            context_org_id = getattr(current_user, "context_organisation_id", None)
+            is_super = getattr(current_user, "context_is_superadmin", False)
+
+            if not is_super:
+                if getattr(current_user, "is_client", False):
+                    if str(role.created_by) != str(current_user.id):
+                        return None
+                elif context_org_id:
+                    if str(role.organisation_id) != str(context_org_id):
+                        return None
+                else:
+                    if str(role.created_by) != str(current_user.id):
+                        return None
 
         if 'name' in role_data and role_data['name'] is not None:
             new_name = role_data['name'].upper()
@@ -343,28 +482,14 @@ class RoleService:
         db.delete(role)
         db.commit()
         return role_name, None
-    
     @staticmethod
     def get_role_stats(db, current_user):
+        query = RoleService._base_roles_query(db)
 
-        query = db.query(Role).filter(func.upper(Role.name) != "SUPER_ADMIN")
+        # 🔥 ALWAYS hide default roles
+        query = query.filter(Role.is_default == False)
 
-        # 🔥 SUPERADMIN → see everything
-        if isinstance(current_user, User) and current_user.is_superuser:
-            pass
-
-        # 🔥 CLIENT USER
-        elif isinstance(current_user, User) and current_user.is_client:
-            query = query.filter(Role.created_by == str(current_user.id))
-
-        # 🔥 ORG LOGIN
-        elif isinstance(current_user, Organisation):
-            query = query.filter(Role.organisation_id == str(current_user.id))
-
-        # 🔥 ORG USER
-        elif isinstance(current_user, User):
-            query = query.filter(Role.organisation_id == str(current_user.organisation_id))
-
+        query = RoleService._apply_org_scope(query, current_user)
         total = query.count()
 
         active = (
@@ -386,55 +511,91 @@ class RoleService:
         if exclude_id:
             query = query.filter(Role.id != exclude_id)
         return query.first() is not None
-
+    
     @staticmethod
-    def _check_duplicate_role(name: str, db: Session, current_user, exclude_role_id: Optional[str] = None) -> bool:
+    def _check_duplicate_role(name: str, db: Session, current_user, exclude_role_id=None):
+
         query = db.query(Role).filter(func.upper(Role.name) == name.upper())
 
         if exclude_role_id:
             query = query.filter(Role.id != exclude_role_id)
 
-        if isinstance(current_user, Organisation):
-            # Organisation Scope
-            query = query.filter(Role.organisation_id == str(current_user.id))
-        
-        elif isinstance(current_user, User):
-            if current_user.is_superuser:
-                # Super Admin Scope: created_by IS NULL AND organisation_id IS NULL
-                query = query.filter(Role.created_by.is_(None), Role.organisation_id.is_(None))
-            
-            elif getattr(current_user, 'is_client', False):
-                # Client Scope: created_by == current_user.id
-                query = query.filter(Role.created_by == str(current_user.id))
+        context_org = getattr(current_user, "context_organisation_id", None)
+        is_super = getattr(current_user, "context_is_superadmin", False)
 
-            elif current_user.organisation_id:
-                 # Organisation User Scope: Check within organisation
-                 query = query.filter(Role.organisation_id == str(current_user.organisation_id))
-            
-            else:
-                 # Independent user?
-                 query = query.filter(Role.created_by == str(current_user.id))
+        # ==============================
+        # SUPERADMIN INSIDE ORG CONTEXT
+        # ==============================
+        if is_super and context_org:
+            query = query.filter(Role.organisation_id == str(context_org))
+            return query.first() is not None
 
-        return query.first() is not None
+        # ==============================
+        # ORG USER
+        # ==============================
+        if context_org:
+            query = query.filter(Role.organisation_id == str(context_org))
+            return query.first() is not None
+
+        # ==============================
+        # CLIENT ADMIN
+        # ==============================
+        if isinstance(current_user, User) and getattr(current_user, "is_client", False):
+            query = query.filter(
+                Role.created_by == str(current_user.id),
+                Role.organisation_id.is_(None)
+            )
+            return query.first() is not None
+
+        # ==============================
+        # GLOBAL SUPERADMIN (no org)
+        # ==============================
+        if is_super and not context_org:
+            query = query.filter(
+                Role.organisation_id.is_(None),
+                Role.created_by.is_(None)
+            )
+            return query.first() is not None
+
+        return False
 
     @staticmethod
     def _assign_modules(role_id: str, modules: List[Dict], db: Session):
+        added_module_privs = set()
         for module_perm in modules:
-            if module_perm.get('privilege_id'):
-                if module_perm.get('submodule_id'):
+            privilege_id = module_perm.get('privilege_id')
+            if privilege_id:
+                submodule_id = module_perm.get('submodule_id')
+                module_id = module_perm.get('module_id')
+
+                if submodule_id:
                     role_submodule = RoleSubmodule(
                         id=str(uuid.uuid4()),
                         role_id=role_id,
-                        submodule_id=module_perm['submodule_id'],
-                        privilege_id=module_perm['privilege_id']
+                        submodule_id=submodule_id,
+                        privilege_id=privilege_id
                     )
                     db.add(role_submodule)
-                elif module_perm.get('module_id'):
-                    role_module = RoleModule(
-                        id=str(uuid.uuid4()),
-                        role_id=role_id,
-                        module_id=module_perm['module_id'],
-                        privilege_id=module_perm['privilege_id']
-                    )
-                    db.add(role_module)
+
+                    # Inject parent module permission automatically
+                    if module_id and (module_id, privilege_id) not in added_module_privs:
+                        role_module = RoleModule(
+                            id=str(uuid.uuid4()),
+                            role_id=role_id,
+                            module_id=module_id,
+                            privilege_id=privilege_id
+                        )
+                        db.add(role_module)
+                        added_module_privs.add((module_id, privilege_id))
+
+                elif module_id:
+                    if (module_id, privilege_id) not in added_module_privs:
+                        role_module = RoleModule(
+                            id=str(uuid.uuid4()),
+                            role_id=role_id,
+                            module_id=module_id,
+                            privilege_id=privilege_id
+                        )
+                        db.add(role_module)
+                        added_module_privs.add((module_id, privilege_id))
         db.commit()

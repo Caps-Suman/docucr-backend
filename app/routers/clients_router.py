@@ -1,8 +1,12 @@
 import re
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from app.models.client import Client
+from app.models.client_location import ClientLocation
+from app.models.organisation import Organisation
 from app.models.provider import Provider
+from app.models.provider_client_mapping import ProviderClientMapping
 from app.services.activity_service import ActivityService
+from sqlalchemy import text
 from app.core.permissions import Permission
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, constr, field_validator
@@ -45,7 +49,9 @@ class ProviderCreate(BaseModel):
     state_name: Optional[str] = None
     country: Optional[str] = None
     zip_code: Optional[str] = None
-
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
+    ptan_id: Optional[str] = None
 class ClientLocationCreate(BaseModel):
     id: Optional[UUID] = None # Added for updates
     address_line_1: str
@@ -71,6 +77,8 @@ class ClientCreate(BaseModel):
     primary_temp_id: Optional[str] = None
     status_id: Optional[str] = None
     description: Optional[str] = None
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
 
     # NEW ADDRESS FIELDS
     address_line_1: Optional[str] = Field(None, max_length=250)
@@ -86,11 +94,17 @@ class ClientCreate(BaseModel):
     @field_validator("zip_code")
     @classmethod
     def validate_zip(cls, v):
-        if v is None:
-            return v
-        if not re.match(r"^[0-9]{5}-[0-9]{4}$", v):
-            raise ValueError("ZIP code must be in format 11111-1111")
+        if v and not re.match(r"^[0-9]{5}(-[0-9]{4})?$", v):
+            raise ValueError("ZIP code must be 12345 or 12345-6789")
         return v
+    # @field_validator("zip_code")
+    # @classmethod
+    # def validate_zip(cls, v):
+    #     if v is None:
+    #         return v
+    #     if not re.match(r"^[0-9]{5}-[0-9]{4}$", v):
+    #         raise ValueError("ZIP code must be in format 11111-1111")
+    #     return v
    
     @field_validator("address_line_1", "city", "state_code", "zip_code", mode="before")
     @classmethod
@@ -114,6 +128,8 @@ class ClientUpdate(BaseModel):
     type: Optional[str] = None
     status_id: Optional[str] = None
     description: Optional[str] = None
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
     
     # NESTED UPDATE FIELDS
     locations: Optional[List[ClientLocationCreate]] = None
@@ -152,13 +168,32 @@ class ClientUpdate(BaseModel):
                 f"{info.field_name} is required for US addresses"
             )
         return v
+
+class ClientLocationUpdate(BaseModel):
+    address_line_1: Optional[str] = None
+    address_line_2: Optional[str] = None
+    city: Optional[str] = None
+    state_code: Optional[str] = None
+    state_name: Optional[str] = None
+    country: Optional[str] = None
+    zip_code: Optional[str] = None
+    is_primary: Optional[bool] = None    
 class ProviderResponse(BaseModel):
     id: UUID
+    name: Optional[str] = None
     first_name: str
     middle_name: Optional[str]
     last_name: str
     npi: Optional[str]
     type: Optional[str] = "Individual" # Added type field
+    
+    # Address
+    address_line_1: Optional[str] = None
+    address_line_2: Optional[str] = None
+    city: Optional[str] = None
+    specialty: Optional[str] = None
+    zip_code: Optional[str] = None
+    
     created_at: Optional[datetime]
 
     class Config:
@@ -196,6 +231,8 @@ class ClientResponse(BaseModel):
     statusCode: Optional[str] = None
     status_code: Optional[str] = None
     description: Optional[str]
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
     organisation_name: Optional[str] = None
 
     # Address fields (NPA1 only)
@@ -233,9 +270,13 @@ class ProviderCreateSchema(BaseModel):
     address_line_2: Optional[str] = Field(None, max_length=250)
     city: Optional[str]
     state_code: Optional[str] = Field(None, min_length=2, max_length=2)
-    state_name: Optional[str]
+    state_name: Optional[str]=None
     country: Optional[str] = "United States"
     zip_code: Optional[str]
+    location_id: Optional[str]=None
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
+    ptan_id: Optional[str] = None
 
     @field_validator("zip_code")
     @classmethod
@@ -244,13 +285,35 @@ class ProviderCreateSchema(BaseModel):
             raise ValueError("ZIP code must be in format 11111-1111")
         return v
 
-
-
+class ProviderUpdateSchema(BaseModel):
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None
+    last_name: Optional[str] = None
+    npi: Optional[str] = None
+    address_line_1: Optional[str] = None
+    address_line_2: Optional[str] = None
+    city: Optional[str] = None
+    state_code: Optional[str] = None
+    zip_code: Optional[str] = None
+    country: Optional[str] = None
+    location_id: Optional[str] = None
+    state_name: Optional[str] = None
+    specialty: Optional[str] = None
+    specialty_code: Optional[str] = None
+    ptan_id:Optional[str] = None
+    
 class ClientListResponse(BaseModel):
     clients: List[ClientResponse]
     total: int
     page: int
     page_size: int
+
+class ClientSOPResponse(BaseModel):
+    id: UUID
+    name: Optional[str]
+    npi: Optional[str]
+    type: Optional[str]
+    provider_count: int = 0
 
 class AssignClientsRequest(BaseModel):
     client_ids: List[str]
@@ -284,12 +347,58 @@ def get_client_stats(
 ):
     return ClientService.get_client_stats(db, current_user)
 
+@router.get("/all", response_model=List[ClientSOPResponse])
+def get_clients_for_sop(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    return ClientService.get_all_clients(db, current_user)
+
 @router.get("/visible", response_model=List[ClientResponse])
 def get_visible_clients(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
-    return ClientService.get_visible_clients(db, current_user)
+
+    # --------------------------------------------
+    # LOGIN AS USER
+    # --------------------------------------------
+    if isinstance(current_user, User):
+        roles = [r.name for r in current_user.roles]
+
+        # SUPERADMIN → all clients
+        if "SUPER_ADMIN" in roles:
+            clients = db.query(Client).all()
+
+        # CLIENT USER → only their client
+        elif current_user.is_client:
+            clients = db.query(Client).filter(
+                Client.id == current_user.client_id
+            ).all()
+
+        # STAFF WITH ORG
+        elif current_user.organisation_id:
+            clients = db.query(Client).filter(
+                Client.organisation_id == current_user.organisation_id
+            ).all()
+
+        # STAFF WITHOUT ORG → assigned
+        else:
+            assigned = db.query(UserClient.client_id).filter(
+                UserClient.user_id == current_user.id
+            )
+
+            clients = db.query(Client).filter(
+                Client.id.in_(assigned)
+            ).all()
+
+        return [
+            ClientResponse(**ClientService._format_client(c, db))
+            for c in clients
+        ]
+
+    return []
+
 
 @router.get("/me", response_model=ClientResponse)
 async def get_my_client(
@@ -320,10 +429,13 @@ def get_clients(
     page_size: int = 25,
     search: Optional[str] = None,
     status_id: Optional[str] = None,
+    organisation_ids: Optional[str] = None,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    clients, total = ClientService.get_clients(page, page_size, search, status_id, db, current_user)
+    clients, total = ClientService.get_clients(page, page_size, search, status_id, db, current_user, organisation_ids, from_date, to_date)
     return ClientListResponse(
         clients=[ClientResponse(**client) for client in clients],
         total=total,
@@ -356,19 +468,13 @@ async def get_client_users(client_id: str, db: Session = Depends(get_db)):
         # "created_at": user.created_at # Assuming created_at exists on User model, otherwise skip or join UserClient
     } for user in users]
 
-# @router.get("/{client_id}", response_model=ClientResponse)
-# async def get_client(client_id: str, db: Session = Depends(get_db)):
-#     client = ClientService.get_client_by_id(client_id, db)
-#     if not client:
-#         raise HTTPException(status_code=404, detail="Client not found")
-#     return ClientResponse(**client)
 
 @router.post("/", response_model=ClientResponse, dependencies=[Depends(Permission("clients", "CREATE"))])
 async def create_client(
     client: ClientCreate, 
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db), 
-    request: Request = None,
-    background_tasks: BackgroundTasks = None,
     current_user: User = Depends(get_current_user)
 ):
     if client.npi and ClientService.check_npi_exists(client.npi, None, db):
@@ -383,21 +489,75 @@ async def create_client(
         action="CREATE",
         entity_type="client",
         entity_id=str(created_client['id']),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": created_client['business_name']},
         request=request,
         background_tasks=background_tasks
     )
-    
+
+        
     return ClientResponse(**created_client)
 
-@router.post(
-    "/{client_id}/providers",
-    dependencies=[Depends(Permission("clients", "UPDATE"))]
-)
+from typing import List
+
+@router.post("/{client_id}/providers",
+             dependencies=[Depends(Permission("clients", "UPDATE"))])
 def add_providers(
     client_id: str,
     providers: List[ProviderCreateSchema],
+    db: Session = Depends(get_db),
+):
+
+    client = db.query(Client).filter(
+        Client.id == client_id,
+        Client.deleted_at.is_(None)
+    ).first()
+
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    if client.type != "NPI2":
+        raise HTTPException(
+            status_code=400,
+            detail="Providers can only be added to NPI2 clients"
+        )
+
+    created = []
+
+    for provider in providers:
+
+        # check if provider already exists by NPI
+        existing_provider = db.query(Provider).filter(
+            Provider.npi == provider.npi
+        ).first()
+
+        if existing_provider:
+            provider_obj = existing_provider
+        else:
+            provider_data = provider.model_dump(exclude={"location_id"})
+            provider_obj = Provider(**provider_data)
+            db.add(provider_obj)
+            db.flush()  # get ID
+
+        # create mapping
+        mapping = ProviderClientMapping(
+            provider_id=provider_obj.id,
+            client_id=client.id,
+            location_id=provider.location_id,
+            created_by=client.created_by
+        )
+
+        db.add(mapping)
+        created.append(provider.npi)
+
+    db.commit()
+
+    return {"success": True, "created": len(created)}
+@router.post("/{client_id}/locations",
+             dependencies=[Depends(Permission("clients", "UPDATE"))])
+def add_location(
+    client_id: str,
+    location: ClientLocationCreate,
     db: Session = Depends(get_db),
 ):
     client = db.query(Client).filter(
@@ -408,27 +568,33 @@ def add_providers(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    if client.type != "NPA2":
-        raise HTTPException(
-            status_code=400,
-            detail="Providers can only be added to NPA2 clients"
+    # If new location is primary → demote existing primary
+    if location.is_primary:
+        db.query(ClientLocation).filter(
+            ClientLocation.client_id == client.id,
+            ClientLocation.is_primary.is_(True)
+        ).update(
+            {"is_primary": False},
+            synchronize_session=False
         )
 
-    for p in providers:
-        if ClientService.check_npi_exists(p.npi, None, db):
-            raise HTTPException(
-                status_code=400,
-                detail=f"NPI already exists: {p.npi}"
-            )
+    new_location = ClientLocation(
+        client_id=client.id,
+        address_line_1=location.address_line_1,
+        address_line_2=location.address_line_2,
+        city=location.city,
+        state_code=location.state_code,
+        state_name=location.state_name,
+        country=location.country,
+        zip_code=location.zip_code,
+        is_primary=location.is_primary,
+        created_by=client.created_by
+    )
 
-        db.add(Provider(
-            client_id=client.id,
-            **p.model_dump()
-        ))
-
+    db.add(new_location)
     db.commit()
-    return {"success": True}
 
+    return {"success": True}
 @router.get("/{client_id}/providers", response_model=ProviderListResponse)
 def get_client_providers(
     client_id: str,
@@ -436,7 +602,7 @@ def get_client_providers(
     page_size: int = 10,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user) # Ensure security
+    current_user: User = Depends(get_current_user) 
 ):
     providers, total = ClientService.get_providers_by_client(
         client_id=client_id,
@@ -453,13 +619,113 @@ def get_client_providers(
         page_size=page_size
     )
 
+@router.put("/{client_id}/providers/{provider_id}",
+            dependencies=[Depends(Permission("clients", "UPDATE"))])
+def update_provider(
+    client_id: str,
+    provider_id: str,
+    provider_data: ProviderUpdateSchema,
+    db: Session = Depends(get_db),
+):
+    client = db.query(Client).filter(
+        Client.id == client_id,
+        Client.deleted_at.is_(None)
+    ).first()
+
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    mapping = db.query(ProviderClientMapping).filter(
+        ProviderClientMapping.client_id == client.id,
+        ProviderClientMapping.provider_id == provider_id
+    ).first()
+
+    if not mapping:
+        raise HTTPException(status_code=404, detail="Provider not found for this client")
+
+    provider = db.query(Provider).filter(
+        Provider.id == provider_id
+    ).first()
+
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found")
+
+    update_dict = provider_data.model_dump(exclude_unset=True)
+    
+    new_location_id = update_dict.pop("location_id", None)
+    
+    if new_location_id is not None:
+        mapping.location_id = new_location_id
+
+    for field, value in update_dict.items():
+        setattr(provider, field, value)
+
+    db.commit()
+
+    return {"success": True}
+
+@router.put("/{client_id}/locations/{location_id}",
+            dependencies=[Depends(Permission("clients", "UPDATE"))])
+def update_location(
+    client_id: str,
+    location_id: str,
+    location: ClientLocationUpdate,
+    db: Session = Depends(get_db),
+):
+    client = db.query(Client).filter(
+        Client.id == client_id,
+        Client.deleted_at.is_(None)
+    ).first()
+
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    loc = db.query(ClientLocation).filter(
+        ClientLocation.id == location_id,
+        ClientLocation.client_id == client.id
+    ).first()
+
+    if not loc:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    # If set as primary → demote others
+    if location.is_primary:
+        db.query(ClientLocation).filter(
+            ClientLocation.client_id == client.id,
+            ClientLocation.is_primary.is_(True)
+        ).update({"is_primary": False}, synchronize_session=False)
+
+    # Update location fields
+    update_data = location.model_dump(exclude_unset=True)
+
+    if update_data.get("is_primary") is True:
+        db.query(ClientLocation).filter(
+            ClientLocation.client_id == client.id,
+            ClientLocation.id != loc.id
+        ).update({"is_primary": False}, synchronize_session=False)
+
+    for field, value in update_data.items():
+        setattr(loc, field, value)
+
+    if loc.is_primary:
+        client.address_line_1 = loc.address_line_1
+        client.address_line_2 = loc.address_line_2
+        client.city = loc.city
+        client.state_code = loc.state_code
+        client.state_name = loc.state_name
+        client.zip_code = loc.zip_code
+        client.country = loc.country
+
+    db.commit()
+
+    return {"success": True}
 @router.get("/{client_id}", response_model=dict)
 def get_client_by_id(
     client_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    client = ClientService.get_client_by_id(client_id, db)
+    client = ClientService.get_client_by_id(client_id, db, current_user)
 
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -470,9 +736,9 @@ def get_client_by_id(
 async def update_client(
     client_id: str, 
     client: ClientUpdate, 
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db), 
-    request: Request = None,
-    background_tasks: BackgroundTasks = None,
     current_user: User = Depends(get_current_user)
 ):
     if client.npi and ClientService.check_npi_exists(client.npi, client_id, db):
@@ -482,7 +748,7 @@ async def update_client(
 
     # Capture changes
     changes = {}
-    existing_client = ClientService.get_client_by_id(client_id, db)
+    existing_client = ClientService.get_client_by_id(client_id, db, current_user)
     if existing_client:
         # Normalize status_id to statusCode for readable logs
         if 'status_id' in client_data and existing_client.get('statusCode'):
@@ -494,7 +760,7 @@ async def update_client(
         if 'status_id' in changes:
             changes['Status'] = changes.pop('status_id')
 
-    updated_client = ClientService.update_client(client_id, client_data, db)
+    updated_client = ClientService.update_client(client_id, client_data, db, current_user)
     if not updated_client:
         raise HTTPException(status_code=404, detail="Client not found")
         
@@ -502,93 +768,106 @@ async def update_client(
         db=db,
         action="UPDATE",
         entity_type="client",
-        entity_id=client_id,
-        user_id=current_user.id,
+        entity_id=str(client_id),
+        current_user=current_user,
         details={
-            "name": updated_client['business_name'],
+            "name": updated_client.get("business_name"),
             "changes": changes
         },
         request=request,
         background_tasks=background_tasks
     )
+
         
     return ClientResponse(**updated_client)
-@router.post("/{client_id}/activate", response_model=ClientResponse,
-             dependencies=[Depends(Permission("clients", "UPDATE"))])
+@router.post("/{client_id}/activate", response_model=ClientResponse)
 async def activate_client(
     client_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    request: Request = None,
-    background_tasks: BackgroundTasks = None,
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
-    # ---- ROLE CHECK ----
-    if not _is_admin_user(current_user):
-        raise HTTPException(
-            status_code=403,
-            detail="You are not allowed to activate clients"
-        )
-
-    # ---- TARGET VALIDATION ----
-    client = ClientService.get_client_by_id(client_id, db)
+    client = db.query(Client).filter(Client.id == client_id).first()
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # ---- ACTIVATE ----
-    updated_client = ClientService.activate_client(client_id, db)
-    if not updated_client:
-        raise HTTPException(status_code=400, detail="Cannot activate client")
+    # -----------------------------
+    # PERMISSION LOGIC
+    # -----------------------------
+    allow = False
 
-    # ---- LOG ----
+    # SUPERADMIN
+    if isinstance(current_user, User) and current_user.is_superuser:
+        allow = True
+
+    # ORG USER
+    elif isinstance(current_user, User):
+        if current_user.organisation_id and str(client.organisation_id) == str(current_user.organisation_id):
+            allow = True
+
+    if not allow:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    updated_client = ClientService.activate_client(client_id, db)
+
     ActivityService.log(
         db=db,
         action="ACTIVATE",
         entity_type="client",
-        entity_id=client_id,
-        user_id=current_user.id,
+        entity_id=str(client_id),
+        current_user=current_user,
         request=request,
         background_tasks=background_tasks
     )
 
+
     return ClientResponse(**updated_client)
-@router.post("/{client_id}/deactivate", response_model=ClientResponse,
-             dependencies=[Depends(Permission("clients", "UPDATE"))])
+
+@router.post("/{client_id}/deactivate", response_model=ClientResponse)
 async def deactivate_client(
     client_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    request: Request = None,
-    background_tasks: BackgroundTasks = None,
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
-    # ---- ROLE CHECK ----
-    if not _is_admin_user(current_user):
-        raise HTTPException(
-            status_code=403,
-            detail="You are not allowed to deactivate clients"
-        )
-
-    # ---- TARGET VALIDATION ----
-    client = ClientService.get_client_by_id(client_id, db)
+    client = db.query(Client).filter(Client.id == client_id).first()
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # ---- DEACTIVATE ----
-    updated_client = ClientService.deactivate_client(client_id, db)
-    if not updated_client:
-        raise HTTPException(status_code=400, detail="Cannot deactivate client")
+    # -----------------------------
+    # PERMISSION LOGIC
+    # -----------------------------
+    allow = False
 
-    # ---- LOG ----
+    # SUPERADMIN
+    if isinstance(current_user, User) and current_user.is_superuser:
+        allow = True
+
+    # ORG USER
+    elif isinstance(current_user, User):
+        if current_user.organisation_id and str(client.organisation_id) == str(current_user.organisation_id):
+            allow = True
+
+    if not allow:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    updated_client = ClientService.deactivate_client(client_id, db)
+
     ActivityService.log(
         db=db,
         action="DEACTIVATE",
         entity_type="client",
-        entity_id=client_id,
-        user_id=current_user.id,
+        entity_id=str(client_id),
+        current_user=current_user,
         request=request,
         background_tasks=background_tasks
     )
 
+
     return ClientResponse(**updated_client)
+
 
 @router.post("/users/{user_id}/assign", dependencies=[Depends(Permission("clients", "ADMIN"))])
 async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db: Session = Depends(get_db)):
@@ -596,13 +875,35 @@ async def assign_clients_to_user(user_id: str, request: AssignClientsRequest, db
     return {"message": "Clients assigned successfully"}
 
 @router.post("/{client_id}/users/map", dependencies=[Depends(Permission("clients", "ADMIN"))])
-async def map_users_to_client_endpoint(client_id: str, request: MapUsersRequest, db: Session = Depends(get_db)):
-    ClientService.map_users_to_client(client_id, request.user_ids, request.assigned_by, db)
+async def map_users_to_client_endpoint(
+    client_id: str, 
+    request: MapUsersRequest, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    ClientService.map_users_to_client(client_id, request.user_ids, request.assigned_by, db, current_user)
+    ActivityService.log(
+        db=db,
+        action="MAP_USERS",
+        entity_type="client",
+        entity_id=str(client_id),
+        current_user=current_user,
+        details={"user_ids": request.user_ids}
+    )
+
     return {"message": "Users mapped successfully"}
 
 @router.post("/{client_id}/users/unassign", dependencies=[Depends(Permission("clients", "ADMIN"))])
 async def unassign_users_from_client_endpoint(client_id: str, request: UnassignUsersToClientRequest, db: Session = Depends(get_db)):
     ClientService.unassign_users_from_client(client_id, request.user_ids, db)
+    ActivityService.log(
+        db=db,
+        action="UNASSIGN_USERS",
+        entity_type="client",
+        entity_id=str(client_id),
+        details={"user_ids": request.user_ids}
+    )
+
     return {"message": "Users unassigned successfully"}
 
 @router.get("/users/{user_id}", response_model=List[ClientResponse])
@@ -646,13 +947,17 @@ async def create_clients_bulk(
                 
                 ActivityService.log(
                     db=db,
-                    action="CREATE",
+                    action="BULK_CREATE",
                     entity_type="client",
-                    entity_id=str(client['id']),
-                    user_id=current_user.id,
+                    current_user=current_user,
+                    details={
+                        "success": success,
+                        "failed": failed
+                    },
                     request=request_obj,
                     background_tasks=background_tasks
                 )
+
             else:
                 failed += 1
                 errors.append(f"Failed to create client with data: {client_data}")

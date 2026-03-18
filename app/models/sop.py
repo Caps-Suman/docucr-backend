@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, Integer
+from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -13,7 +13,7 @@ class SOP(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
 
     title = Column(String, nullable=False)
-    category = Column(String, nullable=False)
+    category = Column(String, nullable=True)
     provider_type = Column(String, nullable=False)  # new | existing
 
     client_id = Column(UUID(as_uuid=True), ForeignKey("docucr.client.id"), nullable=True)
@@ -22,21 +22,27 @@ class SOP(Base):
     workflow_process = Column(JSONB, nullable=True)
     billing_guidelines = Column(JSONB, nullable=True)
     payer_guidelines=Column(JSONB, nullable=True)
-    coding_rules = Column(JSONB, nullable=True)
+    # coding_rules = Column(JSONB, nullable=True)
     coding_rules_cpt = Column(JSONB, nullable=True, default=list)
     coding_rules_icd = Column(JSONB, nullable=True, default=list)
 
-    # 🔒 Lifecycle status (ONLY ACTIVE / INACTIVE)
+    # Lifecycle status (ACTIVE / INACTIVE)
     status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)
 
-    # 🔁 Workflow / processing status
+    # Workflow / processing status
     workflow_status_id = Column(Integer, ForeignKey("docucr.status.id"), nullable=True)
+
+    created_by = Column(String, ForeignKey("docucr.user.id"), nullable=True)
+    organisation_id = Column(String, ForeignKey("docucr.organisation.id"), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # ---------- Relationships ----------
     client = relationship("Client", backref="sops")
+    creator = relationship("User", foreign_keys=[created_by], backref="created_sops")
+    organisation = relationship("Organisation", foreign_keys=[organisation_id], backref="sops")
+    documents = relationship("SOPDocument", back_populates="sop", cascade="all, delete-orphan")
 
     lifecycle_status = relationship(
         "Status",
@@ -49,3 +55,28 @@ class SOP(Base):
         foreign_keys=[workflow_status_id],
         lazy="joined"
     )
+
+    provider_mappings = relationship("SopProviderMapping", backref="sop_backref")
+
+class SOPDocument(Base):
+    __tablename__ = "sop_document"
+    __table_args__ = {"schema": "docucr"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    sop_id = Column(UUID(as_uuid=True), ForeignKey("docucr.sop.id", ondelete="CASCADE"), nullable=False)
+    
+    name = Column(String, nullable=False)
+    category = Column(String, nullable=False) # e.g. "SOURCE_FILE"
+    s3_key = Column(String, nullable=False)
+    
+    # Structured Extracted Fields
+    billing_guidelines = Column(JSONB, nullable=True)
+    payer_guidelines = Column(JSONB, nullable=True)
+    coding_rules_cpt = Column(JSONB, nullable=True, default=list)
+    coding_rules_icd = Column(JSONB, nullable=True, default=list)
+    
+    processed = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    sop = relationship("SOP", back_populates="documents")

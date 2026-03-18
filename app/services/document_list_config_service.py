@@ -7,33 +7,43 @@ class DocumentListConfigService:
     
     
     @staticmethod
-    def get_user_config(db: Session, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get user's document list configuration"""
+    def get_org_config(db: Session, organisation_id: str) -> Optional[Dict[str, Any]]:
+        """Get organisation's document list configuration"""
+        if not organisation_id:
+            return None
+            
         config = db.query(DocumentListConfig).filter(
-            DocumentListConfig.user_id == user_id
+            DocumentListConfig.organisation_id == organisation_id
         ).first()
         
         return config.configuration if config else None
 
     @staticmethod
     def get_config(db: Session) -> Optional[Dict[str, Any]]:
-        """Get document list configuration"""
+        """Get document list configuration (Legacy/unused??)"""
         config = db.query(DocumentListConfig).first()
         
         return config.configuration if config else None
     
     @staticmethod
-    def save_user_config(db: Session, user_id: str, configuration: Dict[str, Any]) -> Dict[str, Any]:
-        """Save or update user's document list configuration"""
+    def save_org_config(db: Session, organisation_id: str, configuration: Dict[str, Any], user_id: str = None) -> Dict[str, Any]:
+        """Save or update organisation's document list configuration"""
+        if not organisation_id:
+            raise ValueError("Organisation ID is required")
+            
         config = db.query(DocumentListConfig).filter(
-            DocumentListConfig.user_id == user_id
+            DocumentListConfig.organisation_id == organisation_id
         ).first()
         
         if config:
             config.configuration = configuration
+            # optional: track last updated by user
+            if user_id:
+                config.user_id = user_id
         else:
             config = DocumentListConfig(
-                user_id=user_id,
+                organisation_id=organisation_id,
+                user_id=user_id, # Optional, acts as "last updated by"
                 configuration=configuration
             )
             db.add(config)
@@ -44,10 +54,10 @@ class DocumentListConfigService:
         return config.configuration
     
     @staticmethod
-    def delete_user_config(db: Session, user_id: str) -> bool:
-        """Delete user's document list configuration"""
+    def delete_org_config(db: Session, organisation_id: str) -> bool:
+        """Delete organisation's document list configuration"""
         config = db.query(DocumentListConfig).filter(
-            DocumentListConfig.user_id == user_id
+            DocumentListConfig.organisation_id == organisation_id
         ).first()
         
         if config:

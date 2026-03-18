@@ -5,9 +5,11 @@ from typing import Optional, Dict, List
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from passlib.hash import pbkdf2_sha256
+from urllib.parse import quote
 
 from app.models.external_share import ExternalShare
 from app.models.document import Document
+from app.models.organisation import Organisation
 from app.models.user import User
 from app.utils.email import send_external_share_email
 from app.services.s3_service import s3_service
@@ -20,7 +22,7 @@ class ExternalShareService:
         alphabet = string.ascii_letters + string.digits
         return ''.join(secrets.choice(alphabet) for _ in range(length))
 
-    def create_batch_share(self, document_ids: List[int], email: str, password: str, shared_by: str, expires_in_days: int = 7) -> List[ExternalShare]:
+    def create_batch_share(self, document_ids: List[int], email: str, password: str, current_user: str, expires_in_days: int = 7) -> List[ExternalShare]:
         """Create multiple external share links and send a single summary email."""
         password_hash = pbkdf2_sha256.hash(password)
         expires_at = datetime.now(timezone.utc) + timedelta(days=expires_in_days)
@@ -48,9 +50,13 @@ class ExternalShareService:
                     email=email,
                     password_hash=password_hash,
                     token=token,
-                    shared_by=shared_by,
+                    shared_by_user_id=current_user.id,
+                    shared_by_org_id=None,
                     expires_at=expires_at
                 )
+
+
+
                 self.db.add(share)
                 shares.append(share)
                 
@@ -70,9 +76,14 @@ class ExternalShareService:
                 self.db.refresh(s)
             
             # Send single consolidated email
-            send_user = self.db.query(User).filter(User.id == shared_by).first()
-            sender_name = f"{send_user.first_name} {send_user.last_name}" if send_user else "A docucr User"
-            
+            user = self.db.query(User).filter(User.id == current_user.id).first()
+            sender_name = (
+                f"{user.first_name or ''} {user.last_name or ''}".strip()
+                or user.username
+                if user else "User"
+            )
+
+
             send_external_share_email(
                 to_email=email,
                 shared_by=sender_name,
@@ -90,9 +101,9 @@ class ExternalShareService:
                 detail=f"Failed to create batch external share: {str(e)}"
             )
 
-    def create_share(self, document_id: int, email: str, password: str, shared_by: str, expires_in_days: int = 7) -> ExternalShare:
+    def create_share(self, document_id: int, email: str, password: str, current_user: str, expires_in_days: int = 7) -> ExternalShare:
         """Create a new external share link and send an email."""
-        shares = self.create_batch_share([document_id], email, password, shared_by, expires_in_days)
+        shares = self.create_batch_share([document_id], email, password, current_user, expires_in_days)
         return shares[0]
 
     def get_share_by_token(self, token: str) -> ExternalShare:
@@ -146,7 +157,7 @@ class ExternalShareService:
         
         # Download URL with attachment disposition
         filename = doc.original_filename or doc.filename
-        disposition = f'attachment; filename="{filename}"'
+        disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
         download_url = s3_service.generate_presigned_url(
             doc.s3_key, 
             expiration=3600,

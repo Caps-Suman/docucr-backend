@@ -39,28 +39,79 @@ def create_refresh_token(data: dict):
     expire = datetime.utcnow() + timedelta(hours=REFRESH_TOKEN_EXPIRE_HOURS)
     to_encode.update({"exp": expire, "type": "refresh"})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
     token = credentials.credentials
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # print("TOKEN PAYLOAD:", payload)
+
         if payload.get("type") != "access":
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
-        email: str = payload.get("sub")
-        if email is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+            raise HTTPException(401, "Invalid token type")
+
+        email = payload.get("sub")
+        if not email:
+            raise HTTPException(401, "Invalid token")
+
     except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    
+        raise HTTPException(401, "Invalid token")
+
+    # =========================================
+    # 1️⃣ TEMP SUPERADMIN (before org select)
+    # =========================================
+    if payload.get("temp") and payload.get("superadmin"):
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(401, "User not found")
+
+        user.context_organisation_id = None
+        user.context_role_id = None
+        user.context_is_superadmin = True
+        user.context_temp = True
+
+        return user
+
+    # =========================================
+    # 2️⃣ NORMAL ORG CONTEXT LOGIN
+    # =========================================
+    organisation_id = payload.get("organisation_id")
+    role_id = payload.get("role_id")
+
     user = db.query(User).filter(User.email == email).first()
-    if user is None:
-        # Fallback to Organisation
-        org = db.query(Organisation).filter(Organisation.email == email).first()
-        if org is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-        return org
-    
+    if not user:
+        raise HTTPException(401, "User not found")
+
+    # attach runtime context
+    user.context_organisation_id = organisation_id
+    user.context_role_id = role_id
+    user.context_is_superadmin = user.is_superuser
+    user.context_temp = False
     return user
+
+def decode_token(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
+from app.core.security import security, decode_token
+
+def allow_temp_superadmin(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    payload = decode_token(credentials.credentials)
+
+    if not payload.get("temp") or not payload.get("superadmin"):
+        raise HTTPException(status_code=403, detail="Not temp superadmin")
+
+    return payload
+
 
 def get_current_role_id(request: Request = None, credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[str]:
     # We can get token from credentials

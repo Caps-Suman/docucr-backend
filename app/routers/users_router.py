@@ -1,11 +1,15 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
+from sqlalchemy import and_, or_
 from app.models.organisation import Organisation
+from app.models.role import Role
+from app.models.status import Status
+from app.models.user_role import UserRole
 from app.services.activity_service import ActivityService
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
+from fastapi import Query
 import re
-
 from app.core.database import get_db
 from app.services.user_service import UserService
 from app.core.permissions import Permission
@@ -16,7 +20,7 @@ router = APIRouter()
 
 class AssignClientsRequest(BaseModel):
     client_ids: List[str]
-    assigned_by: str
+    assigned_by: Optional[str] = None
 
 class OrganisationResponse(BaseModel):
     id: str
@@ -29,7 +33,7 @@ class UserCreate(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=50)
     middle_name: Optional[str] = Field(None, max_length=50)
     last_name: str = Field(..., min_length=1, max_length=50)
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=8)
     phone_country_code: Optional[str] = None
     phone_number: Optional[str] = None
     role_ids: List[str] = []
@@ -51,7 +55,28 @@ class UserCreate(BaseModel):
         if not v or not v.strip():
             raise ValueError('Username cannot be empty')
         return v.strip()
+    
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        v = v.strip()
 
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Must include uppercase letter")
+
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Must include lowercase letter")
+
+        if not re.search(r"\d", v):
+            raise ValueError("Must include number")
+
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("Must include special character")
+
+        return v
 class UserUpdate(BaseModel):
     email: Optional[str] = None
     username: Optional[str] = Field(None, min_length=3, max_length=50)
@@ -63,7 +88,8 @@ class UserUpdate(BaseModel):
     status_id: Optional[str] = None
     role_ids: Optional[List[str]] = None
     supervisor_id: Optional[str] = None
-    
+    client_id: Optional[str] = None
+
     @field_validator('email')
     @classmethod
     def validate_email(cls, v: Optional[str]) -> Optional[str]:
@@ -86,12 +112,15 @@ class UserResponse(BaseModel):
     phone_number: Optional[str]
     status_id: Optional[int]
     statusCode: Optional[str]
-    is_superuser: bool
+    is_superuser: Optional[bool] = False
     roles: List[dict]
     supervisor_id: Optional[str]
     client_count: int = 0
     created_by_name: Optional[str] = None
     organisation_name: Optional[str] = None
+    client_id: Optional[str] = None
+    client_name: Optional[str] = None
+    profile_image_url: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -109,10 +138,30 @@ async def get_users(
     page_size: int = 25,
     search: Optional[str] = None,
     status_id: Optional[str] = None,
+    role_id: Optional[List[str]] = Query(None),
+    organisation_id: Optional[List[str]] = Query(None),
+    client_id: Optional[List[str]] = Query(None),
+    is_client: Optional[bool] = Query(None),
+    created_by: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
+    _: User = Depends(Permission("user_module", "READ")),   # 🔥 FIX
     current_user: User = Depends(get_current_user)
 ):
-    users, total = UserService.get_users(page, page_size, search, status_id, db, current_user)
+    users, total = UserService.get_users(
+        page, 
+        page_size, 
+        search, 
+        status_id, 
+        db, 
+        current_user,
+        role_id=role_id,
+        organisation_id=organisation_id,
+        client_id=client_id,
+        created_by=created_by,
+        is_client=is_client
+    )
+
+
     return UserListResponse(
         users=[UserResponse(**user) for user in users],
         total=total,
@@ -120,38 +169,181 @@ async def get_users(
         page_size=page_size
     )
 
-# @router.get("/me", response_model=UserResponse)
-# async def get_current_user_profile(
-#     current_user: User = Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     return UserService._format_user_response(current_user, db)
+class CreatorResponse(BaseModel):
+    id: str
+    first_name: str
+    last_name: str
+    username: str
+    organisation_name: Optional[str] = None
+
+@router.get("/creators", response_model=List[CreatorResponse])
+async def get_creators(
+    search: Optional[str] = None,
+    organisation_id: Optional[List[str]] = Query(None),
+    client_id: Optional[List[str]] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Lightweight endpoint to fetch potential creators for filters.
+    Returns only ID, Name, Username and Organisation Name.
+    """
+    return UserService.get_creators(
+        search, 
+        db, 
+        current_user,
+        organisation_id=organisation_id,
+        client_id=client_id
+    )
+
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_profile(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if isinstance(current_user, Organisation):
-        return {
-            "id": current_user.id,
-            "email": current_user.email,
-            "username": current_user.username,
-            "first_name": current_user.first_name,
-            "middle_name": current_user.middle_name,
-            "last_name": current_user.last_name,
-            "phone_country_code": current_user.phone_country_code,
-            "phone_number": current_user.phone_number,
-            "status_id": current_user.status_id,
-            "statusCode": None,
-            "is_superuser": False,
-            "roles": [],
-            "supervisor_id": None,
-            "client_count": 0,
-            "created_by_name": None,
-            "organisation_name": current_user.username
-        }
 
-    return UserService._format_user_response(current_user, db)
+    return UserService._format_user_response_for_me(current_user, db)
+@router.get("/by-organisation")
+def get_users_by_org(
+    organisation_id: str,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    query = db.query(User).filter(User.organisation_id == organisation_id)
+
+    # only INTERNAL users
+    query = query.filter(
+        User.is_client == False,
+        User.client_id.is_(None)
+    )
+
+    if search:
+        query = query.filter(
+            or_(
+                User.first_name.ilike(f"%{search}%"),
+                User.last_name.ilike(f"%{search}%"),
+                User.email.ilike(f"%{search}%")
+            )
+        )
+
+    users = query.limit(50).all()
+
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email,
+            }
+            for u in users
+        ]
+    }
+@router.get("/by-client")
+def get_users_by_client(
+    client_id: str,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    query = db.query(User).filter(User.client_id == client_id)
+
+    if search:
+        query = query.filter(
+            or_(
+                User.first_name.ilike(f"%{search}%"),
+                User.last_name.ilike(f"%{search}%"),
+                User.email.ilike(f"%{search}%")
+            )
+        )
+
+    users = query.limit(50).all()
+
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email,
+            }
+            for u in users
+        ]
+    }
+@router.get("/share/users")
+def get_share_users(
+    is_client: bool,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Resolve organisation
+    org_id = current_user.organisation_id
+
+    if not org_id:
+        raise HTTPException(400, "User not linked to organisation")
+
+    active_status = db.query(Status).filter(Status.code == "ACTIVE").first()
+
+    query = (
+        db.query(User)
+        .join(UserRole, UserRole.user_id == User.id)
+        .join(Role, Role.id == UserRole.role_id)
+        .filter(
+            User.organisation_id == org_id,
+            User.id != current_user.id,
+            User.status_id == active_status.id
+        )
+    )
+
+    # -------------------------
+    # CLIENT USERS
+    # -------------------------
+    if is_client:
+        query = query.filter(
+            or_(
+                User.is_client.is_(True),
+                User.client_id.isnot(None)
+            )
+        )
+
+    # -------------------------
+    # INTERNAL USERS
+    # -------------------------
+    else:
+        query = query.filter(
+            User.is_client.is_(False),
+            User.client_id.is_(None),
+            ~Role.name.in_(["SUPER_ADMIN", "ORGANISATION_ADMIN"])
+        )
+
+    if search:
+        query = query.filter(
+            or_(
+                User.first_name.ilike(f"%{search}%"),
+                User.last_name.ilike(f"%{search}%"),
+                User.email.ilike(f"%{search}%"),
+            )
+        )
+
+    users = query.distinct().limit(50).all()
+
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email,
+                "roles": [
+                    {"id": r.id, "name": r.name}
+                    for r in u.roles
+                ]
+            }
+            for u in users
+        ]
+    }
 
 @router.get("/stats")
 async def get_user_stats(
@@ -187,6 +379,7 @@ async def get_user(
     user = UserService.get_user_by_id(user_id, db)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
     return UserResponse(**user)
 
 @router.post("/", response_model=UserResponse)
@@ -211,12 +404,13 @@ async def create_user(
         db=db,
         action="CREATE",
         entity_type="user",
-        entity_id=created_user.id,
-        user_id=current_user.id,
-        details={"username": created_user.username, "email": created_user.email},
+        entity_id=str(created_user.id),
+        current_user=current_user,
+        details={"username": created_user.username},
         request=request,
         background_tasks=background_tasks
     )
+
     
     return UserResponse(
     **UserService._format_user_response(created_user, db)
@@ -265,7 +459,7 @@ async def update_user(
         if 'status_id' in changes:
             changes['Status'] = changes.pop('status_id')
 
-    updated_user = UserService.update_user(user_id, user_data, db)
+    updated_user = UserService.update_user(user_id, user_data, db, current_user)
     if not updated_user:
         raise HTTPException(status_code=404, detail="User not found")
         
@@ -276,7 +470,7 @@ async def update_user(
         action="UPDATE",
         entity_type="user",
         entity_id=user_id,
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": full_name, "changes": changes},
         request=request,
         background_tasks=background_tasks
@@ -286,64 +480,35 @@ async def update_user(
 
 @router.post("/{user_id}/activate", response_model=UserResponse)
 async def activate_user(
-    user_id: str, 
+    user_id: str,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("user_module", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
-    # ---- SELF-ACTION BLOCK ----
-    if current_user.id == user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="You cannot activate your own account"
-        )
+    if str(current_user.id) == str(user_id):
+        raise HTTPException(403, "You cannot activate yourself")
 
-    # ---- ROLE CHECK ----
-    # ---- allow org OR admin ----
-    is_org = not isinstance(current_user, User)  # organisation login
-    is_admin = False
-
-    is_org = isinstance(current_user, Organisation)
-
-    is_admin = False
-    if isinstance(current_user, User):
-        role_names = [r.name for r in current_user.roles]
-        is_admin = (
-            current_user.is_superuser
-            or "ADMIN" in role_names
-            or "SUPER_ADMIN" in role_names
-        )
-
-    if not (is_admin or is_org):
-        raise HTTPException(403, "Not allowed")
-
-
-
-    # ---- TARGET USER VALIDATION ----
     target_user = db.query(User).filter(User.id == user_id).first()
     if not target_user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
 
     if target_user.is_superuser:
-        raise HTTPException(
-            status_code=403,
-            detail="Super admin cannot be activated via API"
-        )
+        raise HTTPException(403, "Cannot modify super admin")
 
-    # ---- ACTIVATE ----
-    user = UserService.activate_user(user_id,db,current_user)
+    if not UserService.can_manage_user(current_user, target_user):
+        raise HTTPException(403, "Not allowed to activate this user")
+
+    user = UserService.activate_user(user_id, db, current_user)
     if not user:
-        raise HTTPException(status_code=400, detail="Cannot activate user")
+        raise HTTPException(400, "Activation failed")
 
-    # ---- ACTIVITY LOG ----
     ActivityService.log(
         db=db,
         action="ACTIVATE",
         entity_type="user",
         entity_id=user_id,
-        user_id=current_user.id,
+        user_id=current_user,
         request=request,
         background_tasks=background_tasks
     )
@@ -351,73 +516,70 @@ async def activate_user(
     return UserResponse(**user)
 
 
+
 @router.post("/{user_id}/deactivate", response_model=UserResponse)
 async def deactivate_user(
-    user_id: str, 
+    user_id: str,
     db: Session = Depends(get_db),
-    permission: bool = Depends(Permission("user_module", "UPDATE")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
-    # ---- SELF-DEACTIVATION BLOCK ----
-    if current_user.id == user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="You cannot deactivate your own account"
-        )
+    # block self
+    if isinstance(current_user, User) and str(current_user.id) == user_id:
+        raise HTTPException(403, "You cannot deactivate yourself")
 
-    # ---- ROLE CHECK ----
-    is_org = not isinstance(current_user, User)
-    is_admin = False
-
-    if isinstance(current_user, User):
-        role_names = [role.name for role in current_user.roles]
-        is_admin = (
-            current_user.is_superuser or
-            "ADMIN" in role_names or
-            "SUPER_ADMIN" in role_names
-        )
-
-    if not (is_admin or is_org):
-        raise HTTPException(
-            status_code=403,
-            detail="You are not allowed to deactivate users"
-        )
-
-
-    # ---- TARGET USER SAFETY ----
     target_user = db.query(User).filter(User.id == user_id).first()
     if not target_user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(404, "User not found")
 
     if target_user.is_superuser:
-        raise HTTPException(
-            status_code=403,
-            detail="Super admin cannot be deactivated"
-        )
+        raise HTTPException(403, "Cannot deactivate super admin")
 
-    # ---- DEACTIVATE ----
+    # ---- PERMISSION ----
+    if not UserService.can_manage_user(current_user, target_user):
+        raise HTTPException(403, "Not allowed to deactivate this user")
+
     user = UserService.deactivate_user(user_id, db, current_user)
     if not user:
-        raise HTTPException(status_code=400, detail="Cannot deactivate user")
+        raise HTTPException(400, "Deactivate failed")
 
-    # ---- ACTIVITY LOG ----
     ActivityService.log(
         db=db,
         action="DEACTIVATE",
         entity_type="user",
         entity_id=user_id,
-        user_id=current_user.id,
+        user_id=getattr(current_user, "id", None),
         request=request,
         background_tasks=background_tasks
     )
 
     return UserResponse(**user)
 
-class ChangePasswordRequest(BaseModel):
-    new_password: str = Field(..., min_length=6, description="New password for the user")
 
+class ChangePasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=8, description="New password for the user")
+    @field_validator("new_password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        v = v.strip()
+
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Must include uppercase letter")
+
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Must include lowercase letter")
+
+        if not re.search(r"\d", v):
+            raise ValueError("Must include number")
+
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", v):
+            raise ValueError("Must include special character")
+
+        return v
 @router.post("/{user_id}/change-password")
 async def change_user_password(
     user_id: str, 
@@ -426,7 +588,7 @@ async def change_user_password(
     permission: bool = Depends(Permission("user_module", "ADMIN")),
     background_tasks: BackgroundTasks = None,
     request: Request = None,
-    current_user: User = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
     success = UserService.change_password(user_id, password_request.new_password, db)
     if not success:
@@ -438,7 +600,7 @@ async def change_user_password(
         action="CHANGE_PASSWORD",
         entity_type="user",
         entity_id=user_id,
-        user_id=current_user.id,
+        user_id=current_user,
         request=request,
         background_tasks=background_tasks
     )
@@ -469,7 +631,11 @@ async def map_clients_to_user(
     permission: bool = Depends(Permission("user_module", "UPDATE")) # Mapping clients is an update action
 ):
     """Map clients to a user"""
-    UserService.map_clients_to_user(user_id, request.client_ids, request.assigned_by, db)
+    assigned_by_id = None
+    if isinstance(current_user, User):
+        assigned_by_id = str(current_user.id)
+    
+    UserService.map_clients_to_user(user_id, request.client_ids, assigned_by_id, db)
     
     # Log activity
     ActivityService.log(
@@ -477,7 +643,7 @@ async def map_clients_to_user(
         action="UPDATE",
         entity_type="user",
         entity_id=user_id,
-        user_id=current_user.id,
+        user_id=current_user,
         details={"action": "map_clients", "client_ids": request.client_ids}
     )
     
@@ -503,7 +669,7 @@ async def unassign_clients(
         action="UPDATE",
         entity_type="user",
         entity_id=request.user_id,
-        user_id=current_user.id,
+        user_id=current_user,
         details={"action": "unassign_clients", "client_ids": request.client_ids}
     )
     

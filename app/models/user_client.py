@@ -14,5 +14,6 @@ class UserClient(Base):
     user_id = Column(String, ForeignKey("docucr.user.id"), nullable=False)
     client_id = Column(UUID(as_uuid=True), ForeignKey("docucr.client.id"), nullable=False)
     assigned_by = Column(String, ForeignKey("docucr.user.id"), nullable=True)
+    organisation_id = Column(String, ForeignKey("docucr.organisation.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

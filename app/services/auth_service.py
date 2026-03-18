@@ -1,5 +1,6 @@
 from collections import defaultdict
 from sqlalchemy.orm import Session
+from fastapi import HTTPException
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 import random
@@ -19,7 +20,6 @@ from app.models.user_role import UserRole
 from app.models.role import Role
 from app.models.status import Status
 from app.models.organisation import Organisation
-from app.models.organisation_role import OrganisationRole
 from app.core.security import verify_password, create_access_token, create_refresh_token, get_password_hash
 from app.utils.email import send_otp_email
 from datetime import timezone
@@ -34,15 +34,36 @@ class AuthService:
 
     @staticmethod
     def check_user_active(user: User, db: Session) -> bool:
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        return active_status and user.status_id == active_status.id
+        active_status = db.query(Status).filter(
+            Status.code == "ACTIVE"
+        ).first()
 
-    @staticmethod
-    def authenticate_organisation(email: str, password: str, db: Session) -> Optional[Organisation]:
-        org = db.query(Organisation).filter(Organisation.email == email).first()
-        if not org or not verify_password(password, org.hashed_password):
-            return None
-        return org
+        if not active_status:
+            raise HTTPException(500, "ACTIVE status not found")
+
+        # 1️⃣ Check user status first
+        if user.status_id != active_status.id:
+            raise HTTPException(403, "Your account is inactive. Please contact your administrator.")
+
+        # 2️⃣ If user has no organisation → allow (internal/superadmin users)
+        if not user.organisation_id:
+            return True
+
+        # 3️⃣ If user belongs to organisation → check org status
+        org = db.query(Organisation).filter(
+            Organisation.id == user.organisation_id
+        ).first()
+
+        if not org or org.status_id != active_status.id:
+            raise HTTPException(403, "Organisation is inactive. Please contact support.")
+
+        return True
+    # @staticmethod
+    # def authenticate_organisation(email: str, password: str, db: Session) -> Optional[Organisation]:
+    #     org = db.query(Organisation).filter(Organisation.email == email).first()
+    #     if not org or not verify_password(password, org.hashed_password):
+    #         return None
+    #     return org
 
     @staticmethod
     def check_organisation_active(org: Organisation, db: Session) -> bool:
@@ -102,18 +123,13 @@ class AuthService:
         return [{"id": role.id, "name": role.name} for _, role in user_roles]
 
     @staticmethod
-    def get_organisation_roles(org_id: str, db: Session) -> List[Dict]:
-        active_status = db.query(Status).filter(Status.code == 'ACTIVE').first()
-        org_roles = db.query(OrganisationRole, Role).join(Role, OrganisationRole.role_id == Role.id).filter(
-            OrganisationRole.organisation_id == org_id,
-            Role.status_id == active_status.id
-        ).all()
-        return [{"id": role.id, "name": role.name} for _, role in org_roles]
-
-    @staticmethod
-    def generate_tokens(email: str, role_id: str) -> Dict:
-        access_token = create_access_token(data={"sub": email, "role_id": role_id})
-        refresh_token = create_refresh_token(data={"sub": email, "role_id": role_id})
+    def generate_tokens(email: str, role_id: str, organisation_id: str, is_superadmin: bool = False) -> Dict:
+        data = {"sub": email, "role_id": role_id, "organisation_id": organisation_id}
+        if is_superadmin:
+            data["superadmin"] = True
+            
+        access_token = create_access_token(data=data)
+        refresh_token = create_refresh_token(data=data)
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
@@ -132,12 +148,13 @@ class AuthService:
         return user_role[1] if user_role else None
 
     @staticmethod
-    def generate_otp(email: str, db: Session) -> str:
+    def generate_otp(email: str, db: Session, purpose: str = "RESET") -> str:
         otp_code = ''.join(random.choices(string.digits, k=6))
+        print(f"DEBUG: OTP for {email} ({purpose}): {otp_code}")
         # Use timezone-aware UTC
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
 
-        otp_record = db.query(OTP).filter(OTP.email == email).first()
+        otp_record = db.query(OTP).filter(OTP.email == email, OTP.purpose == purpose).first()
         if otp_record:
             otp_record.otp_code = otp_code
             otp_record.expires_at = expires_at
@@ -147,6 +164,7 @@ class AuthService:
                 id=str(uuid.uuid4()),
                 email=email,
                 otp_code=otp_code,
+                purpose=purpose,
                 expires_at=expires_at,
                 is_used=False
             )
@@ -155,15 +173,15 @@ class AuthService:
         return otp_code
 
     @staticmethod
-    def verify_otp(email: str, otp: str, db: Session) -> bool:
-        otp_record = db.query(OTP).filter(OTP.email == email, OTP.otp_code == otp).first()
+    def verify_otp(email: str, otp: str, db: Session, purpose: str = "RESET") -> bool:
+        otp_record = db.query(OTP).filter(OTP.email == email, OTP.otp_code == otp, OTP.purpose == purpose).first()
         if not otp_record or otp_record.is_used or otp_record.expires_at < datetime.now(timezone.utc):
             return False
         return True
 
     @staticmethod
     def reset_user_password(email: str, otp: str, new_password: str, db: Session) -> bool:
-        otp_record = db.query(OTP).filter(OTP.email == email, OTP.otp_code == otp).first()
+        otp_record = db.query(OTP).filter(OTP.email == email, OTP.otp_code == otp, OTP.purpose == "RESET").first()
         if not otp_record:
             return False
 
@@ -175,3 +193,8 @@ class AuthService:
         otp_record.is_used = True
         db.commit()
         return True
+
+    @staticmethod
+    def initiate_2fa(email: str, db: Session) -> bool:
+        otp_code = AuthService.generate_otp(email, db, purpose="LOGIN")
+        return send_otp_email(email, otp_code, purpose="LOGIN")

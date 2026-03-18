@@ -68,18 +68,20 @@ class TemplateResponse(BaseModel):
 @router.get("/by-document-type/{document_type_id}", response_model=List[TemplateResponse])
 def get_templates_by_document_type(
     document_type_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     """Get all templates for a specific document type"""
-    service = TemplateService(db)
+    service = TemplateService(db, current_user)
     return service.get_by_document_type(document_type_id)
 
 @router.get("/", response_model=List[TemplateResponse])
 def get_templates(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     """Get all templates with document type info"""
-    service = TemplateService(db)
+    service = TemplateService(db, current_user)
     return service.get_all()
 
 @router.post("/", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
@@ -87,12 +89,12 @@ def create_template(
     template_data: TemplateCreate,
     req: Request,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("templates_list", "CREATE"))
 ):
     """Create a new template"""
-    service = TemplateService(db)
+    service = TemplateService(db, current_user)
     template = service.create(
         template_data.template_name,
         template_data.document_type_id,
@@ -107,7 +109,7 @@ def create_template(
         action="CREATE",
         entity_type="template",
         entity_id=str(template.id),
-        user_id=current_user.id,
+        current_user=current_user,
         details={"name": template.template_name},
         request=req,
         background_tasks=background_tasks
@@ -118,10 +120,11 @@ def create_template(
 @router.get("/{template_id}", response_model=TemplateResponse)
 def get_template(
     template_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
 ):
     """Get a specific template"""
-    service = TemplateService(db)
+    service = TemplateService(db, current_user)
     return service.get_by_id(template_id)
 
 @router.put("/{template_id}", response_model=TemplateResponse)
@@ -130,12 +133,12 @@ def update_template(
     template_data: TemplateUpdate,
     req: Request,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("templates_list", "UPDATE"))
 ):
     """Update a template"""
-    service = TemplateService(db)
+    service = TemplateService(db, current_user)
     
     # Calculate changes BEFORE update
     update_data = {
@@ -148,25 +151,6 @@ def update_template(
     changes = {}
     existing_template = service.get_by_id(template_id)
     if existing_template:
-        # Normalize status_id to statusCode for readable logs
-        # Note: template object might be Pydantic model or dict. Service returns dict usually or ORM model.
-        # Based on get_by_id implementation (assumed dict or object with dict access)
-        # Assuming dict access is safe or we need logic check. 
-        # Checking template_service.py usage earlier: it returns Pydantic model usually?
-        # Let's check get_by_id return type if possible. 
-        # But for now assuming consistency with other services returning dicts/objects.
-        # Actually template_service.get_by_id returns a TemplateResponse Pydantic model often. 
-        # calculate_changes handles dict or object. 
-        # But we need to write to it. If it's a Pydantic model we can't write to it easily if frozen?
-        # Wait, calculate_changes takes OLD obj.
-        # Let's handle generic object attribute setting if dict fails.
-        
-        # Actually, let's just stick to the pattern. If it errors we fix.
-        # But wait, templates_service.get_by_id returns a TemplateResponse?
-        # Let's check templates_router.py:128 `return service.get_by_id(template_id)` -> response_model=TemplateResponse
-        # So it returns something compatible.
-        
-        # To be safe for mixed types (dict vs obj):
         current_status_code = None
         if isinstance(existing_template, dict):
             current_status_code = existing_template.get('statusCode')
@@ -213,12 +197,12 @@ def delete_template(
     template_id: str,
     req: Request,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("templates_list", "DELETE"))
 ):
     """Delete a template"""
-    service = TemplateService(db)
+    service = TemplateService(db, current_user)
     name = service.delete(template_id)
 
     ActivityService.log(
@@ -238,12 +222,12 @@ def activate_template(
     template_id: str,
     req: Request,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("templates_list", "UPDATE"))
 ):
     """Activate a template"""
-    service = TemplateService(db)
+    service = TemplateService(db, current_user)
     result = service.activate(template_id)
     
     ActivityService.log(
@@ -262,12 +246,12 @@ def deactivate_template(
     template_id: str,
     req: Request,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
     permission: bool = Depends(Permission("templates_list", "UPDATE"))
 ):
     """Deactivate a template"""
-    service = TemplateService(db)
+    service = TemplateService(db, current_user)
     result = service.deactivate(template_id)
     
     ActivityService.log(

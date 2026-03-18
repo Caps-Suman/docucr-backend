@@ -149,6 +149,19 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+#### Windows Dependencies (Required for WeasyPrint & pdf2image)
+If you are running on Windows, you must install additional system libraries:
+
+**A. GTK+ (for WeasyPrint)**
+1.  Download and install the **GTK+ for Windows Runtime**: [GTK+ for Windows Runtime](https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases).
+2.  Add the `bin` folder of the installation (e.g., `C:\Program Files\GTK3-Runtime Win64\bin`) to your system's **Path** environment variable.
+3.  **Restart your terminal/IDE.**
+
+**B. Poppler (for pdf2image)**
+1.  Download the latest Poppler for Windows from [github.com/oschwartz10612/poppler-windows/releases](https://github.com/oschwartz10612/poppler-windows/releases).
+2.  Extract the ZIP file and add the `Library\bin` folder to your system's **Path** environment variable.
+3.  **Restart your terminal/IDE.**
+
 ### Run Application
 ```bash
 python app.py
