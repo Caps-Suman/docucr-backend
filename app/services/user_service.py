@@ -12,8 +12,8 @@ from app.models.user_supervisor import UserSupervisor
 from app.models.user_client import UserClient
 from app.models.client import Client
 from app.models.organisation import Organisation
-from app.core.security import get_password_hash
-
+from app.core.security import get_password_hash, verify_password
+import re 
 
 class UserService:
     @staticmethod
@@ -371,7 +371,26 @@ class UserService:
             }
             for r in results
         ]
+    @staticmethod
+    def validate_password(password: str):
+        errors = []
 
+        if len(password) < 8:
+            errors.append("at least 8 characters")
+        if not re.search(r"[A-Z]", password):
+            errors.append("one uppercase letter")
+        if not re.search(r"[a-z]", password):
+            errors.append("one lowercase letter")
+        if not re.search(r"\d", password):
+            errors.append("one number")
+        if not re.search(r"[@$!%*?&^#()[\]{}\-_=+|\\:;\"'<>,./~`]", password):
+            errors.append("one special character")
+
+        if errors:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Password must contain: {', '.join(errors)}"
+            )
     @staticmethod
     def get_user_by_id(user_id: str, db: Session) -> Optional[Dict]:
         user = db.query(User).filter(
@@ -451,12 +470,13 @@ class UserService:
         else:
             raise HTTPException(403, "User not permitted")
 
-
+        password = user_data['password']
+        UserService.validate_password(password)
         user = User(
             id=str(uuid.uuid4()),
             email=user_data['email'].lower(),
             username=user_data['username'].lower(),
-            hashed_password=get_password_hash(user_data['password']),
+            hashed_password=get_password_hash(password),
             first_name=user_data['first_name'],
             middle_name=user_data.get('middle_name'),
             last_name=user_data['last_name'],
@@ -1115,9 +1135,17 @@ class UserService:
     @staticmethod
     def change_password(user_id: str, new_password: str, db: Session) -> bool:
         user = db.query(User).filter(User.id == user_id).first()
+        
         if not user:
             return False
-        
+
+        UserService.validate_password(new_password)
+
+        # Prevent reuse of same password
+        if verify_password(new_password, user.hashed_password):
+            raise HTTPException(400, "New password cannot be same as old password")
+
         user.hashed_password = get_password_hash(new_password)
         db.commit()
+
         return True
