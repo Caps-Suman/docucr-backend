@@ -1,16 +1,17 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 from app.models.organisation import Organisation
 from app.models.role import Role
 from app.models.status import Status
 from app.models.user_role import UserRole
 from app.services.activity_service import ActivityService
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, validator
 from typing import Optional, List
 from fastapi import Query
 import re
 from app.core.database import get_db
+from app.services.role_service import RoleService
 from app.services.user_service import UserService
 from app.core.permissions import Permission
 from app.core.security import get_current_user
@@ -77,6 +78,58 @@ class UserCreate(BaseModel):
             raise ValueError("Must include special character")
 
         return v
+
+class BulkUserRow(BaseModel):
+    email: str
+    username: str
+    first_name: str
+    last_name: str
+    password: str
+    middle_name: Optional[str] = None
+    phone_country_code: Optional[str] = None
+    phone_number: Optional[str] = None
+    # Internal-only fields
+    role_names: Optional[str] = None   
+    supervisor_email: Optional[str] = None
+ 
+    @validator("email")
+    def email_lower(cls, v):
+        return v.strip().lower()
+ 
+    @validator("username")
+    def username_lower(cls, v):
+        return v.strip().lower()
+ 
+ 
+class BulkUserUploadRequest(BaseModel):
+    user_type: str                     # "internal" | "client"
+    client_id: Optional[str] = None   # Required when user_type == "client"
+    users: List[BulkUserRow]
+ 
+    @validator("user_type")
+    def validate_type(cls, v):
+        if v not in ("internal", "client"):
+            raise ValueError('user_type must be "internal" or "client"')
+        return v
+ 
+    @validator("client_id", always=True)
+    def client_required_for_client_type(cls, v, values):
+        if values.get("user_type") == "client" and not v:
+            raise ValueError("client_id is required when user_type is 'client'")
+        return v
+ 
+ 
+class FailedRow(BaseModel):
+    row_index: int
+    email: Optional[str]
+    error: str
+ 
+ 
+class BulkUserUploadResponse(BaseModel):
+    created: int
+    failed: int
+    failed_rows: List[FailedRow]
+    errors: List[str]    
 class UserUpdate(BaseModel):
     email: Optional[str] = None
     username: Optional[str] = Field(None, min_length=3, max_length=50)
@@ -674,3 +727,168 @@ async def unassign_clients(
     )
     
     return {"message": "Clients unassigned successfully"}
+
+
+@router.post(
+    "/bulk",
+    response_model=BulkUserUploadResponse,
+    summary="Bulk create users from CSV upload",
+    tags=["Users"],
+)
+def bulk_create_users(
+    payload: BulkUserUploadRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from sqlalchemy import func
+
+    # ── Permission guard ───────────────────────────────────────────────────────
+    is_super = UserService._ctx_is_super(current_user)
+    role_names_ctx = [r.name for r in current_user.roles]
+    context_org = UserService._ctx_org(current_user)
+
+    if not (is_super or "ORGANISATION_ADMIN" in role_names_ctx or "CLIENT_ADMIN" in role_names_ctx):
+        raise HTTPException(status_code=403, detail="Not permitted to bulk-create users")
+
+    if payload.user_type == "client" and not payload.client_id:
+        raise HTTPException(status_code=400, detail="client_id required for client user type")
+
+    created_count = 0
+    failed_rows: List[FailedRow] = []
+
+    role_cache = {}
+    supervisor_cache = {}
+    seen_emails = set()
+    seen_usernames = set()
+
+    for idx, row in enumerate(payload.users, start=1):
+        try:
+            # ── ALWAYS initialize (fix crash) ───────────────────────────────
+            role_ids = []
+            supervisor_id = None
+            supervisor = None
+
+            UserCreate.validate_password(row.password)
+
+            # ── Normalize (important for duplicates) ────────────────────────
+            email = row.email.strip().lower()
+            username = row.username.strip()
+
+            # ── CSV duplicate check ────────────────────────────────────────
+            if email in seen_emails:
+                raise ValueError("Duplicate email in file")
+            seen_emails.add(email)
+
+            if username in seen_usernames:
+                raise ValueError("Duplicate username in file")
+            seen_usernames.add(username)
+
+            # ── DB duplicate check ─────────────────────────────────────────
+            if UserService.check_email_exists(email, None, db):
+                raise ValueError(f"Email already exists: {email}")
+
+            if UserService.check_username_exists(username, None, db):
+                raise ValueError(f"Username already taken: {username}")
+
+            # ── Base data ──────────────────────────────────────────────────
+            user_data = {
+                "email": email,
+                "username": username,
+                "first_name": row.first_name,
+                "middle_name": row.middle_name,
+                "last_name": row.last_name,
+                "phone_country_code": row.phone_country_code,
+                "phone_number": row.phone_number,
+                "password": row.password,
+            }
+
+            # ==============================================================
+            # CLIENT USERS
+            # ==============================================================
+            if payload.user_type == "client":
+                user_data["client_id"] = payload.client_id
+
+            # ==============================================================
+            # INTERNAL USERS
+            # ==============================================================
+            else:
+                # ── Resolve roles (case insensitive) ───────────────────────
+                if row.role_names:
+                    if row.role_names in role_cache:
+                        role_ids = role_cache[row.role_names]
+                    else:
+                        input_roles = [r.strip() for r in row.role_names.split(";") if r.strip()]
+
+                        # 🔥 remove duplicates from CSV input
+                        input_roles = list(set(input_roles))
+
+                        normalized_roles = [r.upper() for r in input_roles]
+
+                        roles = db.query(Role).filter(
+                            func.upper(Role.name).in_(normalized_roles),
+                            Role.organisation_id == context_org
+                        ).all()
+
+                        db_role_names = [r.name.upper() for r in roles]
+
+                        invalid_roles = set(normalized_roles) - set(db_role_names)
+                        if invalid_roles:
+                            raise ValueError(f"Invalid roles: {', '.join(invalid_roles)}")
+
+                        # 🔥 ensure unique role_ids
+                        role_ids = list(set([r.id for r in roles]))
+
+                        role_cache[row.role_names] = role_ids
+
+                # 🔥 enforce role required
+                if not role_ids:
+                    raise ValueError("At least one valid role is required")
+
+                # ── Resolve supervisor ─────────────────────────────────────
+                if row.supervisor_email:
+                    if row.supervisor_email in supervisor_cache:
+                        supervisor = supervisor_cache[row.supervisor_email]
+                    else:
+                        supervisor = db.query(User).filter(
+                            func.lower(User.email) == row.supervisor_email.lower(),
+                            User.organisation_id == context_org
+                        ).first()
+
+                        if not supervisor:
+                            raise ValueError(f"Supervisor not found: {row.supervisor_email}")
+
+                        supervisor_cache[row.supervisor_email] = supervisor
+
+                    supervisor_id = supervisor.id
+
+                # ── Role-supervisor validation ─────────────────────────────
+                if supervisor and role_ids:
+                    supervisor_role_ids = [r.id for r in supervisor.roles]
+
+                    if not any(rid in supervisor_role_ids for rid in role_ids):
+                        raise ValueError("Supervisor does not belong to required role")
+
+                # ── Attach ────────────────────────────────────────────────
+                user_data["role_ids"] = role_ids
+                if supervisor_id:
+                    user_data["supervisor_id"] = supervisor_id
+
+            # ── Create user ───────────────────────────────────────────────
+            UserService.create_user(user_data, db=db, current_user=current_user)
+            db.commit()
+            created_count += 1
+
+        except Exception as exc:
+            db.rollback()
+            failed_rows.append(FailedRow(
+                row_index=idx,
+                email=row.email,
+                error=str(exc)
+            ))
+
+    return BulkUserUploadResponse(
+        created=created_count,
+        failed=len(failed_rows),
+        failed_rows=failed_rows,
+        errors=[],
+    )
