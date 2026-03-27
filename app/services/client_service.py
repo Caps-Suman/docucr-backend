@@ -832,7 +832,7 @@ class ClientService:
         providers: List[Dict] = []
         locations: List[Dict] = []
 
-        if db and detailed and client.type == "NPI2":
+        if db and detailed and client.type == "Group":
             provider_rows = (
                 db.query(Provider, ProviderClientMapping)
                 .join(ProviderClientMapping, Provider.id == ProviderClientMapping.provider_id)

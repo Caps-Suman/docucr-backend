@@ -340,8 +340,8 @@ class BulkClientCreateResponse(BaseModel):
     failed: int
     errors: List[str]
 
-ALLOWED_IMPORT_TYPES = {"NPI1"}
-DISABLED_IMPORT_TYPES = {"NPI2"}
+ALLOWED_IMPORT_TYPES = {"Individual"}
+DISABLED_IMPORT_TYPES = {"Group"}
 @router.get("/stats")
 def get_client_stats(
     db: Session = Depends(get_db),
@@ -518,10 +518,10 @@ def add_providers(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    if client.type != "NPI2":
+    if client.type != "Group":
         raise HTTPException(
             status_code=400,
-            detail="Providers can only be added to NPI2 clients"
+            detail="Providers can only be added to Group clients"
         )
 
     created = []
@@ -946,8 +946,31 @@ async def create_clients_bulk(
     # ── Pre-flight: reject entirely if any row carries a disabled type ────────
     # This gives the caller a clear 400 before any DB work is done.
     for item in request.clients:
-        raw_type = (item.type or "").strip().upper()
- 
+        raw_type = (item.type or "").strip().lower()
+        TYPE_MAP = {
+            "individual": "Individual",
+            "group": "Group",
+        }
+
+        for item in request.clients:
+            raw_type = (item.type or "").strip().lower()
+
+            if not raw_type:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Each client row must include a 'type' field."
+                )
+
+            normalized_type = TYPE_MAP.get(raw_type)
+
+            if not normalized_type:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown client type '{item.type}'. Allowed values: Individual, Group."
+                )
+
+            # 🚀 overwrite with clean value
+            item.type = normalized_type
         if not raw_type:
             raise HTTPException(
                 status_code=422,
@@ -966,15 +989,6 @@ async def create_clients_bulk(
                 ),
             )
  
-        if raw_type not in ALLOWED_IMPORT_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Unknown client type '{raw_type}'. "
-                    f"Allowed values: {', '.join(sorted(ALLOWED_IMPORT_TYPES))}."
-                ),
-            )
- 
     # ── Row-by-row processing ─────────────────────────────────────────────────
     success = 0
     failed = 0
@@ -983,7 +997,7 @@ async def create_clients_bulk(
     for client_data in request.clients:
         try:
             # Normalise type to uppercase before persisting
-            client_data.type = client_data.type.strip().upper()
+            client_data.type = normalized_type
  
             # Duplicate NPI check
             if client_data.npi and ClientService.check_npi_exists(
