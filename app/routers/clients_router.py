@@ -10,7 +10,7 @@ from sqlalchemy import text
 from app.core.permissions import Permission
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, constr, field_validator
-from typing import Optional, List
+from typing import Literal, Optional, List
 from datetime import datetime
 
 from app.core.database import get_db
@@ -340,6 +340,8 @@ class BulkClientCreateResponse(BaseModel):
     failed: int
     errors: List[str]
 
+ALLOWED_IMPORT_TYPES = {"Individual"}
+DISABLED_IMPORT_TYPES = {"Group"}
 @router.get("/stats")
 def get_client_stats(
     db: Session = Depends(get_db),
@@ -516,10 +518,10 @@ def add_providers(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    if client.type != "NPI2":
+    if client.type != "Group":
         raise HTTPException(
             status_code=400,
-            detail="Providers can only be added to NPI2 clients"
+            detail="Providers can only be added to Group clients"
         )
 
     created = []
@@ -918,55 +920,124 @@ async def check_existing_npis(request: NPICheckRequest, db: Session = Depends(ge
         Client.deleted_at.is_(None)
     ).all()
     return NPICheckResponse(existing_npis=[n[0] for n in existing if n[0]])
-
-@router.post("/bulk", response_model=BulkClientCreateResponse, dependencies=[Depends(Permission("clients", "CREATE"))])
+@router.post(
+    "/bulk",
+    response_model=BulkClientCreateResponse,
+    dependencies=[Depends(Permission("clients", "CREATE"))],
+)
 async def create_clients_bulk(
     request: BulkClientCreateRequest,
     db: Session = Depends(get_db),
     request_obj: Request = None,
     background_tasks: BackgroundTasks = None,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
+    """
+    Bulk-create clients from a parsed CSV payload.
+ 
+    Validation order per row:
+      1. `type` field must be present.
+      2. `type` must not be in DISABLED_IMPORT_TYPES (returns 400 immediately).
+      3. `type` must be in ALLOWED_IMPORT_TYPES (returns 400 immediately).
+      4. NPI uniqueness check.
+      5. Client creation.
+    """
+ 
+    # ── Pre-flight: reject entirely if any row carries a disabled type ────────
+    # This gives the caller a clear 400 before any DB work is done.
+    for item in request.clients:
+        raw_type = (item.type or "").strip().lower()
+        TYPE_MAP = {
+            "individual": "Individual",
+            "group": "Group",
+        }
+
+        for item in request.clients:
+            raw_type = (item.type or "").strip().lower()
+
+            if not raw_type:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Each client row must include a 'type' field."
+                )
+
+            normalized_type = TYPE_MAP.get(raw_type)
+
+            if not normalized_type:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown client type '{item.type}'. Allowed values: Individual, Group."
+                )
+
+            # 🚀 overwrite with clean value
+            item.type = normalized_type
+        if not raw_type:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Each client row must include a 'type' field. "
+                    f"Allowed values: {', '.join(sorted(ALLOWED_IMPORT_TYPES))}."
+                ),
+            )
+ 
+        if raw_type in DISABLED_IMPORT_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Bulk import for type '{raw_type}' is not yet supported. "
+                    "Only NPI1 imports are currently enabled."
+                ),
+            )
+ 
+    # ── Row-by-row processing ─────────────────────────────────────────────────
     success = 0
     failed = 0
-    errors = []
-    
+    errors: List[str] = []
+ 
     for client_data in request.clients:
         try:
+            # Normalise type to uppercase before persisting
+            client_data.type = normalized_type
+ 
             # Duplicate NPI check
-            if client_data.npi and ClientService.check_npi_exists(client_data.npi, None, db):
+            if client_data.npi and ClientService.check_npi_exists(
+                client_data.npi, None, db
+            ):
                 failed += 1
                 errors.append(f"NPI already exists: {client_data.npi}")
                 continue
-
+ 
             client_dict = client_data.model_dump()
-            client_dict['created_by'] = current_user.id
-            client = ClientService.create_client(client_dict, db)
+            client_dict["created_by"] = current_user.id
+ 
+            client = ClientService.create_client(client_dict, db, current_user)
+ 
             if client:
                 success += 1
-                
-                ActivityService.log(
-                    db=db,
-                    action="BULK_CREATE",
-                    entity_type="client",
-                    current_user=current_user,
-                    details={
-                        "success": success,
-                        "failed": failed
-                    },
-                    request=request_obj,
-                    background_tasks=background_tasks
-                )
-
             else:
                 failed += 1
-                errors.append(f"Failed to create client with data: {client_data}")
+                errors.append(
+                    f"Failed to create client: NPI={client_data.npi or 'N/A'}"
+                )
+ 
         except Exception as e:
             failed += 1
-            errors.append(f"Error creating client: {str(e)}")
-    
+            errors.append(f"Error on NPI={getattr(client_data, 'npi', 'N/A')}: {str(e)}")
+ 
+    # ── Single activity log for the whole batch ───────────────────────────────
+    if success > 0:
+        ActivityService.log(
+            db=db,
+            action="BULK_CREATE",
+            entity_type="client",
+            current_user=current_user,
+            details={"success": success, "failed": failed},
+            request=request_obj,
+            background_tasks=background_tasks,
+        )
+ 
     return BulkClientCreateResponse(
         success=success,
         failed=failed,
-        errors=errors
+        errors=errors,
     )
