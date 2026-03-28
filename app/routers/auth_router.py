@@ -226,7 +226,7 @@ async def login(
     # This will raise specific HTTPException if inactive (User or Org)
     AuthService.check_user_active(user, db)
 
-    # 🔥 SUPERADMIN FLOW (global)
+    # SUPERADMIN FLOW (global)
     if user.is_superuser:
         from app.core.security import create_access_token
 
@@ -251,7 +251,7 @@ async def login(
             }
         }
 
-    # 🔥 2FA FLOW
+    # 2FA FLOW
     if AuthService.initiate_2fa(user.email, db):
         return {
             "requires_2fa": True,

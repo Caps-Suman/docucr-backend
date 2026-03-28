@@ -7,14 +7,19 @@
     <!-- Importing Comfortaa for email clients that support web fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Comfortaa:wght@400;700&display=swap" rel="stylesheet">
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         /* Base Reset */
         body {
             margin: 0;
             padding: 0;
             width: 100% !important;
+            overflow-x: hidden;
             background-color: #ffffff;
             /* Applying Comfortaa as requested */
-            font-family: 'Comfortaa', cursive !important;
+            font-family: 'Comfortaa', Arial, Helvetica, sans-serif !important;
             color: #1a1a1a;
             -webkit-font-smoothing: antialiased;
         }
@@ -23,7 +28,7 @@
         .email-wrapper {
             width: 100%;
             background-color: #ffffff;
-            padding: 40px 20px;
+            padding: 20px;
         }
 
         .content-card {
@@ -31,7 +36,7 @@
             /* margin: 0 auto; */
             border: 1px solid #f0f0f0;
             border-radius: 32px;
-            padding: 40px;
+            padding: 24px 40px;
             box-shadow: 0 10px 25px rgba(0,0,0,0.03);
             text-align: center;
         }
@@ -42,7 +47,7 @@
             font-weight: 700;
             letter-spacing: -1px;
             color: #000000;
-            margin-bottom: 40px;
+            margin-bottom: 20px;
             display: block;
             text-decoration: none;
         }
@@ -52,14 +57,14 @@
             font-size: 26px;
             font-weight: 700;
             line-height: 1.2;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
         }
 
         p {
             font-size: 15px;
             line-height: 1.6;
             color: #666666;
-            margin-bottom: 32px;
+            margin-bottom: 16px;
         }
 
         /* OTP Section */
@@ -68,13 +73,13 @@
             padding: 2px;
             border-radius: 20px;
             display: inline-block;
-            margin-bottom: 32px;
+            margin-bottom: 16px;
         }
 
         .otp-inner {
             background: #ffffff;
             border-radius: 18px;
-            padding: 16px 40px;
+            padding: 16px 24px;
         }
 
         .otp-code {
@@ -92,21 +97,21 @@
             color: #999999;
             text-transform: uppercase;
             letter-spacing: 1px;
-            margin-bottom: 40px;
+            margin-bottom: 16px;
         }
 
         .divider {
             height: 1px;
             background-color: #f0f0f0;
-            margin: 32px 0;
+            margin: 16px 0;
         }
 
         /* Safety Tip Section */
         .safety-box {
             background-color: #fff9eb;
             border-radius: 20px;
-            padding: 20px;
-            margin-top: 24px;
+            padding: 16px;
+            margin-top: 0;
             text-align: left;
         }
 
@@ -126,7 +131,7 @@
         }
 
         .footer {
-            margin-top: 32px;
+            margin-top: 16px;
             font-size: 12px;
             color: #bbbbbb;
         }
@@ -148,7 +153,7 @@
 <body>
     <div class="email-wrapper">
         <div class="content-card">
-            <a href="https://docucr.medeye360.com" class="brand-logo">docucr</a>
+            <a href="https://docucr.medeye360.com" class="brand-logo"><img src="https://flowcraft-resource.s3.us-east-1.amazonaws.com/logo-font/docucr-logo.png" alt="docucr" height="28" style="display:block;border:0;margin:0 auto;"></a>
             
             <h1>Reset Password</h1>
             <p>You requested a password reset for your docucr account. Please use the verification code below to proceed with the change.</p>

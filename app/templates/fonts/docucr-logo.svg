@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="40" viewBox="0 0 160 40">
+  <defs>
+    <style>
+      @font-face {
+        font-family: 'Comfortaa';
+        font-weight: 700;
+        src: url('data:font/woff2;base64,d09GMgABAAAAAAXQABMAAAAAC4wAAAVrAAMa4QAAAAAAAAAAAAAAAAAAAAAAAAAAGhYbgSAcKj9IVkFSQgZgP1NUQVRYJx4ATC9MEQgKhCyDaDCDQAE2AiQDGAsOAAQgBYYAByAb8QkjETaCUZpJ8I8Em8hkL4ATeQgZanl6eDYfRAhOf5IfueiRp67DRaMMvnW4eJ5+7ctzX3d/WiBUqEYuIYV9VCpqyqfikBWQY7YpT9BDdtkEUDeRDuQeEct1UqXC98em/3vn3rukRPnYNwWExk2qglBmgP28FDATx0wXbZHnVcCj6YAn0kWRVk2ZNN2AprONInEfqRX+VkB/r0/8puYMQYks9xS5o9f+xwQjAUVEI4KBhXBC12/cvl/i9TN335SohraFyLULd94UjSBqRU/0FEPCsZZWhFoabL+RYbQ2VnjVOTiAopQpulgJPLtigorxiYChs9ccKZgsRFiNA3QQ/v1f05kpVKfU0lTqcn+GNZQHy2HAtvUkOQmXzYxwfIh1R/Zu8O2cvuqOdgSgabIdECgLqlGYK0xETzBROGYKve/S5bsDPVMVwAhDSckw5TUEUuXXPWJdDnc01AcSzVveApMOpL1Q9lJczcEBKKgwUZiI8w8BBnqK4rwO3fpaAZwz39Q+3O622+2mvHxkrFBB6Qcv4RtGdKZI4Yyxm4r8Guml5oO6+2kYr5KBSCu4oANGoo8X8RegBkSCZeYoykqeXDIxJ7Fq2ecLmfL741a8zL3D9N37TJ+x7PGASa/3aJq//OAhY+8o3UPmD5t6iVt5AsVjMa5oX8iUj1l5fYTXMEmz2W4oyf+yd2/vi35yHJiXn0PutU8+QlTbChkSY4m7TN2m64+jDFcPS0RjaoQ/1idRMuvRHS/W4MPtCZVrpuiJKAeTgXVYiLRiTvrc59bjV/mThAe03KQxiWQMUfM1Q/qS/BZKYlGqPiVFnxpApWR0VKwU0qwkgoNBJzit4yKqjUh00hlEh43kSMiYWKzRzCVrB4KM7mlAsUjGokbNldA1eE1i4J026Z4EIdEIguNKYAippFU5yTRUjplVegXuNkIcH12IpOJT/XNF3gPEEeIOGqdLG55sSE4ph4ezUGqkGI9VFVZyy8goVnUT5TgiRZDqM+81JUWf4uvpMQBAEMF8kWAhgGXsxlz6aLXJ6NkLWFIfQBERqaqrhMhU/JsuK90Z+r7f1yXgy7QVkkwoKAFBxGAdUbSCyFjlaV4miW7VgOIN1zDbY64lI0YtgC+YfSGpzf+T9w9NShZZQ991QhTTL7ppIRTmMzIFmoAiOlDFXNXiZTgsuUQJDkmuCvUi0ZmLGlR3GNnMXdBjSDQBkfhZh1iDbSOg9JZSTqlyxyIipqvgUK6TpJaHALreMwDGHKc/3Do+Oj69ujtb931LiXTF6vufIAlmBpHp/k//L1fT799lI8kBlS1ehbTmlhK/qrOoWvGSG8BssSF1q8mE52VV8smEzEshMwhy4COJ8ArpKk40d7DJ0wihBANDs87f1tJiCADQtVdd6T+Ry2WkGqWW/AJfLf3IAYAf54jV7XH3s1TUC3QUEP6NmhkkRPPsEGEXdcodiss+zPJuBjwSyHuOrp27hdiZHBXhXlH8s9WCsX5UUvfxK3uUGO8/pRidDqUylImU2vxspzSm56al4xzyAFsYmSc7gwNEoqGvUmpj8w6l0ctnnV1N6Zmb7yh9C/P3TQ7MLLPxdeg0pFuTBo16QTgYWFiQXqM6kHytNvU6dOtVpQqE6NahWZ0abAdX31rfSI30gEqgjl6du/k0aGgNmoiZfaqh1KB/N1qVVnUG1WnSrwpaTdPcUhWgAcxNQFp1etTp1q9OLUikQ7tekEqVNvH98uKIPKhTOfavNejTqko3PBQsDCI6PgstITq7R2WsRxQE9Ubprh5Nojtgw2ab+EzqfpVe+fLna9KnjU6dNk14OrSqXdcHV/Lr05TIhlFqij3MRFz7kFUA') format('woff2');
+      }
+      .logo {
+        font-family: 'Comfortaa', Arial, sans-serif;
+        font-weight: 700;
+        font-size: 28px;
+        fill: #000000;
+        letter-spacing: -1px;
+      }
+    </style>
+  </defs>
+  <text x="0" y="30" class="logo">docucr</text>
+</svg>
